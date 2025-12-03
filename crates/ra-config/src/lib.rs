@@ -8,7 +8,9 @@
 
 mod discovery;
 mod error;
+mod merge;
 mod parse;
+mod resolve;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,10 +19,12 @@ use serde::Deserialize;
 
 pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
 pub use error::ConfigError;
+pub use merge::{ParsedConfig, merge_configs};
 pub use parse::{
     RawConfig, RawContextSettings, RawIncludePattern, RawSearchSettings, RawSettings,
     parse_config_file, parse_config_str,
 };
+pub use resolve::resolve_tree_path;
 
 /// Top-level merged configuration for ra.
 ///
