@@ -1,14 +1,19 @@
+//! Command-line interface for the `ra` research assistant tool.
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "ra")]
 #[command(about = "Research Assistant - Knowledge management for AI agents")]
+/// Top-level CLI options.
 struct Cli {
     #[command(subcommand)]
+    /// Subcommand to execute.
     command: Commands,
 }
 
 #[derive(Subcommand)]
+/// Supported `ra` subcommands.
 enum Commands {
     /// Search and output matching chunks
     Search {
@@ -88,7 +93,11 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Search { queries, limit, list } => {
+        Commands::Search {
+            queries,
+            limit,
+            list,
+        } => {
             println!("search: {:?} (limit={}, list={})", queries, limit, list);
         }
         Commands::Context { files, limit } => {
@@ -112,8 +121,16 @@ fn main() {
         Commands::Status => {
             println!("status");
         }
-        Commands::Agents { stdout, claude, gemini, all } => {
-            println!("agents (stdout={}, claude={}, gemini={}, all={})", stdout, claude, gemini, all);
+        Commands::Agents {
+            stdout,
+            claude,
+            gemini,
+            all,
+        } => {
+            println!(
+                "agents (stdout={}, claude={}, gemini={}, all={})",
+                stdout, claude, gemini, all
+            );
         }
     }
 }

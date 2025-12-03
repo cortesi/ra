@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ra"]
+members = ["crates/ra", "crates/ra-config"]
 
 
 

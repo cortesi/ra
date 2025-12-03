@@ -8,3 +8,4 @@ workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+ra-config = { path = "../ra-config" }
