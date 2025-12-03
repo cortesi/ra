@@ -49,8 +49,8 @@ Configs are merged with files closer to CWD taking precedence over those further
 [settings]
 default_limit = 5           # results per query
 local_boost = 1.5           # relevance multiplier for non-global trees
-chunk_at_headings = true    # split documents at h1 boundaries
 max_chunk_size = 50000      # warn if any chunk exceeds this (characters)
+min_chunk_size = 2000       # don't chunk documents smaller than this
 
 [search]
 fuzzy = true                # enable fuzzy matching for typo tolerance
@@ -174,16 +174,57 @@ If no frontmatter title exists, the first h1 heading is used as the document tit
 
 ### Chunking
 
-When `chunk_at_headings` is enabled (default), documents are split at h1 (`#`) boundaries. Each chunk inherits the document's frontmatter metadata and includes:
+ra uses adaptive chunking that automatically finds the right split level for each document:
 
-- The h1 heading as chunk title
-- All content until the next h1 or end of document
+**Algorithm:**
 
-**Preamble handling**: Content before the first h1 heading (if any) becomes its own chunk with:
+1. If document is smaller than `min_chunk_size` (default: 2000 characters), don't chunk—the whole document becomes one chunk
+2. Find the first heading level (h1, h2, h3, etc.) where the document has 2 or more headings at that level
+3. Chunk at that level
+4. If no level has 2+ headings, don't chunk (whole document = one chunk)
+
+**Example behaviors:**
+
+| Document structure | Chunking behavior |
+|-------------------|-------------------|
+| Spec doc with 1 h1 but 30 h2s | Chunks at h2 boundaries |
+| Short guide with 4 h1s | Chunks at h1 boundaries |
+| Flat doc with no repeated heading levels | Single chunk |
+| Small doc under 2000 chars | Single chunk even if it has structure |
+
+Each chunk inherits the document's frontmatter metadata and includes:
+
+- The heading at the chunk level as chunk title
+- All content until the next heading at that level or end of document
+
+**Preamble handling**: Content before the first heading at the chunk level (if any) becomes its own chunk with:
 - Title: frontmatter `title` if present, otherwise the filename
 - Slug: `preamble` (e.g., `tree:path/file.md#preamble`)
 
-Documents without h1 headings are indexed as a single chunk (same as preamble behavior).
+Documents that don't get chunked are indexed as a single chunk with the `preamble` slug.
+
+### Breadcrumbs
+
+Every chunk gets a breadcrumb line prepended showing its hierarchy path. This preserves context that would otherwise be lost when chunking and makes parent headings searchable.
+
+Format:
+```markdown
+> Parent Heading › Child Heading › Chunk Title
+
+Chunk content starts here...
+```
+
+Example: A chunk titled "Chunk Identity" under "Document Format › Chunking" would appear as:
+```markdown
+> Document Format › Chunking › Chunk Identity
+
+Each chunk has a unique identifier...
+```
+
+Breadcrumbs are always included—this is not configurable. They ensure that:
+- Readers understand where a chunk fits in the document hierarchy
+- Parent heading text is indexed and searchable
+- Context isn't lost when chunks are viewed in isolation
 
 ### Chunk Identity
 
@@ -213,7 +254,7 @@ Examples:
 
 The `max_chunk_size` setting (default: 50,000 characters) is a warning threshold, not a hard limit. Chunks exceeding this size are still indexed, but trigger warnings during `ra check` and indexing to alert you that some chunks may be too large for effective context use.
 
-For documents with very long sections, consider adding more h1 headings to create natural split points.
+For documents with very long sections, consider adding more headings to create natural split points.
 
 ## Indexing
 
@@ -263,7 +304,7 @@ The index stores a hash of configuration settings that affect indexing:
 - Schema version (internal, bumped when field definitions change)
 - Stemmer language
 - Text analyzer settings
-- Chunking settings (`chunk_at_headings`)
+- Size thresholds (`min_chunk_size`, `max_chunk_size`)
 
 On any ra operation that reads the index:
 
@@ -483,9 +524,11 @@ Output includes:
 
 - Detected file type
 - Parsed frontmatter (title, tags, other fields)
+- Detected chunk level (h1, h2, etc.) and why
 - Chunk breakdown with:
   - Generated chunk ID and slug
   - Title (from heading or fallback)
+  - Breadcrumb path
   - Character count
   - Size warnings if exceeding `max_chunk_size`
 - Any parse errors or warnings
@@ -500,18 +543,22 @@ Type: markdown
 Frontmatter:
   title: "Getting Started"
   tags: [intro, setup]
+Chunk level: h2 (3 headings at this level)
 
 Chunks:
   1. docs/guide.md#preamble
      Title: "Getting Started" (from frontmatter)
+     Breadcrumb: Getting Started
      Size: 234 chars
 
   2. docs/guide.md#installation
      Title: "Installation"
+     Breadcrumb: Getting Started › Installation
      Size: 1,892 chars
 
   3. docs/guide.md#configuration
      Title: "Configuration"
+     Breadcrumb: Getting Started › Configuration
      Size: 3,421 chars
 ```
 
@@ -583,15 +630,19 @@ OPTIONS:
 ### Output Format
 
 
-Default output wraps content with metadata:
+Default output wraps content with metadata, including breadcrumbs:
 
 ```
 ─── global:rust/error-handling.md#result-type ───
+> Error Handling › The Result Type
+
 # The Result Type
 
 Content of the chunk...
 
 ─── local:docs/api.md#errors ───
+> API Reference › Errors
+
 # Errors
 
 More content...
@@ -610,9 +661,10 @@ JSON output (with `--json`):
           "tree": "global",
           "path": "rust/error-handling.md",
           "title": "The Result Type",
+          "breadcrumb": "Error Handling › The Result Type",
           "score": 12.5,
           "snippet": "...the <em>Result</em> type for <em>error handling</em>...",
-          "content": "# The Result Type\n\nContent..."
+          "content": "> Error Handling › The Result Type\n\n# The Result Type\n\nContent..."
         }
       ],
       "total_matches": 8
