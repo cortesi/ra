@@ -68,8 +68,7 @@ fn home_dir() -> Result<PathBuf, ConfigError> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::process;
+    use std::{fs, process};
 
     use super::*;
 

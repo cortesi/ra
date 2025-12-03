@@ -3,9 +3,7 @@
 //! Parses individual `.ra.toml` files into intermediate `RawConfig` structures
 //! that preserve the optional nature of all fields before merging.
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
+use std::{collections::HashMap, fs, path::Path};
 
 use serde::Deserialize;
 

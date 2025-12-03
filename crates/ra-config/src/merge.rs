@@ -3,15 +3,14 @@
 //! Merges multiple `RawConfig` files into a single resolved `Config`,
 //! applying precedence rules and resolving paths.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
-use crate::discovery::is_global_config;
-use crate::parse::{
-    RawConfig, RawContextSettings, RawIncludePattern, RawSearchSettings, RawSettings,
+use crate::{
+    Config, ConfigError, ContextSettings, IncludePattern, SearchSettings, Settings, Tree,
+    discovery::is_global_config,
+    parse::{RawConfig, RawContextSettings, RawIncludePattern, RawSearchSettings, RawSettings},
+    resolve::resolve_tree_path,
 };
-use crate::resolve::resolve_tree_path;
-use crate::{Config, ConfigError, ContextSettings, IncludePattern, SearchSettings, Settings, Tree};
 
 /// A parsed config file with its source path.
 pub struct ParsedConfig {
@@ -219,8 +218,10 @@ fn convert_include_pattern(raw: &RawIncludePattern) -> IncludePattern {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::*;
 

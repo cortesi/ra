@@ -10,12 +10,13 @@ mod discovery;
 mod error;
 mod merge;
 mod parse;
+mod patterns;
 mod resolve;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-use serde::Deserialize;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
 pub use error::ConfigError;
@@ -24,7 +25,9 @@ pub use parse::{
     RawConfig, RawContextSettings, RawIncludePattern, RawSearchSettings, RawSettings,
     parse_config_file, parse_config_str,
 };
+pub use patterns::CompiledPatterns;
 pub use resolve::resolve_tree_path;
+use serde::Deserialize;
 
 /// Top-level merged configuration for ra.
 ///
@@ -44,6 +47,56 @@ pub struct Config {
     pub includes: Vec<IncludePattern>,
     /// Path to the most specific config file (determines index location).
     pub config_root: Option<PathBuf>,
+}
+
+impl Config {
+    /// Loads configuration by discovering and merging all relevant `.ra.toml` files.
+    ///
+    /// This is the main entry point for loading configuration. It:
+    /// 1. Discovers all `.ra.toml` files from `cwd` up to the filesystem root
+    /// 2. Appends `~/.ra.toml` if it exists
+    /// 3. Parses each file
+    /// 4. Merges them according to precedence rules (closest to `cwd` wins)
+    ///
+    /// Returns `Ok(Config::default())` if no configuration files are found.
+    pub fn load(cwd: &Path) -> Result<Self, ConfigError> {
+        let config_files = discover_config_files(cwd);
+        Self::load_from_files(&config_files)
+    }
+
+    /// Loads configuration from a specific list of config file paths.
+    ///
+    /// Files should be provided in precedence order: highest precedence first.
+    /// This is primarily useful for testing.
+    ///
+    /// Returns `Ok(Config::default())` if the list is empty.
+    pub fn load_from_files(files: &[PathBuf]) -> Result<Self, ConfigError> {
+        if files.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let parsed: Vec<ParsedConfig> = files
+            .iter()
+            .map(|path| {
+                let config = parse_config_file(path)?;
+                Ok(ParsedConfig {
+                    path: path.clone(),
+                    config,
+                })
+            })
+            .collect::<Result<Vec<_>, ConfigError>>()?;
+
+        merge_configs(&parsed)
+    }
+
+    /// Compiles the include patterns for this configuration.
+    ///
+    /// Returns a `CompiledPatterns` that can efficiently match file paths
+    /// against the configured include patterns for each tree.
+    pub fn compile_patterns(&self) -> Result<CompiledPatterns, ConfigError> {
+        let tree_names: Vec<String> = self.trees.iter().map(|t| t.name.clone()).collect();
+        CompiledPatterns::compile(&self.includes, &tree_names)
+    }
 }
 
 /// General settings for ra.

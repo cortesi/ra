@@ -1,7 +1,6 @@
 //! Error types for ra configuration.
 
-use std::io;
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use thiserror::Error;
 use toml::de;
