@@ -10,11 +10,13 @@
 
 mod error;
 mod frontmatter;
+mod slug;
 
 use std::path::PathBuf;
 
 pub use error::DocumentError;
 pub use frontmatter::{Frontmatter, parse_frontmatter};
+pub use slug::Slugifier;
 
 /// A parsed document ready for indexing.
 #[derive(Debug, Clone)]
