@@ -1,16 +1,13 @@
-//! Include pattern compilation and matching.
+//! Include/exclude pattern compilation and matching.
 //!
-//! Compiles glob patterns from configuration into efficient matchers
+//! Compiles glob patterns from tree configuration into efficient matchers
 //! for determining which files to index from each tree.
 
 use std::{collections::HashMap, path::Path};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
-use crate::{ConfigError, IncludePattern};
-
-/// Default patterns applied when no explicit patterns are specified for a tree.
-const DEFAULT_PATTERNS: &[&str] = &["**/*.md", "**/*.txt"];
+use crate::{ConfigError, Tree};
 
 /// Compiled glob patterns for efficient file matching.
 ///
@@ -18,80 +15,75 @@ const DEFAULT_PATTERNS: &[&str] = &["**/*.md", "**/*.txt"];
 /// a file path should be included for indexing in a given tree.
 #[derive(Debug)]
 pub struct CompiledPatterns {
-    /// Compiled patterns per tree name.
-    tree_patterns: HashMap<String, GlobSet>,
-    /// Trees that have explicit patterns defined.
-    trees_with_patterns: Vec<String>,
+    /// Compiled include patterns per tree name.
+    include_patterns: HashMap<String, GlobSet>,
+    /// Compiled exclude patterns per tree name.
+    exclude_patterns: HashMap<String, GlobSet>,
 }
 
 impl CompiledPatterns {
-    /// Compiles include patterns into an efficient matcher.
-    ///
-    /// If a tree has no patterns defined, default patterns (`**/*.md`, `**/*.txt`)
-    /// will be used for that tree.
-    ///
-    /// The `all_trees` parameter lists all tree names that should have patterns.
-    /// Trees not mentioned in `includes` will get default patterns.
-    pub fn compile(includes: &[IncludePattern], all_trees: &[String]) -> Result<Self, ConfigError> {
-        let mut tree_patterns: HashMap<String, GlobSetBuilder> = HashMap::new();
-        let mut trees_with_patterns: Vec<String> = Vec::new();
+    /// Compiles include/exclude patterns from trees into efficient matchers.
+    pub fn compile(trees: &[Tree]) -> Result<Self, ConfigError> {
+        let mut include_patterns: HashMap<String, GlobSet> = HashMap::new();
+        let mut exclude_patterns: HashMap<String, GlobSet> = HashMap::new();
 
-        // Group patterns by tree
-        for include in includes {
-            trees_with_patterns.push(include.tree.clone());
-            tree_patterns
-                .entry(include.tree.clone())
-                .or_insert_with(GlobSetBuilder::new)
-                .add(compile_glob(&include.pattern)?);
-        }
-
-        // Add default patterns for trees without explicit patterns
-        for tree_name in all_trees {
-            if !tree_patterns.contains_key(tree_name) {
-                let mut builder = GlobSetBuilder::new();
-                for pattern in DEFAULT_PATTERNS {
-                    builder.add(compile_glob(pattern)?);
-                }
-                tree_patterns.insert(tree_name.clone(), builder);
+        for tree in trees {
+            // Build include patterns
+            let mut include_builder = GlobSetBuilder::new();
+            for pattern in &tree.include {
+                include_builder.add(compile_glob(pattern)?);
             }
-        }
-
-        // Build all GlobSets
-        let tree_patterns = tree_patterns
-            .into_iter()
-            .map(|(name, builder)| {
-                let globset = builder.build().map_err(|e| ConfigError::InvalidPattern {
-                    pattern: format!("<combined patterns for {name}>"),
+            let include_set = include_builder
+                .build()
+                .map_err(|e| ConfigError::InvalidPattern {
+                    pattern: format!("<combined include patterns for {}>", tree.name),
                     source: e,
                 })?;
-                Ok((name, globset))
-            })
-            .collect::<Result<HashMap<_, _>, ConfigError>>()?;
+            include_patterns.insert(tree.name.clone(), include_set);
+
+            // Build exclude patterns
+            let mut exclude_builder = GlobSetBuilder::new();
+            for pattern in &tree.exclude {
+                exclude_builder.add(compile_glob(pattern)?);
+            }
+            let exclude_set = exclude_builder
+                .build()
+                .map_err(|e| ConfigError::InvalidPattern {
+                    pattern: format!("<combined exclude patterns for {}>", tree.name),
+                    source: e,
+                })?;
+            exclude_patterns.insert(tree.name.clone(), exclude_set);
+        }
 
         Ok(Self {
-            tree_patterns,
-            trees_with_patterns,
+            include_patterns,
+            exclude_patterns,
         })
     }
 
     /// Checks if a path matches the patterns for a given tree.
     ///
+    /// A file matches if it matches at least one include pattern
+    /// and does not match any exclude pattern.
+    ///
     /// The path should be relative to the tree root.
     /// Returns `false` if the tree has no patterns defined.
     pub fn matches(&self, tree: &str, path: &Path) -> bool {
-        self.tree_patterns
+        let includes = self
+            .include_patterns
             .get(tree)
-            .is_some_and(|patterns| patterns.is_match(path))
+            .is_some_and(|p| p.is_match(path));
+        let excludes = self
+            .exclude_patterns
+            .get(tree)
+            .is_some_and(|p| p.is_match(path));
+
+        includes && !excludes
     }
 
-    /// Returns the names of all trees that have patterns (explicit or default).
+    /// Returns the names of all trees that have patterns.
     pub fn trees(&self) -> impl Iterator<Item = &str> {
-        self.tree_patterns.keys().map(String::as_str)
-    }
-
-    /// Returns whether a tree has explicit patterns defined (vs default patterns).
-    pub fn has_explicit_patterns(&self, tree: &str) -> bool {
-        self.trees_with_patterns.iter().any(|t| t == tree)
+        self.include_patterns.keys().map(String::as_str)
     }
 }
 
@@ -105,22 +97,30 @@ fn compile_glob(pattern: &str) -> Result<Glob, ConfigError> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+
+    fn make_tree(name: &str, include: Vec<&str>, exclude: Vec<&str>) -> Tree {
+        Tree {
+            name: name.to_string(),
+            path: PathBuf::from("/dummy"),
+            is_global: false,
+            include: include.into_iter().map(String::from).collect(),
+            exclude: exclude.into_iter().map(String::from).collect(),
+        }
+    }
 
     #[test]
     fn test_compile_empty_patterns() {
-        let patterns = CompiledPatterns::compile(&[], &[]).unwrap();
+        let patterns = CompiledPatterns::compile(&[]).unwrap();
         assert_eq!(patterns.trees().count(), 0);
     }
 
     #[test]
     fn test_compile_single_pattern() {
-        let includes = vec![IncludePattern {
-            tree: "docs".into(),
-            pattern: "**/*.md".into(),
-        }];
-
-        let patterns = CompiledPatterns::compile(&includes, &["docs".into()]).unwrap();
+        let trees = vec![make_tree("docs", vec!["**/*.md"], vec![])];
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
 
         assert!(patterns.matches("docs", Path::new("readme.md")));
         assert!(patterns.matches("docs", Path::new("guide/intro.md")));
@@ -128,19 +128,9 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_multiple_patterns_same_tree() {
-        let includes = vec![
-            IncludePattern {
-                tree: "docs".into(),
-                pattern: "**/*.md".into(),
-            },
-            IncludePattern {
-                tree: "docs".into(),
-                pattern: "**/*.txt".into(),
-            },
-        ];
-
-        let patterns = CompiledPatterns::compile(&includes, &["docs".into()]).unwrap();
+    fn test_compile_multiple_include_patterns() {
+        let trees = vec![make_tree("docs", vec!["**/*.md", "**/*.txt"], vec![])];
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
 
         assert!(patterns.matches("docs", Path::new("readme.md")));
         assert!(patterns.matches("docs", Path::new("notes.txt")));
@@ -149,19 +139,11 @@ mod tests {
 
     #[test]
     fn test_compile_patterns_multiple_trees() {
-        let includes = vec![
-            IncludePattern {
-                tree: "global".into(),
-                pattern: "**/rust/**".into(),
-            },
-            IncludePattern {
-                tree: "local".into(),
-                pattern: "**/*.md".into(),
-            },
+        let trees = vec![
+            make_tree("global", vec!["**/rust/**"], vec![]),
+            make_tree("local", vec!["**/*.md"], vec![]),
         ];
-
-        let patterns =
-            CompiledPatterns::compile(&includes, &["global".into(), "local".into()]).unwrap();
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
 
         assert!(patterns.matches("global", Path::new("rust/guide.md")));
         assert!(patterns.matches("global", Path::new("docs/rust/errors.txt")));
@@ -172,61 +154,38 @@ mod tests {
     }
 
     #[test]
-    fn test_default_patterns_applied() {
-        // Tree with no explicit patterns should get defaults
-        let patterns = CompiledPatterns::compile(&[], &["docs".into()]).unwrap();
+    fn test_exclude_patterns() {
+        let trees = vec![make_tree("docs", vec!["**/*.md"], vec!["**/drafts/**"])];
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
 
-        // Default patterns are **/*.md and **/*.txt
         assert!(patterns.matches("docs", Path::new("readme.md")));
-        assert!(patterns.matches("docs", Path::new("notes.txt")));
-        assert!(patterns.matches("docs", Path::new("deep/nested/file.md")));
-        assert!(!patterns.matches("docs", Path::new("code.rs")));
+        assert!(patterns.matches("docs", Path::new("guide/intro.md")));
+        // Excluded by drafts pattern
+        assert!(!patterns.matches("docs", Path::new("drafts/wip.md")));
+        assert!(!patterns.matches("docs", Path::new("docs/drafts/new.md")));
     }
 
     #[test]
-    fn test_explicit_patterns_override_defaults() {
-        // Tree with explicit patterns should NOT get defaults
-        let includes = vec![IncludePattern {
-            tree: "docs".into(),
-            pattern: "**/*.rst".into(),
-        }];
+    fn test_exclude_takes_precedence() {
+        // File matches both include and exclude - exclude wins
+        let trees = vec![make_tree("docs", vec!["**/*.md"], vec!["secret.md"])];
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
 
-        let patterns = CompiledPatterns::compile(&includes, &["docs".into()]).unwrap();
-
-        // Only .rst files should match, not .md or .txt
-        assert!(patterns.matches("docs", Path::new("guide.rst")));
-        assert!(!patterns.matches("docs", Path::new("readme.md")));
-        assert!(!patterns.matches("docs", Path::new("notes.txt")));
-    }
-
-    #[test]
-    fn test_has_explicit_patterns() {
-        let includes = vec![IncludePattern {
-            tree: "explicit".into(),
-            pattern: "**/*.md".into(),
-        }];
-
-        let patterns =
-            CompiledPatterns::compile(&includes, &["explicit".into(), "defaulted".into()]).unwrap();
-
-        assert!(patterns.has_explicit_patterns("explicit"));
-        assert!(!patterns.has_explicit_patterns("defaulted"));
+        assert!(patterns.matches("docs", Path::new("readme.md")));
+        assert!(!patterns.matches("docs", Path::new("secret.md")));
     }
 
     #[test]
     fn test_matches_unknown_tree() {
-        let patterns = CompiledPatterns::compile(&[], &["docs".into()]).unwrap();
+        let trees = vec![make_tree("docs", vec!["**/*.md"], vec![])];
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
         assert!(!patterns.matches("unknown", Path::new("readme.md")));
     }
 
     #[test]
     fn test_invalid_pattern_error() {
-        let includes = vec![IncludePattern {
-            tree: "docs".into(),
-            pattern: "[invalid".into(), // Unclosed bracket
-        }];
-
-        let result = CompiledPatterns::compile(&includes, &["docs".into()]);
+        let trees = vec![make_tree("docs", vec!["[invalid"], vec![])];
+        let result = CompiledPatterns::compile(&trees);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -235,34 +194,9 @@ mod tests {
     }
 
     #[test]
-    fn test_complex_glob_patterns() {
-        let includes = vec![
-            IncludePattern {
-                tree: "docs".into(),
-                pattern: "src/**/*.md".into(),
-            },
-            IncludePattern {
-                tree: "docs".into(),
-                pattern: "!src/internal/**".into(),
-            },
-        ];
-
-        let patterns = CompiledPatterns::compile(&includes, &["docs".into()]).unwrap();
-
-        assert!(patterns.matches("docs", Path::new("src/guide.md")));
-        assert!(patterns.matches("docs", Path::new("src/api/readme.md")));
-        // Note: globset doesn't support negation patterns directly,
-        // so this just tests the pattern compiles
-    }
-
-    #[test]
     fn test_pattern_with_extensions() {
-        let includes = vec![IncludePattern {
-            tree: "docs".into(),
-            pattern: "**/*.{md,txt,rst}".into(),
-        }];
-
-        let patterns = CompiledPatterns::compile(&includes, &["docs".into()]).unwrap();
+        let trees = vec![make_tree("docs", vec!["**/*.{md,txt,rst}"], vec![])];
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
 
         assert!(patterns.matches("docs", Path::new("readme.md")));
         assert!(patterns.matches("docs", Path::new("notes.txt")));
@@ -272,22 +206,14 @@ mod tests {
 
     #[test]
     fn test_trees_iterator() {
-        let includes = vec![
-            IncludePattern {
-                tree: "alpha".into(),
-                pattern: "**/*.md".into(),
-            },
-            IncludePattern {
-                tree: "beta".into(),
-                pattern: "**/*.txt".into(),
-            },
+        let trees = vec![
+            make_tree("alpha", vec!["**/*.md"], vec![]),
+            make_tree("beta", vec!["**/*.txt"], vec![]),
         ];
+        let patterns = CompiledPatterns::compile(&trees).unwrap();
 
-        let patterns =
-            CompiledPatterns::compile(&includes, &["alpha".into(), "beta".into()]).unwrap();
-
-        let mut trees: Vec<_> = patterns.trees().collect();
-        trees.sort();
-        assert_eq!(trees, vec!["alpha", "beta"]);
+        let mut tree_names: Vec<_> = patterns.trees().collect();
+        tree_names.sort();
+        assert_eq!(tree_names, vec!["alpha", "beta"]);
     }
 }

@@ -52,7 +52,6 @@ fn test_load_no_config_returns_default() {
     let config = Config::load(env.path()).unwrap();
 
     assert!(config.trees.is_empty());
-    assert!(config.includes.is_empty());
     assert!(config.config_root.is_none());
     // Check default settings
     assert_eq!(config.settings.default_limit, 5);
@@ -68,8 +67,8 @@ fn test_load_single_config() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 
 [settings]
 default_limit = 10
@@ -102,8 +101,8 @@ fn test_load_nested_configs_merging() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-root = "{}"
+[tree.root]
+path = "{}"
 
 [settings]
 default_limit = 5
@@ -118,8 +117,8 @@ local_boost = 1.0
         "project/.ra.toml",
         &format!(
             r#"
-[trees]
-local = "{}"
+[tree.local]
+path = "{}"
 
 [settings]
 default_limit = 20
@@ -157,8 +156,8 @@ fn test_load_tree_shadowing() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 "#,
             parent_docs.display()
         ),
@@ -169,8 +168,8 @@ docs = "{}"
         "child/.ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 "#,
             child_docs.display()
         ),
@@ -185,44 +184,53 @@ docs = "{}"
 }
 
 #[test]
-fn test_load_include_patterns_concatenated() {
+fn test_load_tree_with_include_patterns() {
     let env = TestEnv::new();
     let docs = env.create_dir("docs");
-    let project = env.create_dir("project");
 
-    // Parent config with include pattern
     env.create_file(
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
-
-[[include]]
-tree = "docs"
-pattern = "**/*.md"
+[tree.docs]
+path = "{}"
+include = ["**/*.md", "**/*.txt"]
 "#,
             docs.display()
         ),
     );
 
-    // Child config with additional include pattern
+    let config = Config::load(env.path()).unwrap();
+
+    assert_eq!(config.trees.len(), 1);
+    assert_eq!(config.trees[0].include, vec!["**/*.md", "**/*.txt"]);
+    assert!(config.trees[0].exclude.is_empty());
+}
+
+#[test]
+fn test_load_tree_with_exclude_patterns() {
+    let env = TestEnv::new();
+    let docs = env.create_dir("docs");
+
     env.create_file(
-        "project/.ra.toml",
-        r#"
-[[include]]
-tree = "docs"
-pattern = "**/*.txt"
+        ".ra.toml",
+        &format!(
+            r#"
+[tree.docs]
+path = "{}"
+include = ["**/*.md"]
+exclude = ["**/drafts/**", "**/private/**"]
 "#,
+            docs.display()
+        ),
     );
 
-    let config = Config::load(&project).unwrap();
+    let config = Config::load(env.path()).unwrap();
 
-    // Should have both patterns
-    assert_eq!(config.includes.len(), 2);
-    let patterns: Vec<_> = config.includes.iter().map(|i| i.pattern.as_str()).collect();
-    assert!(patterns.contains(&"**/*.md"));
-    assert!(patterns.contains(&"**/*.txt"));
+    assert_eq!(
+        config.trees[0].exclude,
+        vec!["**/drafts/**", "**/private/**"]
+    );
 }
 
 #[test]
@@ -236,8 +244,8 @@ fn test_load_relative_tree_path() {
     env.create_file(
         ".ra.toml",
         r#"
-[trees]
-docs = "./docs"
+[tree.docs]
+path = "./docs"
 "#,
     );
 
@@ -256,8 +264,8 @@ fn test_load_error_nonexistent_tree_path() {
     env.create_file(
         ".ra.toml",
         r#"
-[trees]
-docs = "./nonexistent"
+[tree.docs]
+path = "./nonexistent"
 "#,
     );
 
@@ -276,7 +284,7 @@ fn test_load_error_invalid_toml() {
     env.create_file(
         ".ra.toml",
         r#"
-[trees
+[tree
 invalid toml
 "#,
     );
@@ -294,8 +302,8 @@ fn test_load_error_tree_path_is_file() {
     env.create_file(
         ".ra.toml",
         r#"
-[trees]
-docs = "./docs.txt"
+[tree.docs]
+path = "./docs.txt"
 "#,
     );
 
@@ -316,8 +324,8 @@ fn test_load_with_all_settings() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 
 [settings]
 default_limit = 15
@@ -377,16 +385,9 @@ fn test_compile_patterns_from_config() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
-
-[[include]]
-tree = "docs"
-pattern = "**/*.md"
-
-[[include]]
-tree = "docs"
-pattern = "**/*.rst"
+[tree.docs]
+path = "{}"
+include = ["**/*.md", "**/*.rst"]
 "#,
             docs.display()
         ),
@@ -401,6 +402,33 @@ pattern = "**/*.rst"
 }
 
 #[test]
+fn test_compile_patterns_with_exclude() {
+    let env = TestEnv::new();
+    let docs = env.create_dir("docs");
+
+    env.create_file(
+        ".ra.toml",
+        &format!(
+            r#"
+[tree.docs]
+path = "{}"
+include = ["**/*.md"]
+exclude = ["**/drafts/**"]
+"#,
+            docs.display()
+        ),
+    );
+
+    let config = Config::load(env.path()).unwrap();
+    let patterns = config.compile_patterns().unwrap();
+
+    assert!(patterns.matches("docs", Path::new("readme.md")));
+    assert!(patterns.matches("docs", Path::new("guide/intro.md")));
+    assert!(!patterns.matches("docs", Path::new("drafts/wip.md")));
+    assert!(!patterns.matches("docs", Path::new("guide/drafts/new.md")));
+}
+
+#[test]
 fn test_compile_patterns_default_when_no_includes() {
     let env = TestEnv::new();
     let docs = env.create_dir("docs");
@@ -409,8 +437,8 @@ fn test_compile_patterns_default_when_no_includes() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 "#,
             docs.display()
         ),
@@ -441,8 +469,8 @@ fn test_load_from_files_single_file() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 
 [settings]
 default_limit = 42
@@ -476,8 +504,8 @@ default_limit = 100
         "low/.ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 
 [settings]
 default_limit = 1
@@ -509,8 +537,8 @@ fn test_context_patterns_merge() {
         ".ra.toml",
         &format!(
             r#"
-[trees]
-docs = "{}"
+[tree.docs]
+path = "{}"
 
 [context.patterns]
 "*.rs" = ["rust", "cargo"]

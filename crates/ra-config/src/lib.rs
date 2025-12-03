@@ -12,6 +12,7 @@ mod merge;
 mod parse;
 mod patterns;
 mod resolve;
+mod templates;
 mod validate;
 
 use std::{
@@ -23,12 +24,13 @@ pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, 
 pub use error::ConfigError;
 pub use merge::{ParsedConfig, merge_configs};
 pub use parse::{
-    RawConfig, RawContextSettings, RawIncludePattern, RawSearchSettings, RawSettings,
+    RawConfig, RawContextSettings, RawSearchSettings, RawSettings, RawTree, parse_config,
     parse_config_file, parse_config_str,
 };
 pub use patterns::CompiledPatterns;
 pub use resolve::resolve_tree_path;
 use serde::{Deserialize, Serialize};
+pub use templates::{global_template, local_template};
 pub use validate::ConfigWarning;
 use validate::validate_config;
 
@@ -44,11 +46,9 @@ pub struct Config {
     pub search: SearchSettings,
     /// Context command settings.
     pub context: ContextSettings,
-    /// Resolved trees with their absolute paths.
+    /// Resolved trees with their absolute paths and patterns.
     pub trees: Vec<Tree>,
-    /// Include patterns determining which files to index from each tree.
-    pub includes: Vec<IncludePattern>,
-    /// Path to the most specific config file (determines index location).
+    /// Directory containing the most specific config file (determines index location).
     pub config_root: Option<PathBuf>,
 }
 
@@ -92,13 +92,12 @@ impl Config {
         merge_configs(&parsed)
     }
 
-    /// Compiles the include patterns for this configuration.
+    /// Compiles the include/exclude patterns for this configuration.
     ///
     /// Returns a `CompiledPatterns` that can efficiently match file paths
-    /// against the configured include patterns for each tree.
+    /// against the configured patterns for each tree.
     pub fn compile_patterns(&self) -> Result<CompiledPatterns, ConfigError> {
-        let tree_names: Vec<String> = self.trees.iter().map(|t| t.name.clone()).collect();
-        CompiledPatterns::compile(&self.includes, &tree_names)
+        CompiledPatterns::compile(&self.trees)
     }
 
     /// Validates the configuration and returns any warnings.
@@ -254,21 +253,16 @@ impl From<&ContextSettings> for SerializableContextSettings {
 /// A named knowledge tree pointing to a directory of documents.
 #[derive(Debug, Clone)]
 pub struct Tree {
-    /// Name of the tree (used in include patterns and chunk IDs).
+    /// Name of the tree (used in chunk IDs).
     pub name: String,
     /// Resolved absolute path to the tree directory.
     pub path: PathBuf,
     /// Whether this tree was defined in the global `~/.ra.toml`.
     pub is_global: bool,
-}
-
-/// An include pattern that selects files from a tree for indexing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IncludePattern {
-    /// Name of the tree this pattern applies to.
-    pub tree: String,
-    /// Glob pattern to match files within the tree.
-    pub pattern: String,
+    /// Include patterns for files to index (defaults to ["**/*.md", "**/*.txt"]).
+    pub include: Vec<String>,
+    /// Exclude patterns for files to skip (defaults to empty).
+    pub exclude: Vec<String>,
 }
 
 #[cfg(test)]
@@ -307,7 +301,6 @@ mod tests {
     fn test_config_default() {
         let config = Config::default();
         assert!(config.trees.is_empty());
-        assert!(config.includes.is_empty());
         assert!(config.config_root.is_none());
     }
 
@@ -317,27 +310,13 @@ mod tests {
             name: "docs".into(),
             path: PathBuf::from("/home/user/docs"),
             is_global: false,
+            include: vec!["**/*.md".into()],
+            exclude: vec![],
         };
         assert_eq!(tree.name, "docs");
         assert!(!tree.is_global);
-    }
-
-    #[test]
-    fn test_include_pattern_equality() {
-        let p1 = IncludePattern {
-            tree: "global".into(),
-            pattern: "**/*.md".into(),
-        };
-        let p2 = IncludePattern {
-            tree: "global".into(),
-            pattern: "**/*.md".into(),
-        };
-        let p3 = IncludePattern {
-            tree: "local".into(),
-            pattern: "**/*.md".into(),
-        };
-        assert_eq!(p1, p2);
-        assert_ne!(p1, p3);
+        assert_eq!(tree.include, vec!["**/*.md"]);
+        assert!(tree.exclude.is_empty());
     }
 
     #[test]

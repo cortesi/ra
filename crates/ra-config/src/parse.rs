@@ -6,6 +6,7 @@
 use std::{collections::HashMap, fs, path::Path};
 
 use serde::Deserialize;
+use toml::de::Error as TomlError;
 
 use crate::ConfigError;
 
@@ -22,10 +23,19 @@ pub struct RawConfig {
     pub search: Option<RawSearchSettings>,
     /// Context settings section.
     pub context: Option<RawContextSettings>,
-    /// Tree definitions: name -> path.
-    pub trees: Option<HashMap<String, String>>,
-    /// Include patterns for selecting files from trees.
-    pub include: Option<Vec<RawIncludePattern>>,
+    /// Tree definitions: name -> tree config.
+    pub tree: Option<HashMap<String, RawTree>>,
+}
+
+/// Raw tree definition from TOML.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawTree {
+    /// Path to the tree directory.
+    pub path: String,
+    /// Include patterns (optional, defaults to ["**/*.md", "**/*.txt"]).
+    pub include: Option<Vec<String>>,
+    /// Exclude patterns (optional, defaults to none).
+    pub exclude: Option<Vec<String>>,
 }
 
 /// Raw general settings.
@@ -72,15 +82,6 @@ pub struct RawContextSettings {
     pub patterns: Option<HashMap<String, Vec<String>>>,
 }
 
-/// Raw include pattern from TOML.
-#[derive(Debug, Clone, Deserialize)]
-pub struct RawIncludePattern {
-    /// Name of the tree this pattern applies to.
-    pub tree: String,
-    /// Glob pattern to match files.
-    pub pattern: String,
-}
-
 /// Parses a configuration file from disk.
 ///
 /// Returns a `RawConfig` with all fields as optionals, ready for merging.
@@ -103,6 +104,13 @@ pub fn parse_config_str(contents: &str, path: &Path) -> Result<RawConfig, Config
     })
 }
 
+/// Parses configuration from a TOML string without path context.
+///
+/// Useful for validating template content.
+pub fn parse_config(contents: &str) -> Result<RawConfig, TomlError> {
+    toml::from_str(contents)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,20 +121,41 @@ mod tests {
         assert!(config.settings.is_none());
         assert!(config.search.is_none());
         assert!(config.context.is_none());
-        assert!(config.trees.is_none());
-        assert!(config.include.is_none());
+        assert!(config.tree.is_none());
     }
 
     #[test]
-    fn test_parse_minimal_trees_only() {
+    fn test_parse_minimal_tree() {
         let toml = r#"
-[trees]
-docs = "./docs"
+[tree.docs]
+path = "./docs"
 "#;
         let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
         assert!(config.settings.is_none());
-        let trees = config.trees.unwrap();
-        assert_eq!(trees.get("docs"), Some(&"./docs".to_string()));
+        let trees = config.tree.unwrap();
+        let docs = trees.get("docs").unwrap();
+        assert_eq!(docs.path, "./docs");
+        assert!(docs.include.is_none());
+        assert!(docs.exclude.is_none());
+    }
+
+    #[test]
+    fn test_parse_tree_with_patterns() {
+        let toml = r#"
+[tree.docs]
+path = "./docs"
+include = ["**/*.md", "**/*.txt"]
+exclude = ["**/drafts/**"]
+"#;
+        let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
+        let trees = config.tree.unwrap();
+        let docs = trees.get("docs").unwrap();
+        assert_eq!(docs.path, "./docs");
+        assert_eq!(
+            docs.include,
+            Some(vec!["**/*.md".to_string(), "**/*.txt".to_string()])
+        );
+        assert_eq!(docs.exclude, Some(vec!["**/drafts/**".to_string()]));
     }
 
     #[test]
@@ -216,32 +245,6 @@ sample_size = 100000
     }
 
     #[test]
-    fn test_parse_include_patterns() {
-        let toml = r#"
-[[include]]
-tree = "global"
-pattern = "**/rust/**"
-
-[[include]]
-tree = "global"
-pattern = "**/git/**"
-
-[[include]]
-tree = "local"
-pattern = "**/*"
-"#;
-        let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
-        let includes = config.include.unwrap();
-        assert_eq!(includes.len(), 3);
-        assert_eq!(includes[0].tree, "global");
-        assert_eq!(includes[0].pattern, "**/rust/**");
-        assert_eq!(includes[1].tree, "global");
-        assert_eq!(includes[1].pattern, "**/git/**");
-        assert_eq!(includes[2].tree, "local");
-        assert_eq!(includes[2].pattern, "**/*");
-    }
-
-    #[test]
     fn test_parse_full_config() {
         let toml = r#"
 [settings]
@@ -258,17 +261,12 @@ limit = 10
 [context.patterns]
 "*.rs" = ["rust"]
 
-[trees]
-global = "~/docs"
-local = "./docs"
+[tree.global]
+path = "~/docs"
 
-[[include]]
-tree = "global"
-pattern = "**/rust/**"
-
-[[include]]
-tree = "local"
-pattern = "**/*"
+[tree.local]
+path = "./docs"
+include = ["**/*"]
 "#;
         let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
 
@@ -282,11 +280,10 @@ pattern = "**/*"
         assert_eq!(context.limit, Some(10));
         assert!(context.patterns.is_some());
 
-        let trees = config.trees.unwrap();
+        let trees = config.tree.unwrap();
         assert_eq!(trees.len(), 2);
-
-        let includes = config.include.unwrap();
-        assert_eq!(includes.len(), 2);
+        assert_eq!(trees.get("global").unwrap().path, "~/docs");
+        assert_eq!(trees.get("local").unwrap().path, "./docs");
     }
 
     #[test]
@@ -337,21 +334,26 @@ default_limit = "not a number"
     #[test]
     fn test_parse_multiple_trees() {
         let toml = r#"
-[trees]
-global = "~/docs"
-local = "./docs"
-project = "../shared/docs"
-reference = "/absolute/path/docs"
+[tree.global]
+path = "~/docs"
+
+[tree.local]
+path = "./docs"
+
+[tree.project]
+path = "../shared/docs"
+include = ["**/*.md"]
+
+[tree.reference]
+path = "/absolute/path/docs"
+exclude = ["**/private/**"]
 "#;
         let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
-        let trees = config.trees.unwrap();
+        let trees = config.tree.unwrap();
         assert_eq!(trees.len(), 4);
-        assert_eq!(trees.get("global"), Some(&"~/docs".to_string()));
-        assert_eq!(trees.get("local"), Some(&"./docs".to_string()));
-        assert_eq!(trees.get("project"), Some(&"../shared/docs".to_string()));
-        assert_eq!(
-            trees.get("reference"),
-            Some(&"/absolute/path/docs".to_string())
-        );
+        assert_eq!(trees.get("global").unwrap().path, "~/docs");
+        assert_eq!(trees.get("local").unwrap().path, "./docs");
+        assert_eq!(trees.get("project").unwrap().path, "../shared/docs");
+        assert_eq!(trees.get("reference").unwrap().path, "/absolute/path/docs");
     }
 }

@@ -8,7 +8,10 @@ description = "Tantivy-based search index for ra"
 workspace = true
 
 [dependencies]
+directories = "6.0.0"
+ra-config = { version = "0.1.0", path = "../ra-config" }
 ra-document = { path = "../ra-document" }
+siphasher = "1.0.1"
 tantivy = "0.22"
 thiserror = "2"
 

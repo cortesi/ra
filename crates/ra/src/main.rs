@@ -10,6 +10,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use ra_config::{
     CONFIG_FILENAME, Config, ConfigWarning, discover_config_files, global_config_path,
+    global_template, local_template,
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
 use ra_highlight::{Highlighter, dim, header, rule, subheader};
@@ -153,12 +154,6 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Default configuration template with commented examples.
-const CONFIG_TEMPLATE: &str = include_str!("../templates/config.toml");
-
-/// Global configuration template (simpler, focuses on shared resources).
-const GLOBAL_CONFIG_TEMPLATE: &str = include_str!("../templates/config-global.toml");
-
 /// Implements the `ra init` command.
 fn cmd_init(global: bool, force: bool) -> ExitCode {
     let config_path = if global {
@@ -190,11 +185,11 @@ fn cmd_init(global: bool, force: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Write the config file
+    // Write the config file (commented out as an example)
     let template = if global {
-        GLOBAL_CONFIG_TEMPLATE
+        global_template()
     } else {
-        CONFIG_TEMPLATE
+        local_template()
     };
 
     if let Err(e) = fs::write(&config_path, template) {
@@ -305,17 +300,15 @@ fn cmd_status() -> ExitCode {
     }
     println!();
 
-    // Show include patterns
+    // Show include/exclude patterns per tree
     println!("{}", subheader("Include patterns:"));
-    if config.includes.is_empty() {
-        println!("  {}", dim("(using defaults: **/*.md, **/*.txt)"));
-    } else {
-        for include in &config.includes {
-            println!(
-                "  {} {}",
-                dim(&format!("[{}]", include.tree)),
-                include.pattern
-            );
+    for tree in &config.trees {
+        println!("  {}:", dim(&tree.name));
+        for pattern in &tree.include {
+            println!("    + {pattern}");
+        }
+        for pattern in &tree.exclude {
+            println!("    - {} {}", dim("(exclude)"), pattern);
         }
     }
     println!();
@@ -429,19 +422,13 @@ fn print_hints(warnings: &[ConfigWarning]) {
     for warning in warnings {
         match warning {
             ConfigWarning::NoTreesDefined => {
-                hints.push("Add a [trees] section to define knowledge trees.");
+                hints.push("Add a [tree.<name>] section to define knowledge trees.");
             }
             ConfigWarning::TreePathMissing { .. } => {
                 hints.push("Create the missing directory or update the tree path.");
             }
-            ConfigWarning::PatternMatchesNothing { .. } => {
-                hints.push("Check that the pattern matches files in the tree directory.");
-            }
-            ConfigWarning::UnreferencedTree { .. } => {
-                hints.push("Add [[include]] patterns for unreferenced trees, or remove them.");
-            }
-            ConfigWarning::UndefinedTreeInPattern { .. } => {
-                hints.push("Define the tree in [trees] or fix the include pattern.");
+            ConfigWarning::IncludePatternMatchesNothing { .. } => {
+                hints.push("Check that the include pattern matches files in the tree directory.");
             }
             ConfigWarning::TreePathNotDirectory { .. } => {
                 hints.push("Tree paths must point to directories, not files.");

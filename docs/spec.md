@@ -37,8 +37,7 @@ Configs are merged with files closer to CWD taking precedence over those further
 ### Merge Semantics
 
 - Child configurations override parent values for scalar settings
-- Tree definitions are merged by name (child overrides parent if same name)
-- Include patterns are concatenated (child patterns evaluated after parent)
+- Tree definitions are merged by name; child completely replaces parent if same name (path, include, exclude all come from child)
 - Context patterns (`[context.patterns]`) are merged; child patterns take precedence for identical globs
 
 ### Configuration Schema
@@ -89,28 +88,24 @@ sample_size = 50000         # max bytes to analyze from large files
 "*.h" = ["c", "cpp"]
 "*.hpp" = ["cpp"]
 
-[trees]
-global = "~/docs"           # named tree pointing to a directory
+# Tree definitions: each tree has its own section with path and patterns
+[tree.global]
+path = "~/docs"             # directory containing documents
+# include/exclude patterns are optional; defaults to ["**/*.md", "**/*.txt"]
 ```
 
 ```toml
 # ./project/.ra.toml (local)
 
-[trees]
-local = "./docs"            # project-specific documentation
+# Project-specific tree with explicit include patterns
+[tree.local]
+path = "./docs"
+include = ["**/*"]          # all files in docs
 
-# Include patterns select which files from which trees to index
-[[include]]
-tree = "global"
-pattern = "**/rust/**"      # only rust-related global docs
-
-[[include]]
-tree = "global" 
-pattern = "**/git/**"       # and git-related global docs
-
-[[include]]
-tree = "local"
-pattern = "**/*"            # all local docs
+# Override global tree with selective includes
+[tree.global]
+path = "~/docs"
+include = ["**/rust/**", "**/git/**"]  # only rust and git docs
 
 # Project-specific context patterns (merged with global patterns)
 [context.patterns]
@@ -122,11 +117,22 @@ pattern = "**/*"            # all local docs
 
 ### Pattern Matching
 
-Patterns use glob syntax (via the `globset` crate) and match against paths relative to the tree root. If no include patterns are specified for a tree, all `.md` and `.txt` files are included.
+Patterns use glob syntax (via the `globset` crate) and match against paths relative to the tree root.
+
+Each tree can specify:
+- `include`: Array of glob patterns for files to index (default: `["**/*.md", "**/*.txt"]`)
+- `exclude`: Array of glob patterns for files to skip (default: none)
+
+Exclude patterns take precedence over include patterns. A file must match at least one include pattern and no exclude patterns to be indexed.
 
 ### Tree Resolution
 
-Trees defined in child configs shadow parent definitions of the same name. A tree path may be:
+Trees defined in child configs completely replace parent definitions of the same name. This means:
+- The child's `path` is used (no inheritance)
+- The child's `include` patterns are used (no merging with parent)
+- The child's `exclude` patterns are used (no merging with parent)
+
+A tree path may be:
 
 - Absolute: `~/docs`, `/home/user/docs`
 - Relative to config file: `./docs`, `../shared/docs`

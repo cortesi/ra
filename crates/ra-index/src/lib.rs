@@ -4,6 +4,8 @@
 //! It handles:
 //! - Document conversion from `ra-document` chunks
 //! - Index creation, writing, and management
+//! - Index location resolution based on configuration
+//! - Configuration hash tracking for index versioning
 //!
 //! # Example
 //!
@@ -31,11 +33,21 @@
 
 #![warn(missing_docs)]
 
+mod config_hash;
 mod document;
 mod error;
+mod location;
 mod schema;
+mod status;
 mod writer;
 
+pub use config_hash::{IndexingConfig, SCHEMA_VERSION, compute_config_hash};
 pub use document::ChunkDocument;
 pub use error::IndexError;
+pub use location::{
+    config_hash_path, global_index_directory, index_directory, is_local_config, manifest_path,
+};
+pub use status::{
+    IndexStatus, detect_index_status, index_exists, read_stored_hash, write_config_hash,
+};
 pub use writer::IndexWriter;

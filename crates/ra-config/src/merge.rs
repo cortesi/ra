@@ -6,11 +6,14 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    Config, ConfigError, ContextSettings, IncludePattern, SearchSettings, Settings, Tree,
+    Config, ConfigError, ContextSettings, SearchSettings, Settings, Tree,
     discovery::is_global_config,
-    parse::{RawConfig, RawContextSettings, RawIncludePattern, RawSearchSettings, RawSettings},
+    parse::{RawConfig, RawContextSettings, RawSearchSettings, RawSettings, RawTree},
     resolve::resolve_tree_path,
 };
+
+/// Default include patterns when none are specified.
+const DEFAULT_INCLUDE_PATTERNS: &[&str] = &["**/*.md", "**/*.txt"];
 
 /// A parsed config file with its source path.
 pub struct ParsedConfig {
@@ -27,8 +30,7 @@ pub struct ParsedConfig {
 ///
 /// Merge rules:
 /// - Scalar settings: first defined value wins (highest precedence)
-/// - Trees: merged by name, first definition wins; `is_global` based on source file
-/// - Include patterns: concatenated in order (highest precedence first)
+/// - Trees: merged by name, first definition wins completely (path, include, exclude)
 /// - Context patterns: merged, first definition for each key wins
 pub fn merge_configs(configs: &[ParsedConfig]) -> Result<Config, ConfigError> {
     if configs.is_empty() {
@@ -39,7 +41,6 @@ pub fn merge_configs(configs: &[ParsedConfig]) -> Result<Config, ConfigError> {
     let search = merge_search_settings(configs);
     let context = merge_context_settings(configs);
     let trees = merge_trees(configs)?;
-    let includes = merge_includes(configs);
     let config_root = configs
         .first()
         .map(|c| c.path.parent().unwrap().to_path_buf());
@@ -49,7 +50,6 @@ pub fn merge_configs(configs: &[ParsedConfig]) -> Result<Config, ConfigError> {
         search,
         context,
         trees,
-        includes,
         config_root,
     })
 }
@@ -152,35 +152,31 @@ fn apply_raw_context(result: &mut ContextSettings, raw: &RawContextSettings) {
 
 /// Merges trees from all configs, resolving paths.
 ///
-/// Trees are merged by name - first definition wins.
+/// Trees are merged by name - first definition wins completely.
 /// `is_global` is determined by whether the source config file is `~/.ra.toml`.
 fn merge_trees(configs: &[ParsedConfig]) -> Result<Vec<Tree>, ConfigError> {
     let mut seen: HashMap<String, Tree> = HashMap::new();
 
     // Iterate in precedence order (highest first) - first definition wins
     for parsed in configs {
-        let Some(ref trees) = parsed.config.trees else {
+        let Some(ref trees) = parsed.config.tree else {
             continue;
         };
 
         let config_dir = parsed.path.parent().unwrap();
         let is_global = is_global_config(&parsed.path);
 
-        for (name, path_str) in trees {
+        for (name, raw_tree) in trees {
             if seen.contains_key(name) {
                 // Already defined by higher-precedence config
                 continue;
             }
 
-            let resolved_path = resolve_tree_path(path_str, config_dir)?;
+            let resolved_path = resolve_tree_path(&raw_tree.path, config_dir)?;
 
             seen.insert(
                 name.clone(),
-                Tree {
-                    name: name.clone(),
-                    path: resolved_path,
-                    is_global,
-                },
+                convert_tree(name, raw_tree, resolved_path, is_global),
             );
         }
     }
@@ -191,28 +187,23 @@ fn merge_trees(configs: &[ParsedConfig]) -> Result<Vec<Tree>, ConfigError> {
     Ok(trees)
 }
 
-/// Merges include patterns from all configs.
-///
-/// Patterns are concatenated in precedence order (highest first).
-fn merge_includes(configs: &[ParsedConfig]) -> Vec<IncludePattern> {
-    let mut result = Vec::new();
+/// Converts a raw tree to the final type with defaults applied.
+fn convert_tree(name: &str, raw: &RawTree, resolved_path: PathBuf, is_global: bool) -> Tree {
+    let include = raw.include.clone().unwrap_or_else(|| {
+        DEFAULT_INCLUDE_PATTERNS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    });
 
-    for parsed in configs {
-        if let Some(ref includes) = parsed.config.include {
-            for raw in includes {
-                result.push(convert_include_pattern(raw));
-            }
-        }
-    }
+    let exclude = raw.exclude.clone().unwrap_or_default();
 
-    result
-}
-
-/// Converts a raw include pattern to the final type.
-fn convert_include_pattern(raw: &RawIncludePattern) -> IncludePattern {
-    IncludePattern {
-        tree: raw.tree.clone(),
-        pattern: raw.pattern.clone(),
+    Tree {
+        name: name.to_string(),
+        path: resolved_path,
+        is_global,
+        include,
+        exclude,
     }
 }
 
@@ -245,22 +236,6 @@ mod tests {
             fs::create_dir_all(&path).unwrap();
             path
         }
-
-        fn create_config(&self, rel_path: &str, content: &str) -> PathBuf {
-            let path = self.root.path().join(rel_path);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).unwrap();
-            }
-            fs::write(&path, content).unwrap();
-            path
-        }
-    }
-
-    fn parse_test_config(path: PathBuf, toml: &str) -> ParsedConfig {
-        ParsedConfig {
-            path,
-            config: crate::parse_config_str(toml, Path::new("test")).unwrap(),
-        }
     }
 
     #[test]
@@ -268,36 +243,13 @@ mod tests {
         let result = merge_configs(&[]).unwrap();
         assert_eq!(result.settings.default_limit, 5); // default
         assert!(result.trees.is_empty());
-        assert!(result.includes.is_empty());
     }
 
     #[test]
     fn test_merge_single_config() {
         let test_dir = TestDir::new();
         test_dir.create_dir("docs");
-        let config_path = test_dir.create_config(
-            ".ra.toml",
-            r#"
-[settings]
-default_limit = 10
 
-[trees]
-local = "./docs"
-"#,
-        );
-
-        let _parsed = parse_test_config(
-            config_path,
-            r#"
-[settings]
-default_limit = 10
-
-[trees]
-local = "./docs"
-"#,
-        );
-
-        // Re-parse with actual path for tree resolution
         let parsed = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
             config: crate::parse_config_str(
@@ -305,8 +257,8 @@ local = "./docs"
 [settings]
 default_limit = 10
 
-[trees]
-local = "./docs"
+[tree.local]
+path = "./docs"
 "#,
                 Path::new("test"),
             )
@@ -317,6 +269,33 @@ local = "./docs"
         assert_eq!(result.settings.default_limit, 10);
         assert_eq!(result.trees.len(), 1);
         assert_eq!(result.trees[0].name, "local");
+        // Should have default include patterns
+        assert_eq!(result.trees[0].include, vec!["**/*.md", "**/*.txt"]);
+        assert!(result.trees[0].exclude.is_empty());
+    }
+
+    #[test]
+    fn test_merge_tree_with_patterns() {
+        let test_dir = TestDir::new();
+        test_dir.create_dir("docs");
+
+        let parsed = ParsedConfig {
+            path: test_dir.path().join(".ra.toml"),
+            config: crate::parse_config_str(
+                r#"
+[tree.local]
+path = "./docs"
+include = ["**/*.md"]
+exclude = ["**/drafts/**"]
+"#,
+                Path::new("test"),
+            )
+            .unwrap(),
+        };
+
+        let result = merge_configs(&[parsed]).unwrap();
+        assert_eq!(result.trees[0].include, vec!["**/*.md"]);
+        assert_eq!(result.trees[0].exclude, vec!["**/drafts/**"]);
     }
 
     #[test]
@@ -368,8 +347,9 @@ local_boost = 2.0
             path: test_dir.path().join("project/.ra.toml"),
             config: crate::parse_config_str(
                 r#"
-[trees]
-docs = "./docs"
+[tree.docs]
+path = "./docs"
+include = ["**/*.md"]
 "#,
                 Path::new("test"),
             )
@@ -380,8 +360,9 @@ docs = "./docs"
             path: test_dir.path().join(".ra.toml"),
             config: crate::parse_config_str(
                 r#"
-[trees]
-docs = "./docs"
+[tree.docs]
+path = "./docs"
+include = ["**/*"]
 "#,
                 Path::new("test"),
             )
@@ -393,6 +374,8 @@ docs = "./docs"
         assert_eq!(result.trees.len(), 1);
         // Should resolve to project/docs, not root/docs
         assert_eq!(result.trees[0].path, docs1.canonicalize().unwrap());
+        // High precedence includes should win
+        assert_eq!(result.trees[0].include, vec!["**/*.md"]);
     }
 
     #[test]
@@ -405,8 +388,8 @@ docs = "./docs"
             path: test_dir.path().join("project/.ra.toml"),
             config: crate::parse_config_str(
                 r#"
-[trees]
-local = "./local"
+[tree.local]
+path = "./local"
 "#,
                 Path::new("test"),
             )
@@ -417,8 +400,8 @@ local = "./local"
             path: test_dir.path().join(".ra.toml"),
             config: crate::parse_config_str(
                 r#"
-[trees]
-global = "./global"
+[tree.global]
+path = "./global"
 "#,
                 Path::new("test"),
             )
@@ -431,51 +414,6 @@ global = "./global"
         // Trees should be sorted by name
         assert_eq!(result.trees[0].name, "global");
         assert_eq!(result.trees[1].name, "local");
-    }
-
-    #[test]
-    fn test_merge_includes_concatenated() {
-        let test_dir = TestDir::new();
-
-        let high_prec = ParsedConfig {
-            path: test_dir.path().join("project/.ra.toml"),
-            config: crate::parse_config_str(
-                r#"
-[[include]]
-tree = "local"
-pattern = "**/*.md"
-"#,
-                Path::new("test"),
-            )
-            .unwrap(),
-        };
-
-        let low_prec = ParsedConfig {
-            path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
-                r#"
-[[include]]
-tree = "global"
-pattern = "**/rust/**"
-
-[[include]]
-tree = "global"
-pattern = "**/git/**"
-"#,
-                Path::new("test"),
-            )
-            .unwrap(),
-        };
-
-        let result = merge_configs(&[high_prec, low_prec]).unwrap();
-
-        assert_eq!(result.includes.len(), 3);
-        // Order: high precedence first
-        assert_eq!(result.includes[0].tree, "local");
-        assert_eq!(result.includes[1].tree, "global");
-        assert_eq!(result.includes[1].pattern, "**/rust/**");
-        assert_eq!(result.includes[2].tree, "global");
-        assert_eq!(result.includes[2].pattern, "**/git/**");
     }
 
     #[test]
@@ -542,8 +480,8 @@ pattern = "**/git/**"
 [settings]
 default_limit = 3
 
-[trees]
-local = "./local"
+[tree.local]
+path = "./local"
 "#,
                 Path::new("test"),
             )
@@ -559,12 +497,9 @@ local = "./local"
 default_limit = 5
 local_boost = 2.0
 
-[trees]
-shared = "./shared"
-
-[[include]]
-tree = "shared"
-pattern = "**/*.md"
+[tree.shared]
+path = "./shared"
+include = ["**/*.md"]
 "#,
                 Path::new("test"),
             )
@@ -581,12 +516,9 @@ default_limit = 10
 local_boost = 1.5
 chunk_at_headings = false
 
-[trees]
-global = "./global"
-
-[[include]]
-tree = "global"
-pattern = "**/*"
+[tree.global]
+path = "./global"
+include = ["**/*"]
 "#,
                 Path::new("test"),
             )
@@ -602,11 +534,6 @@ pattern = "**/*"
 
         // Trees: all three should be present
         assert_eq!(result.trees.len(), 3);
-
-        // Includes: concatenated in order
-        assert_eq!(result.includes.len(), 2);
-        assert_eq!(result.includes[0].tree, "shared");
-        assert_eq!(result.includes[1].tree, "global");
 
         // Config root should be the highest precedence config's directory
         assert_eq!(

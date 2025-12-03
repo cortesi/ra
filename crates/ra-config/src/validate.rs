@@ -2,11 +2,11 @@
 //!
 //! Validates a loaded configuration and reports warnings for potential issues.
 
-use std::{collections::HashSet, fmt, fs, path::Path};
+use std::{fmt, fs, path::Path};
 
 use globset::Glob;
 
-use crate::{Config, IncludePattern, Tree};
+use crate::{Config, Tree};
 
 /// A non-fatal warning about the configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,22 +26,10 @@ pub enum ConfigWarning {
         path: String,
     },
     /// An include pattern doesn't match any files.
-    PatternMatchesNothing {
+    IncludePatternMatchesNothing {
         /// Name of the tree.
         tree: String,
         /// Pattern that matched nothing.
-        pattern: String,
-    },
-    /// A tree is defined but has no include patterns referencing it.
-    UnreferencedTree {
-        /// Name of the unreferenced tree.
-        tree: String,
-    },
-    /// An include pattern references a tree that doesn't exist.
-    UndefinedTreeInPattern {
-        /// Name of the undefined tree.
-        tree: String,
-        /// Pattern referencing undefined tree.
         pattern: String,
     },
     /// No trees are defined.
@@ -57,22 +45,10 @@ impl fmt::Display for ConfigWarning {
             Self::TreePathNotDirectory { tree, path } => {
                 write!(f, "tree '{tree}' path is not a directory: {path}")
             }
-            Self::PatternMatchesNothing { tree, pattern } => {
+            Self::IncludePatternMatchesNothing { tree, pattern } => {
                 write!(
                     f,
                     "include pattern '{pattern}' for tree '{tree}' matches no files"
-                )
-            }
-            Self::UnreferencedTree { tree } => {
-                write!(
-                    f,
-                    "tree '{tree}' is defined but not referenced by any include pattern"
-                )
-            }
-            Self::UndefinedTreeInPattern { tree, pattern } => {
-                write!(
-                    f,
-                    "include pattern '{pattern}' references undefined tree '{tree}'"
                 )
             }
             Self::NoTreesDefined => {
@@ -87,8 +63,6 @@ impl fmt::Display for ConfigWarning {
 /// This checks for:
 /// - Tree paths that don't exist or aren't directories
 /// - Include patterns that don't match any files
-/// - Trees that are defined but not referenced by any include pattern
-/// - Include patterns that reference undefined trees
 /// - Empty configuration (no trees defined)
 pub fn validate_config(config: &Config) -> Vec<ConfigWarning> {
     let mut warnings = Vec::new();
@@ -99,41 +73,16 @@ pub fn validate_config(config: &Config) -> Vec<ConfigWarning> {
         return warnings;
     }
 
-    // Collect tree names for reference checking
-    let tree_names: HashSet<&str> = config.trees.iter().map(|t| t.name.as_str()).collect();
-
-    // Collect trees that are referenced by include patterns
-    let mut referenced_trees: HashSet<&str> = HashSet::new();
-
-    // Check for undefined trees in patterns
-    for include in &config.includes {
-        if tree_names.contains(include.tree.as_str()) {
-            referenced_trees.insert(&include.tree);
-        } else {
-            warnings.push(ConfigWarning::UndefinedTreeInPattern {
-                tree: include.tree.clone(),
-                pattern: include.pattern.clone(),
-            });
-        }
-    }
-
     // Validate each tree
     for tree in &config.trees {
-        warnings.extend(validate_tree(tree, &config.includes));
-
-        // Check if tree is referenced (only if there are explicit includes)
-        if !config.includes.is_empty() && !referenced_trees.contains(tree.name.as_str()) {
-            warnings.push(ConfigWarning::UnreferencedTree {
-                tree: tree.name.clone(),
-            });
-        }
+        warnings.extend(validate_tree(tree));
     }
 
     warnings
 }
 
 /// Validates a single tree and its include patterns.
-fn validate_tree(tree: &Tree, includes: &[IncludePattern]) -> Vec<ConfigWarning> {
+fn validate_tree(tree: &Tree) -> Vec<ConfigWarning> {
     let mut warnings = Vec::new();
 
     // Check tree path exists and is a directory
@@ -154,14 +103,11 @@ fn validate_tree(tree: &Tree, includes: &[IncludePattern]) -> Vec<ConfigWarning>
     }
 
     // Check include patterns for this tree
-    let tree_patterns: Vec<&IncludePattern> =
-        includes.iter().filter(|i| i.tree == tree.name).collect();
-
-    for include in tree_patterns {
-        if !pattern_matches_any_file(&tree.path, &include.pattern) {
-            warnings.push(ConfigWarning::PatternMatchesNothing {
+    for pattern in &tree.include {
+        if !pattern_matches_any_file(&tree.path, pattern) {
+            warnings.push(ConfigWarning::IncludePatternMatchesNothing {
                 tree: tree.name.clone(),
-                pattern: include.pattern.clone(),
+                pattern: pattern.clone(),
             });
         }
     }
@@ -212,18 +158,13 @@ mod tests {
 
     use super::*;
 
-    fn make_tree(name: &str, path: &str) -> Tree {
+    fn make_tree(name: &str, path: &str, include: Vec<&str>, exclude: Vec<&str>) -> Tree {
         Tree {
             name: name.into(),
             path: PathBuf::from(path),
             is_global: false,
-        }
-    }
-
-    fn make_include(tree: &str, pattern: &str) -> IncludePattern {
-        IncludePattern {
-            tree: tree.into(),
-            pattern: pattern.into(),
+            include: include.into_iter().map(String::from).collect(),
+            exclude: exclude.into_iter().map(String::from).collect(),
         }
     }
 
@@ -236,44 +177,14 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_undefined_tree_in_pattern() {
-        let config = Config {
-            trees: vec![make_tree("docs", "/tmp")],
-            includes: vec![make_include("nonexistent", "**/*.md")],
-            ..Default::default()
-        };
-
-        let warnings = config.validate();
-        assert!(warnings
-            .iter()
-            .any(|w| matches!(w, ConfigWarning::UndefinedTreeInPattern { tree, .. } if tree == "nonexistent")));
-    }
-
-    #[test]
-    fn test_validate_unreferenced_tree() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config = Config {
-            trees: vec![
-                make_tree("docs", tmp.path().to_str().unwrap()),
-                make_tree("other", tmp.path().to_str().unwrap()),
-            ],
-            includes: vec![make_include("docs", "**/*.md")],
-            ..Default::default()
-        };
-
-        let warnings = config.validate();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| matches!(w, ConfigWarning::UnreferencedTree { tree } if tree == "other"))
-        );
-    }
-
-    #[test]
     fn test_validate_tree_path_missing() {
         let config = Config {
-            trees: vec![make_tree("docs", "/nonexistent/path/12345")],
-            includes: vec![],
+            trees: vec![make_tree(
+                "docs",
+                "/nonexistent/path/12345",
+                vec!["**/*.md"],
+                vec![],
+            )],
             ..Default::default()
         };
 
@@ -292,14 +203,18 @@ mod tests {
         fs::write(tmp.path().join("file.txt"), "test").unwrap();
 
         let config = Config {
-            trees: vec![make_tree("docs", tmp.path().to_str().unwrap())],
-            includes: vec![make_include("docs", "**/*.rs")], // No .rs files exist
+            trees: vec![make_tree(
+                "docs",
+                tmp.path().to_str().unwrap(),
+                vec!["**/*.rs"], // No .rs files exist
+                vec![],
+            )],
             ..Default::default()
         };
 
         let warnings = config.validate();
         assert!(warnings.iter().any(
-            |w| matches!(w, ConfigWarning::PatternMatchesNothing { tree, pattern } if tree == "docs" && pattern == "**/*.rs")
+            |w| matches!(w, ConfigWarning::IncludePatternMatchesNothing { tree, pattern } if tree == "docs" && pattern == "**/*.rs")
         ));
     }
 
@@ -309,17 +224,21 @@ mod tests {
         fs::write(tmp.path().join("readme.md"), "# Hello").unwrap();
 
         let config = Config {
-            trees: vec![make_tree("docs", tmp.path().to_str().unwrap())],
-            includes: vec![make_include("docs", "**/*.md")],
+            trees: vec![make_tree(
+                "docs",
+                tmp.path().to_str().unwrap(),
+                vec!["**/*.md"],
+                vec![],
+            )],
             ..Default::default()
         };
 
         let warnings = config.validate();
-        // Should not have PatternMatchesNothing warning
+        // Should not have IncludePatternMatchesNothing warning
         assert!(
             !warnings
                 .iter()
-                .any(|w| matches!(w, ConfigWarning::PatternMatchesNothing { .. }))
+                .any(|w| matches!(w, ConfigWarning::IncludePatternMatchesNothing { .. }))
         );
     }
 
@@ -331,8 +250,12 @@ mod tests {
         fs::write(nested.join("doc.md"), "# Nested").unwrap();
 
         let config = Config {
-            trees: vec![make_tree("docs", tmp.path().to_str().unwrap())],
-            includes: vec![make_include("docs", "**/*.md")],
+            trees: vec![make_tree(
+                "docs",
+                tmp.path().to_str().unwrap(),
+                vec!["**/*.md"],
+                vec![],
+            )],
             ..Default::default()
         };
 
@@ -340,25 +263,7 @@ mod tests {
         assert!(
             !warnings
                 .iter()
-                .any(|w| matches!(w, ConfigWarning::PatternMatchesNothing { .. }))
-        );
-    }
-
-    #[test]
-    fn test_validate_no_unreferenced_warning_without_includes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config = Config {
-            trees: vec![make_tree("docs", tmp.path().to_str().unwrap())],
-            includes: vec![], // No explicit includes means defaults are used
-            ..Default::default()
-        };
-
-        let warnings = config.validate();
-        // Should not warn about unreferenced tree when using default includes
-        assert!(
-            !warnings
-                .iter()
-                .any(|w| matches!(w, ConfigWarning::UnreferencedTree { .. }))
+                .any(|w| matches!(w, ConfigWarning::IncludePatternMatchesNothing { .. }))
         );
     }
 

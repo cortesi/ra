@@ -35,7 +35,7 @@ mod init {
         assert!(config_path.exists());
 
         let contents = fs::read_to_string(&config_path).unwrap();
-        assert!(contents.contains("[trees]"));
+        assert!(contents.contains("# [tree."));
     }
 
     #[test]
@@ -57,7 +57,7 @@ mod init {
             .success();
 
         let contents = fs::read_to_string(dir.path().join(".ra.toml")).unwrap();
-        assert!(contents.contains("[trees]"));
+        assert!(contents.contains("# [tree."));
     }
 
     #[test]
@@ -98,7 +98,7 @@ mod status {
     #[test]
     fn succeeds_with_config() {
         let dir = temp_dir();
-        fs::write(dir.path().join(".ra.toml"), "[trees]\n").unwrap();
+        fs::write(dir.path().join(".ra.toml"), "").unwrap();
 
         ra().current_dir(dir.path())
             .arg("status")
@@ -110,7 +110,11 @@ mod status {
     fn succeeds_with_trees() {
         let dir = temp_dir();
         fs::create_dir(dir.path().join("docs")).unwrap();
-        fs::write(dir.path().join(".ra.toml"), "[trees]\ndocs = \"./docs\"\n").unwrap();
+        fs::write(
+            dir.path().join(".ra.toml"),
+            "[tree.docs]\npath = \"./docs\"\n",
+        )
+        .unwrap();
 
         ra().current_dir(dir.path())
             .arg("status")
@@ -131,7 +135,7 @@ mod check {
     #[test]
     fn warns_on_empty_trees() {
         let dir = temp_dir();
-        fs::write(dir.path().join(".ra.toml"), "[trees]\n").unwrap();
+        fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
 
         ra().current_dir(dir.path()).arg("check").assert().failure();
     }
@@ -145,12 +149,9 @@ mod check {
 
         fs::write(
             dir.path().join(".ra.toml"),
-            r#"[trees]
-docs = "./docs"
-
-[[include]]
-tree = "docs"
-pattern = "**/*.md"
+            r#"[tree.docs]
+path = "./docs"
+include = ["**/*.md"]
 "#,
         )
         .unwrap();
@@ -167,12 +168,9 @@ pattern = "**/*.md"
 
         fs::write(
             dir.path().join(".ra.toml"),
-            r#"[trees]
-docs = "./docs"
-
-[[include]]
-tree = "docs"
-pattern = "**/*.rs"
+            r#"[tree.docs]
+path = "./docs"
+include = ["**/*.rs"]
 "#,
         )
         .unwrap();
@@ -182,20 +180,12 @@ pattern = "**/*.rs"
 
     #[test]
     fn warns_on_undefined_tree() {
+        // Note: with the new format, undefined trees in patterns are no longer possible
+        // since patterns are now part of the tree definition itself.
+        // This test now just verifies that an empty config with no trees warns.
         let dir = temp_dir();
-        fs::create_dir(dir.path().join("docs")).unwrap();
 
-        fs::write(
-            dir.path().join(".ra.toml"),
-            r#"[trees]
-docs = "./docs"
-
-[[include]]
-tree = "undefined"
-pattern = "**/*.md"
-"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join(".ra.toml"), "# config with no trees\n").unwrap();
 
         ra().current_dir(dir.path()).arg("check").assert().failure();
     }
@@ -203,7 +193,7 @@ pattern = "**/*.md"
     #[test]
     fn fails_on_invalid_toml() {
         let dir = temp_dir();
-        fs::write(dir.path().join(".ra.toml"), "[trees\ninvalid").unwrap();
+        fs::write(dir.path().join(".ra.toml"), "[tree\ninvalid").unwrap();
 
         ra().current_dir(dir.path())
             .arg("check")

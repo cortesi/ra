@@ -10,6 +10,4 @@
 
 #![warn(missing_docs)]
 
-pub use ra_config::{
-    Config, ConfigError, ContextSettings, IncludePattern, SearchSettings, Settings, Tree,
-};
+pub use ra_config::{Config, ConfigError, ContextSettings, SearchSettings, Settings, Tree};
