@@ -1,0 +1,81 @@
+# ra configuration file
+# See https://github.com/cortesi/ra for documentation
+
+# Define knowledge trees - directories containing documents to index
+[trees]
+# docs = "./docs"           # Local documentation
+# notes = "~/notes"         # Personal notes with tilde expansion
+
+# General settings
+[settings]
+# default_limit = 5         # Maximum results per query
+# local_boost = 1.5         # Relevance multiplier for local trees
+# chunk_at_headings = true  # Split documents at h1 boundaries
+# max_chunk_size = 50000    # Warning threshold for chunk size (characters)
+
+# Search settings
+[search]
+# fuzzy = true              # Enable fuzzy matching for typo tolerance
+# fuzzy_distance = 1        # Levenshtein distance (0, 1, or 2)
+# stemmer = "english"       # Stemming language
+
+# Context command settings
+# These control how `ra context` analyzes files to find relevant documentation.
+[context]
+# limit = 10                # Default chunks to return
+# min_term_frequency = 2    # Ignore terms appearing less than this in source
+# min_word_length = 4       # Ignore short words in content analysis
+# max_word_length = 30      # Ignore very long tokens
+# sample_size = 50000       # Max bytes to analyze from large files
+
+# Glob patterns that inject additional search terms when matched.
+# When `ra context` analyzes a file, it matches the file path against these
+# patterns and adds the corresponding terms to the search query. This helps
+# find relevant documentation based on file type or project structure.
+#
+# Multiple patterns can match the same file - all matching terms are merged.
+# Child configs can override patterns from parent configs for the same glob.
+#
+# [context.patterns]
+# # Language-based patterns - match by file extension
+# "*.rs" = ["rust"]
+# "*.py" = ["python"]
+# "*.go" = ["golang"]
+# "*.ts" = ["typescript"]
+# "*.tsx" = ["typescript", "react"]
+# "*.jsx" = ["javascript", "react"]
+# "*.rb" = ["ruby"]
+# "*.ex" = ["elixir"]
+# "*.exs" = ["elixir"]
+# "*.clj" = ["clojure"]
+# "*.hs" = ["haskell"]
+# "*.swift" = ["swift"]
+# "*.kt" = ["kotlin"]
+# "*.java" = ["java"]
+# "*.c" = ["c"]
+# "*.cpp" = ["cpp"]
+# "*.h" = ["c", "cpp"]
+# "*.hpp" = ["cpp"]
+#
+# # Project structure patterns - match by directory
+# "src/api/**" = ["http", "handlers", "routing", "REST"]
+# "src/auth/**" = ["authentication", "security", "jwt"]
+# "src/db/**" = ["database", "queries", "migrations"]
+# "tests/**" = ["testing", "fixtures"]
+# "migrations/**" = ["database", "schema"]
+
+# Include patterns - select which files to index from each tree.
+# If no patterns are specified for a tree, all .md and .txt files are included.
+#
+# [[include]]
+# tree = "docs"
+# pattern = "**/*.md"
+#
+# [[include]]
+# tree = "docs"
+# pattern = "**/*.txt"
+#
+# # Example: only include rust-related docs from a global tree
+# [[include]]
+# tree = "global"
+# pattern = "**/rust/**"

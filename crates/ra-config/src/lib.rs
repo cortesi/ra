@@ -12,9 +12,10 @@ mod merge;
 mod parse;
 mod patterns;
 mod resolve;
+mod validate;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -27,7 +28,9 @@ pub use parse::{
 };
 pub use patterns::CompiledPatterns;
 pub use resolve::resolve_tree_path;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+pub use validate::ConfigWarning;
+use validate::validate_config;
 
 /// Top-level merged configuration for ra.
 ///
@@ -97,10 +100,36 @@ impl Config {
         let tree_names: Vec<String> = self.trees.iter().map(|t| t.name.clone()).collect();
         CompiledPatterns::compile(&self.includes, &tree_names)
     }
+
+    /// Validates the configuration and returns any warnings.
+    ///
+    /// This checks for:
+    /// - Tree paths that don't exist or aren't directories
+    /// - Include patterns that don't match any files
+    /// - Trees that are defined but not referenced by any include pattern
+    /// - Include patterns that reference undefined trees
+    /// - Empty configuration (no trees defined)
+    pub fn validate(&self) -> Vec<ConfigWarning> {
+        validate_config(self)
+    }
+
+    /// Serializes the effective settings to TOML format.
+    ///
+    /// This outputs the merged configuration settings in the same format as a `.ra.toml` file,
+    /// making it easy to see the effective configuration. Trees and include patterns are not
+    /// included since they have resolved paths and additional metadata.
+    pub fn settings_to_toml(&self) -> String {
+        let serializable = SerializableSettings {
+            settings: self.settings.clone(),
+            search: self.search.clone(),
+            context: SerializableContextSettings::from(&self.context),
+        };
+        toml::to_string_pretty(&serializable).expect("settings serialization should not fail")
+    }
 }
 
 /// General settings for ra.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Settings {
     /// Maximum results per query.
@@ -125,7 +154,7 @@ impl Default for Settings {
 }
 
 /// Search-related settings.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SearchSettings {
     /// Enable fuzzy matching for typo tolerance.
@@ -147,7 +176,7 @@ impl Default for SearchSettings {
 }
 
 /// Settings for the `ra context` command.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ContextSettings {
     /// Default number of chunks to return.
@@ -172,35 +201,54 @@ impl Default for ContextSettings {
             min_word_length: 4,
             max_word_length: 30,
             sample_size: 50_000,
-            patterns: default_context_patterns(),
+            patterns: HashMap::new(),
         }
     }
 }
 
-/// Returns the default context patterns for common file extensions.
-fn default_context_patterns() -> HashMap<String, Vec<String>> {
-    let mut patterns = HashMap::new();
-    patterns.insert("*.rs".into(), vec!["rust".into()]);
-    patterns.insert("*.py".into(), vec!["python".into()]);
-    patterns.insert("*.tsx".into(), vec!["typescript".into(), "react".into()]);
-    patterns.insert("*.jsx".into(), vec!["javascript".into(), "react".into()]);
-    patterns.insert("*.ts".into(), vec!["typescript".into()]);
-    patterns.insert("*.js".into(), vec!["javascript".into()]);
-    patterns.insert("*.go".into(), vec!["golang".into()]);
-    patterns.insert("*.rb".into(), vec!["ruby".into()]);
-    patterns.insert("*.ex".into(), vec!["elixir".into()]);
-    patterns.insert("*.exs".into(), vec!["elixir".into()]);
-    patterns.insert("*.clj".into(), vec!["clojure".into()]);
-    patterns.insert("*.hs".into(), vec!["haskell".into()]);
-    patterns.insert("*.ml".into(), vec!["ocaml".into()]);
-    patterns.insert("*.swift".into(), vec!["swift".into()]);
-    patterns.insert("*.kt".into(), vec!["kotlin".into()]);
-    patterns.insert("*.java".into(), vec!["java".into()]);
-    patterns.insert("*.c".into(), vec!["c".into()]);
-    patterns.insert("*.cpp".into(), vec!["cpp".into()]);
-    patterns.insert("*.h".into(), vec!["c".into(), "cpp".into()]);
-    patterns.insert("*.hpp".into(), vec!["cpp".into()]);
-    patterns
+/// Internal struct for TOML serialization of settings.
+#[derive(Serialize)]
+struct SerializableSettings {
+    /// General settings.
+    settings: Settings,
+    /// Search-related settings.
+    search: SearchSettings,
+    /// Context command settings.
+    context: SerializableContextSettings,
+}
+
+/// Context settings with sorted patterns for deterministic TOML output.
+#[derive(Serialize)]
+struct SerializableContextSettings {
+    /// Default number of chunks to return.
+    limit: usize,
+    /// Ignore terms appearing less than this many times in source.
+    min_term_frequency: usize,
+    /// Ignore words shorter than this.
+    min_word_length: usize,
+    /// Ignore words longer than this.
+    max_word_length: usize,
+    /// Maximum bytes to analyze from large files.
+    sample_size: usize,
+    /// Glob pattern to search term mappings (sorted for deterministic output).
+    patterns: BTreeMap<String, Vec<String>>,
+}
+
+impl From<&ContextSettings> for SerializableContextSettings {
+    fn from(ctx: &ContextSettings) -> Self {
+        Self {
+            limit: ctx.limit,
+            min_term_frequency: ctx.min_term_frequency,
+            min_word_length: ctx.min_word_length,
+            max_word_length: ctx.max_word_length,
+            sample_size: ctx.sample_size,
+            patterns: ctx
+                .patterns
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        }
+    }
 }
 
 /// A named knowledge tree pointing to a directory of documents.
@@ -252,20 +300,7 @@ mod tests {
         assert_eq!(context.min_word_length, 4);
         assert_eq!(context.max_word_length, 30);
         assert_eq!(context.sample_size, 50_000);
-        assert!(context.patterns.contains_key("*.rs"));
-        assert_eq!(context.patterns.get("*.rs"), Some(&vec!["rust".into()]));
-    }
-
-    #[test]
-    fn test_default_context_patterns_coverage() {
-        let patterns = default_context_patterns();
-        let expected_extensions = [
-            "*.rs", "*.py", "*.tsx", "*.jsx", "*.ts", "*.js", "*.go", "*.rb", "*.ex", "*.exs",
-            "*.clj", "*.hs", "*.ml", "*.swift", "*.kt", "*.java", "*.c", "*.cpp", "*.h", "*.hpp",
-        ];
-        for ext in expected_extensions {
-            assert!(patterns.contains_key(ext), "Missing pattern for {ext}");
-        }
+        assert!(context.patterns.is_empty());
     }
 
     #[test]
@@ -303,5 +338,30 @@ mod tests {
         };
         assert_eq!(p1, p2);
         assert_ne!(p1, p3);
+    }
+
+    #[test]
+    fn test_settings_to_toml() {
+        let config = Config::default();
+        let toml = config.settings_to_toml();
+
+        // Should produce valid TOML with expected sections
+        assert!(toml.contains("[settings]"));
+        assert!(toml.contains("[search]"));
+        assert!(toml.contains("[context]"));
+        assert!(toml.contains("[context.patterns]"));
+
+        // Should contain default values in TOML format
+        assert!(toml.contains("default_limit = 5"));
+        assert!(toml.contains("fuzzy = true"));
+        assert!(toml.contains("stemmer = \"english\""));
+        assert!(toml.contains("limit = 10"));
+
+        // Should be parseable as valid TOML
+        let parsed: toml::Value =
+            toml::from_str(&toml).expect("settings_to_toml should produce valid TOML");
+        assert!(parsed.get("settings").is_some());
+        assert!(parsed.get("search").is_some());
+        assert!(parsed.get("context").is_some());
     }
 }
