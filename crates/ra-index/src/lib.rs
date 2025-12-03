@@ -12,10 +12,10 @@
 //!
 //! ```no_run
 //! use std::time::SystemTime;
-//! use ra_index::{ChunkDocument, IndexWriter, Language};
+//! use ra_index::{ChunkDocument, IndexWriter};
 //!
 //! // Open or create an index with English stemming
-//! let mut writer = IndexWriter::open("./index".as_ref(), Language::English).unwrap();
+//! let mut writer = IndexWriter::open("./index".as_ref(), "english").unwrap();
 //!
 //! // Add a document
 //! let doc = ChunkDocument {
@@ -47,7 +47,6 @@ mod schema;
 mod status;
 mod writer;
 
-pub use analyzer::{build_analyzer_from_name, parse_language};
 pub use config_hash::{IndexingConfig, SCHEMA_VERSION, compute_config_hash};
 pub use diff::{ManifestDiff, apply_diff, diff_manifest};
 pub use discovery::{DiscoveredFile, discover_files, discover_tree_files, file_mtime};
@@ -61,5 +60,4 @@ pub use manifest::{Manifest, ManifestEntry};
 pub use status::{
     IndexStatus, detect_index_status, index_exists, read_stored_hash, write_config_hash,
 };
-pub use tantivy::tokenizer::Language;
 pub use writer::IndexWriter;
