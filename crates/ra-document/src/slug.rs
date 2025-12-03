@@ -42,6 +42,13 @@ impl Slugifier {
         self.deduplicate(base)
     }
 
+    /// Marks a slug as already used so future slugs will be deduplicated.
+    pub fn reserve_slug(&mut self, slug: &str) {
+        let base = Self::make_base_slug(slug);
+        let count = self.counts.entry(base).or_insert(0);
+        *count += 1;
+    }
+
     /// Creates the base slug without deduplication.
     fn make_base_slug(heading: &str) -> String {
         let slug: String = heading
@@ -198,5 +205,14 @@ mod tests {
         assert_eq!(slugifier.slugify("Intro"), "intro-1");
         assert_eq!(slugifier.slugify("Setup"), "setup-1");
         assert_eq!(slugifier.slugify("Intro"), "intro-2");
+    }
+
+    #[test]
+    fn test_reserve_slug() {
+        let mut slugifier = Slugifier::new();
+
+        slugifier.reserve_slug("preamble");
+        assert_eq!(slugifier.slugify("Preamble"), "preamble-1");
+        assert_eq!(slugifier.slugify("Preamble"), "preamble-2");
     }
 }

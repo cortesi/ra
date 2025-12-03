@@ -147,6 +147,9 @@ pub fn chunk_markdown(content: &str, doc_title: &str, min_chunk_size: usize) -> 
                 is_preamble: true,
                 breadcrumb: format!("> {}", doc_title),
             });
+
+            // Reserve the preamble slug so heading slugs stay unique.
+            slugifier.reserve_slug("preamble");
         }
     }
 
@@ -417,6 +420,18 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].breadcrumb, "> Doc › Title › Chapter › Section 1");
         assert_eq!(chunks[1].breadcrumb, "> Doc › Title › Chapter › Section 2");
+    }
+
+    #[test]
+    fn test_preamble_slug_reserved_against_heading() {
+        let content = "# Title\n\nIntro paragraph.\n\n## Preamble\n\nBody.\n\n## Details\n\nMore.";
+        let chunks = chunk_markdown(content, "Doc", 0);
+
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks[0].is_preamble);
+        assert_eq!(chunks[0].slug, "preamble");
+        assert_eq!(chunks[1].slug, "preamble-1");
+        assert_eq!(chunks[2].slug, "details");
     }
 
     #[test]

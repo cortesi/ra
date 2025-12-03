@@ -128,9 +128,7 @@ impl IndexWriter {
 
     /// Rolls back any uncommitted changes.
     pub fn rollback(&mut self) -> Result<(), IndexError> {
-        self.writer
-            .rollback()
-            .map_err(|e| IndexError::commit(&e))?;
+        self.writer.rollback().map_err(|e| IndexError::commit(&e))?;
         Ok(())
     }
 

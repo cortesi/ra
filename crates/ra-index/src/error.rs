@@ -1,7 +1,6 @@
 //! Error types for the ra-index crate.
 
-use std::io;
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
