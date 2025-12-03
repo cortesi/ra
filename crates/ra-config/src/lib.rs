@@ -156,10 +156,6 @@ impl Default for Settings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SearchSettings {
-    /// Enable fuzzy matching for typo tolerance.
-    pub fuzzy: bool,
-    /// Levenshtein distance for fuzzy matching (0, 1, or 2).
-    pub fuzzy_distance: u8,
     /// Stemming language.
     pub stemmer: String,
 }
@@ -167,8 +163,6 @@ pub struct SearchSettings {
 impl Default for SearchSettings {
     fn default() -> Self {
         Self {
-            fuzzy: true,
-            fuzzy_distance: 1,
             stemmer: String::from("english"),
         }
     }
@@ -281,8 +275,6 @@ mod tests {
     #[test]
     fn test_search_settings_defaults() {
         let search = SearchSettings::default();
-        assert!(search.fuzzy);
-        assert_eq!(search.fuzzy_distance, 1);
         assert_eq!(search.stemmer, "english");
     }
 
@@ -332,7 +324,6 @@ mod tests {
 
         // Should contain default values in TOML format
         assert!(toml.contains("default_limit = 5"));
-        assert!(toml.contains("fuzzy = true"));
         assert!(toml.contains("stemmer = \"english\""));
         assert!(toml.contains("limit = 10"));
 

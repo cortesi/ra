@@ -22,8 +22,6 @@
 
 # Search settings
 # [search]
-# fuzzy = true
-# fuzzy_distance = 1
 # stemmer = "english"
 
 # Context command settings

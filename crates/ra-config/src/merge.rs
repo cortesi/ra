@@ -100,12 +100,6 @@ fn merge_search_settings(configs: &[ParsedConfig]) -> SearchSettings {
 
 /// Applies raw search settings to result.
 fn apply_raw_search(result: &mut SearchSettings, raw: &RawSearchSettings) {
-    if let Some(v) = raw.fuzzy {
-        result.fuzzy = v;
-    }
-    if let Some(v) = raw.fuzzy_distance {
-        result.fuzzy_distance = v;
-    }
     if let Some(ref v) = raw.stemmer {
         result.stemmer = v.clone();
     }
@@ -551,7 +545,7 @@ include = ["**/*"]
             config: crate::parse_config_str(
                 r#"
 [search]
-fuzzy = false
+stemmer = "french"
 "#,
                 Path::new("test"),
             )
@@ -563,8 +557,6 @@ fuzzy = false
             config: crate::parse_config_str(
                 r#"
 [search]
-fuzzy = true
-fuzzy_distance = 2
 stemmer = "german"
 "#,
                 Path::new("test"),
@@ -574,8 +566,6 @@ stemmer = "german"
 
         let result = merge_configs(&[high_prec, low_prec]).unwrap();
 
-        assert!(!result.search.fuzzy); // high prec wins
-        assert_eq!(result.search.fuzzy_distance, 2); // low prec provides
-        assert_eq!(result.search.stemmer, "german"); // low prec provides
+        assert_eq!(result.search.stemmer, "french"); // high prec wins
     }
 }

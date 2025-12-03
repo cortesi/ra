@@ -56,10 +56,6 @@ pub struct RawSettings {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RawSearchSettings {
-    /// Enable fuzzy matching.
-    pub fuzzy: Option<bool>,
-    /// Levenshtein distance for fuzzy matching.
-    pub fuzzy_distance: Option<u8>,
     /// Stemming language.
     pub stemmer: Option<String>,
 }
@@ -192,14 +188,10 @@ default_limit = 3
     fn test_parse_search_settings() {
         let toml = r#"
 [search]
-fuzzy = false
-fuzzy_distance = 2
 stemmer = "german"
 "#;
         let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
         let search = config.search.unwrap();
-        assert_eq!(search.fuzzy, Some(false));
-        assert_eq!(search.fuzzy_distance, Some(2));
         assert_eq!(search.stemmer, Some("german".to_string()));
     }
 
@@ -252,7 +244,6 @@ default_limit = 5
 local_boost = 1.5
 
 [search]
-fuzzy = true
 stemmer = "english"
 
 [context]
@@ -274,7 +265,7 @@ include = ["**/*"]
         assert_eq!(settings.default_limit, Some(5));
 
         let search = config.search.unwrap();
-        assert_eq!(search.fuzzy, Some(true));
+        assert_eq!(search.stemmer, Some("english".to_string()));
 
         let context = config.context.unwrap();
         assert_eq!(context.limit, Some(10));

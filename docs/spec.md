@@ -7,7 +7,7 @@ A knowledge management system for autonomous coding and writing agents.
 ra provides structured access to curated knowledge bases for AI agents. Users
 maintain collections of markdown documents—project-specific and global—that
 provide context for agent tasks. Because the full corpus may exceed practical
-context limits, ra indexes these documents and exposes fuzzy search tools that
+context limits, ra indexes these documents and exposes search tools that
 agents use to retrieve relevant context on demand.
 
 ### Use Cases
@@ -52,8 +52,6 @@ max_chunk_size = 50000      # warn if any chunk exceeds this (characters)
 min_chunk_size = 2000       # don't chunk documents smaller than this
 
 [search]
-fuzzy = true                # enable fuzzy matching for typo tolerance
-fuzzy_distance = 1          # Levenshtein distance (0, 1, or 2)
 stemmer = "english"         # stemming language
 
 [context]
@@ -354,7 +352,7 @@ Agents provide simple search terms. ra handles the complexity internally.
 
 | Input | Interpretation |
 |-------|----------------|
-| `error handling` | Keywords, AND'd together, fuzzy-matched |
+| `error handling` | Keywords, AND'd together |
 | `"error handling"` | Exact phrase match |
 | `"error handling" "logging"` | Multi-topic: both phrases searched, results combined |
 
@@ -375,29 +373,12 @@ Returns results for all topics in a single response, labeled by query. This supp
 Behind the simple API, ra builds sophisticated Tantivy queries:
 
 - Terms are AND'd for precision (agents need focused results, not exhaustive recall)
-- Fuzzy matching applied per config (see Fuzzy Matching section below)
 - Quoted strings become phrase queries
+- Stemming handles word form variations (plurals, verb forms)
 - All text fields searched with configured boosts (title 3.0x, tags 2.5x, path 2.0x, body 1.0x)
 - Results from all configured trees, ranked by BM25 + locality boost
 
 The full Tantivy query syntax (boolean operators, field specifiers, ranges, slop) remains available via a `--raw` flag for debugging and power users, but is deliberately undocumented for agent use.
-
-### Fuzzy Matching
-
-Fuzzy matching is controlled by two settings:
-
-- `fuzzy = true|false`: Master switch for fuzzy matching (default: true)
-- `fuzzy_distance = 0|1|2`: Levenshtein distance when enabled (default: 1)
-
-When `fuzzy = true`:
-- Terms longer than 4 characters are fuzzy-matched at the configured distance
-- Terms of 4 characters or fewer are matched exactly (avoids false positives on short words)
-- Transpositions count as distance 1 (e.g., "teh" matches "the")
-
-When `fuzzy = false`:
-- All terms are matched exactly, no edit distance tolerance
-
-Example: With defaults, `ra search "rust eror handling"` finds "rust error handling" despite the typo ("eror" is 4+ chars, so fuzzy applies).
 
 ### Result Ranking
 

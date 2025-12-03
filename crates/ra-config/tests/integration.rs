@@ -55,7 +55,7 @@ fn test_load_no_config_returns_default() {
     assert!(config.config_root.is_none());
     // Check default settings
     assert_eq!(config.settings.default_limit, 5);
-    assert!(config.search.fuzzy);
+    assert_eq!(config.search.stemmer, "english");
 }
 
 #[test]
@@ -334,8 +334,6 @@ chunk_at_headings = false
 max_chunk_size = 100000
 
 [search]
-fuzzy = false
-fuzzy_distance = 2
 stemmer = "german"
 
 [context]
@@ -360,8 +358,6 @@ sample_size = 100000
     assert!(!config.settings.chunk_at_headings);
     assert_eq!(config.settings.max_chunk_size, 100000);
 
-    assert!(!config.search.fuzzy);
-    assert_eq!(config.search.fuzzy_distance, 2);
     assert_eq!(config.search.stemmer, "german");
 
     assert_eq!(config.context.limit, 25);
