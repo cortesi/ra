@@ -4,9 +4,15 @@ use std::{fs, path::Path, time::UNIX_EPOCH};
 
 use tantivy::{
     DateTime, Index, IndexWriter as TantivyIndexWriter, TantivyDocument, directory::MmapDirectory,
+    tokenizer::Language,
 };
 
-use crate::{document::ChunkDocument, error::IndexError, schema::IndexSchema};
+use crate::{
+    analyzer::{RA_TOKENIZER, build_analyzer},
+    document::ChunkDocument,
+    error::IndexError,
+    schema::IndexSchema,
+};
 
 /// Default heap size for the index writer (50 MB).
 const DEFAULT_HEAP_SIZE: usize = 50_000_000;
@@ -25,11 +31,13 @@ pub struct IndexWriter {
 }
 
 impl IndexWriter {
-    /// Opens or creates an index at the given path.
+    /// Opens or creates an index at the given path with the specified stemmer language.
     ///
     /// If the index doesn't exist, it will be created with the standard schema.
     /// If it exists, it will be opened and validated against the expected schema.
-    pub fn open(path: &Path) -> Result<Self, IndexError> {
+    ///
+    /// The `language` parameter controls which stemmer is used for text analysis.
+    pub fn open(path: &Path, language: Language) -> Result<Self, IndexError> {
         let schema = IndexSchema::new();
 
         // Ensure directory exists
@@ -43,6 +51,10 @@ impl IndexWriter {
         // Try to open existing index or create new one
         let index = Index::open_or_create(dir, schema.schema().clone())
             .map_err(|e| IndexError::open_index(path.to_path_buf(), &e))?;
+
+        // Register our custom text analyzer with the configured stemmer language
+        let analyzer = build_analyzer(language);
+        index.tokenizers().register(RA_TOKENIZER, analyzer);
 
         let writer = index
             .writer(DEFAULT_HEAP_SIZE)
@@ -176,7 +188,7 @@ mod test {
     #[test]
     fn creates_index_in_empty_directory() {
         let temp = TempDir::new().unwrap();
-        let writer = IndexWriter::open(temp.path()).unwrap();
+        let writer = IndexWriter::open(temp.path(), Language::English).unwrap();
 
         // Verify index was created
         assert!(temp.path().join("meta.json").exists());
@@ -186,7 +198,7 @@ mod test {
     #[test]
     fn adds_and_commits_document() {
         let temp = TempDir::new().unwrap();
-        let mut writer = IndexWriter::open(temp.path()).unwrap();
+        let mut writer = IndexWriter::open(temp.path(), Language::English).unwrap();
 
         let doc = make_test_chunk_doc();
         writer.add_document(&doc).unwrap();
@@ -199,7 +211,7 @@ mod test {
     #[test]
     fn adds_multiple_documents() {
         let temp = TempDir::new().unwrap();
-        let mut writer = IndexWriter::open(temp.path()).unwrap();
+        let mut writer = IndexWriter::open(temp.path(), Language::English).unwrap();
 
         let docs = vec![
             ChunkDocument {
@@ -236,14 +248,14 @@ mod test {
 
         // Create and populate index
         {
-            let mut writer = IndexWriter::open(temp.path()).unwrap();
+            let mut writer = IndexWriter::open(temp.path(), Language::English).unwrap();
             writer.add_document(&make_test_chunk_doc()).unwrap();
             writer.commit().unwrap();
         }
 
         // Reopen and verify
         {
-            let writer = IndexWriter::open(temp.path()).unwrap();
+            let writer = IndexWriter::open(temp.path(), Language::English).unwrap();
             assert_eq!(writer.num_docs().unwrap(), 1);
         }
     }
@@ -251,7 +263,7 @@ mod test {
     #[test]
     fn delete_all_removes_documents() {
         let temp = TempDir::new().unwrap();
-        let mut writer = IndexWriter::open(temp.path()).unwrap();
+        let mut writer = IndexWriter::open(temp.path(), Language::English).unwrap();
 
         writer.add_document(&make_test_chunk_doc()).unwrap();
         writer.commit().unwrap();
@@ -265,7 +277,7 @@ mod test {
     #[test]
     fn rollback_discards_uncommitted_changes() {
         let temp = TempDir::new().unwrap();
-        let mut writer = IndexWriter::open(temp.path()).unwrap();
+        let mut writer = IndexWriter::open(temp.path(), Language::English).unwrap();
 
         writer.add_document(&make_test_chunk_doc()).unwrap();
         writer.rollback().unwrap();

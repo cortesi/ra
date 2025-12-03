@@ -27,6 +27,10 @@ pub enum IndexError {
     /// I/O error.
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+
+    /// Invalid stemmer language.
+    #[error("unsupported stemmer language: {0}")]
+    InvalidLanguage(String),
 }
 
 impl IndexError {

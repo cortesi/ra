@@ -14,11 +14,12 @@ use std::{
 };
 
 use ra_config::{CompiledPatterns, Config};
+use tantivy::tokenizer::Language;
 
 use crate::{
-    ChunkDocument, DiscoveredFile, IndexError, IndexWriter, Manifest, ManifestDiff, apply_diff,
-    compute_config_hash, diff_manifest, discover_files, index_directory, manifest_path,
-    write_config_hash,
+    ChunkDocument, DiscoveredFile, IndexError, IndexWriter, Manifest, ManifestDiff,
+    analyzer::parse_language, apply_diff, compute_config_hash, diff_manifest, discover_files,
+    index_directory, manifest_path, write_config_hash,
 };
 
 /// Statistics from an indexing operation.
@@ -89,12 +90,15 @@ pub struct Indexer<'a> {
     patterns: CompiledPatterns,
     /// Path to the index directory.
     index_dir: PathBuf,
+    /// Stemmer language for the text analyzer.
+    language: Language,
 }
 
 impl<'a> Indexer<'a> {
     /// Creates a new indexer for the given configuration.
     ///
-    /// Returns an error if the configuration has no config root or patterns fail to compile.
+    /// Returns an error if the configuration has no config root, patterns fail to compile,
+    /// or the stemmer language is invalid.
     pub fn new(config: &'a Config) -> Result<Self, IndexError> {
         let index_dir = index_directory(config).ok_or_else(|| {
             IndexError::Io(IoError::new(
@@ -110,10 +114,13 @@ impl<'a> Indexer<'a> {
             ))
         })?;
 
+        let language = parse_language(&config.search.stemmer)?;
+
         Ok(Self {
             config,
             patterns,
             index_dir,
+            language,
         })
     }
 
@@ -177,8 +184,8 @@ impl<'a> Indexer<'a> {
             return Ok(stats);
         }
 
-        // Open the index
-        let mut writer = IndexWriter::open(&self.index_dir)?;
+        // Open the index with the configured language
+        let mut writer = IndexWriter::open(&self.index_dir, self.language)?;
 
         // If full reindex, delete everything first
         if is_full_reindex {

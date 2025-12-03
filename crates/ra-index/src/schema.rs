@@ -15,6 +15,8 @@ use tantivy::schema::{
     TextOptions,
 };
 
+use crate::analyzer::RA_TOKENIZER;
+
 /// Field boost weights for search ranking.
 ///
 /// These constants will be used when building search queries in later stages.
@@ -67,7 +69,7 @@ impl IndexSchema {
         let title_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
-                    .set_tokenizer("default")
+                    .set_tokenizer(RA_TOKENIZER)
                     .set_index_option(IndexRecordOption::WithFreqsAndPositions),
             )
             .set_stored();
@@ -77,7 +79,7 @@ impl IndexSchema {
         let tags_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
-                    .set_tokenizer("default")
+                    .set_tokenizer(RA_TOKENIZER)
                     .set_index_option(IndexRecordOption::WithFreqsAndPositions),
             )
             .set_stored();
@@ -87,7 +89,7 @@ impl IndexSchema {
         let path_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
-                    .set_tokenizer("default")
+                    .set_tokenizer(RA_TOKENIZER)
                     .set_index_option(IndexRecordOption::WithFreqsAndPositions),
             )
             .set_stored();
@@ -96,7 +98,7 @@ impl IndexSchema {
         // Path components field: text with positions, NOT stored (just for searching)
         let path_components_options = TextOptions::default().set_indexing_options(
             TextFieldIndexing::default()
-                .set_tokenizer("default")
+                .set_tokenizer(RA_TOKENIZER)
                 .set_index_option(IndexRecordOption::WithFreqsAndPositions),
         );
         let path_components = builder.add_text_field("path_components", path_components_options);
@@ -108,7 +110,7 @@ impl IndexSchema {
         let body_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
-                    .set_tokenizer("default")
+                    .set_tokenizer(RA_TOKENIZER)
                     .set_index_option(IndexRecordOption::WithFreqsAndPositions),
             )
             .set_stored();
@@ -202,8 +204,8 @@ mod test {
                 let indexing = opts.get_indexing_options().unwrap();
                 assert_eq!(
                     indexing.tokenizer(),
-                    "default",
-                    "{name} should use default tokenizer"
+                    RA_TOKENIZER,
+                    "{name} should use ra_text tokenizer"
                 );
             } else {
                 panic!("{name} field should be text type");
