@@ -34,19 +34,25 @@
 #![warn(missing_docs)]
 
 mod config_hash;
+mod diff;
+mod discovery;
 mod document;
 mod error;
 mod location;
+mod manifest;
 mod schema;
 mod status;
 mod writer;
 
 pub use config_hash::{IndexingConfig, SCHEMA_VERSION, compute_config_hash};
+pub use diff::{ManifestDiff, apply_diff, diff_manifest};
+pub use discovery::{DiscoveredFile, discover_files, discover_tree_files, file_mtime};
 pub use document::ChunkDocument;
 pub use error::IndexError;
 pub use location::{
     config_hash_path, global_index_directory, index_directory, is_local_config, manifest_path,
 };
+pub use manifest::{Manifest, ManifestEntry};
 pub use status::{
     IndexStatus, detect_index_status, index_exists, read_stored_hash, write_config_hash,
 };

@@ -899,10 +899,13 @@ dependencies = [
  "directories",
  "ra-config",
  "ra-document",
+ "serde",
+ "serde_json",
  "siphasher",
  "tantivy",
  "tempfile",
  "thiserror 2.0.17",
+ "walkdir",
 ]
 
 [[package]]

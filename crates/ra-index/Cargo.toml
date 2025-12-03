@@ -11,9 +11,12 @@ workspace = true
 directories = "6.0.0"
 ra-config = { version = "0.1.0", path = "../ra-config" }
 ra-document = { path = "../ra-document" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 siphasher = "1.0.1"
 tantivy = "0.22"
 thiserror = "2"
+walkdir = "2.5.0"
 
 [dev-dependencies]
 tempfile = "3"
