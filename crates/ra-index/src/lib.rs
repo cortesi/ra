@@ -43,7 +43,9 @@ mod error;
 mod indexer;
 mod location;
 mod manifest;
+mod query;
 mod schema;
+mod search;
 mod status;
 mod writer;
 
@@ -57,6 +59,7 @@ pub use location::{
     config_hash_path, global_index_directory, index_directory, is_local_config, manifest_path,
 };
 pub use manifest::{Manifest, ManifestEntry};
+pub use search::{SearchResult, Searcher, open_searcher};
 pub use status::{
     IndexStatus, detect_index_status, index_exists, read_stored_hash, write_config_hash,
 };

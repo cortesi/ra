@@ -18,9 +18,6 @@ use tantivy::schema::{
 use crate::analyzer::RA_TOKENIZER;
 
 /// Field boost weights for search ranking.
-///
-/// These constants will be used when building search queries in later stages.
-#[allow(dead_code)]
 pub mod boost {
     /// Title field boost (3.0x).
     pub const TITLE: f32 = 3.0;
