@@ -6,14 +6,21 @@
 
 #![warn(missing_docs)]
 
+mod discovery;
 mod error;
+mod parse;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
 pub use error::ConfigError;
+pub use parse::{
+    RawConfig, RawContextSettings, RawIncludePattern, RawSearchSettings, RawSettings,
+    parse_config_file, parse_config_str,
+};
 
 /// Top-level merged configuration for ra.
 ///
