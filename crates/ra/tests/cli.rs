@@ -89,7 +89,10 @@ mod status {
     #[test]
     fn succeeds_without_config() {
         let dir = temp_dir();
-        ra().current_dir(dir.path()).arg("status").assert().success();
+        ra().current_dir(dir.path())
+            .arg("status")
+            .assert()
+            .success();
     }
 
     #[test]
@@ -97,20 +100,22 @@ mod status {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "[trees]\n").unwrap();
 
-        ra().current_dir(dir.path()).arg("status").assert().success();
+        ra().current_dir(dir.path())
+            .arg("status")
+            .assert()
+            .success();
     }
 
     #[test]
     fn succeeds_with_trees() {
         let dir = temp_dir();
         fs::create_dir(dir.path().join("docs")).unwrap();
-        fs::write(
-            dir.path().join(".ra.toml"),
-            "[trees]\ndocs = \"./docs\"\n",
-        )
-        .unwrap();
+        fs::write(dir.path().join(".ra.toml"), "[trees]\ndocs = \"./docs\"\n").unwrap();
 
-        ra().current_dir(dir.path()).arg("status").assert().success();
+        ra().current_dir(dir.path())
+            .arg("status")
+            .assert()
+            .success();
     }
 }
 

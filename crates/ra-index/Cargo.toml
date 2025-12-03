@@ -1,0 +1,16 @@
+[package]
+name = "ra-index"
+version = "0.1.0"
+edition = "2024"
+description = "Tantivy-based search index for ra"
+
+[lints]
+workspace = true
+
+[dependencies]
+ra-document = { path = "../ra-document" }
+tantivy = "0.22"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
