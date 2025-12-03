@@ -11,6 +11,7 @@ clap = { version = "4", features = ["derive"] }
 ra-config = { path = "../ra-config" }
 ra-document = { path = "../ra-document" }
 ra-highlight = { path = "../ra-highlight" }
+ra-index = { version = "0.1.0", path = "../ra-index" }
 
 [dev-dependencies]
 assert_cmd = "2.1.1"

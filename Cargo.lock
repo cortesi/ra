@@ -859,6 +859,7 @@ dependencies = [
  "ra-config",
  "ra-document",
  "ra-highlight",
+ "ra-index",
  "tempfile",
 ]
 

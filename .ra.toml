@@ -1,0 +1,69 @@
+# ra configuration file
+# See https://github.com/cortesi/ra for documentation
+
+# Define knowledge trees - directories containing documents to index.
+# Each tree is a named collection of documents with its own path and patterns.
+
+# [tree.docs]
+# path = "./docs"
+# include = ["**/*.md"]
+# exclude = ["**/drafts/**"]
+
+# [tree.notes]
+# path = "~/notes"
+# include = ["**/*.md", "**/*.txt"]
+
+# General settings
+# [settings]
+# default_limit = 5
+# local_boost = 1.5
+# chunk_at_headings = true
+# max_chunk_size = 50000
+
+# Search settings
+# [search]
+# fuzzy = true
+# fuzzy_distance = 1
+# stemmer = "english"
+
+# Context command settings
+# These control how `ra context` analyzes files to find relevant documentation.
+# [context]
+# limit = 10
+# min_term_frequency = 2
+# min_word_length = 4
+# max_word_length = 30
+# sample_size = 50000
+
+# Glob patterns that inject additional search terms when matched.
+# When `ra context` analyzes a file, it matches the file path against these
+# patterns and adds the corresponding terms to the search query. This helps
+# find relevant documentation based on file type or project structure.
+#
+# Multiple patterns can match the same file - all matching terms are merged.
+# Child configs can override patterns from parent configs for the same glob.
+
+# [context.patterns]
+# "*.rs" = ["rust"]
+# "*.py" = ["python"]
+# "*.go" = ["golang"]
+# "*.ts" = ["typescript"]
+# "*.tsx" = ["typescript", "react"]
+# "*.jsx" = ["javascript", "react"]
+# "*.rb" = ["ruby"]
+# "*.ex" = ["elixir"]
+# "*.exs" = ["elixir"]
+# "*.clj" = ["clojure"]
+# "*.hs" = ["haskell"]
+# "*.swift" = ["swift"]
+# "*.kt" = ["kotlin"]
+# "*.java" = ["java"]
+# "*.c" = ["c"]
+# "*.cpp" = ["cpp"]
+# "*.h" = ["c", "cpp"]
+# "*.hpp" = ["cpp"]
+# "src/api/**" = ["http", "handlers", "routing", "REST"]
+# "src/auth/**" = ["authentication", "security", "jwt"]
+# "src/db/**" = ["database", "queries", "migrations"]
+# "tests/**" = ["testing", "fixtures"]
+# "migrations/**" = ["database", "schema"]

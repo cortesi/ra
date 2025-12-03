@@ -38,6 +38,7 @@ mod diff;
 mod discovery;
 mod document;
 mod error;
+mod indexer;
 mod location;
 mod manifest;
 mod schema;
@@ -49,6 +50,7 @@ pub use diff::{ManifestDiff, apply_diff, diff_manifest};
 pub use discovery::{DiscoveredFile, discover_files, discover_tree_files, file_mtime};
 pub use document::ChunkDocument;
 pub use error::IndexError;
+pub use indexer::{IndexStats, Indexer, ProgressReporter, SilentReporter};
 pub use location::{
     config_hash_path, global_index_directory, index_directory, is_local_config, manifest_path,
 };

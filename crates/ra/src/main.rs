@@ -14,6 +14,7 @@ use ra_config::{
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
 use ra_highlight::{Highlighter, dim, header, rule, subheader};
+use ra_index::{IndexStats, Indexer, ProgressReporter};
 
 #[derive(Parser)]
 #[command(name = "ra")]
@@ -133,7 +134,7 @@ fn main() -> ExitCode {
             return cmd_check();
         }
         Commands::Update => {
-            println!("update");
+            return cmd_update();
         }
         Commands::Status => {
             return cmd_status();
@@ -553,4 +554,101 @@ fn chunk_preview(content: &str, max_len: usize) -> String {
         first_line.to_string()
     };
     preview.replace('\n', " ")
+}
+
+/// Progress reporter that prints to the console.
+struct ConsoleReporter {
+    /// Whether to print verbose progress information.
+    verbose: bool,
+}
+
+impl ConsoleReporter {
+    /// Creates a new console reporter.
+    fn new(verbose: bool) -> Self {
+        Self { verbose }
+    }
+}
+
+impl ProgressReporter for ConsoleReporter {
+    fn on_file_start(&mut self, path: &Path, current: usize, total: usize) {
+        if self.verbose {
+            println!("[{}/{}] Indexing {}", current, total, path.display());
+        }
+    }
+
+    fn on_file_done(&mut self, _path: &Path, _chunks: usize) {
+        // Only show in verbose mode, already shown in on_file_start
+    }
+
+    fn on_file_error(&mut self, path: &Path, error: &str) {
+        eprintln!("warning: failed to index {}: {}", path.display(), error);
+    }
+
+    fn on_file_removed(&mut self, path: &Path) {
+        if self.verbose {
+            println!("Removed: {}", path.display());
+        }
+    }
+
+    fn on_complete(&mut self, stats: &IndexStats) {
+        println!();
+        println!(
+            "Indexed {} files ({} chunks)",
+            stats.files_processed, stats.chunks_indexed
+        );
+        if stats.files_skipped > 0 {
+            println!("{} files skipped due to errors", stats.files_skipped);
+        }
+        if stats.files_removed > 0 {
+            println!("{} files removed from index", stats.files_removed);
+        }
+    }
+}
+
+/// Implements the `ra update` command.
+fn cmd_update() -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Load configuration
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if config.trees.is_empty() {
+        eprintln!("error: no trees defined in configuration");
+        eprintln!("Run 'ra init' to create a configuration file, then add tree definitions.");
+        return ExitCode::FAILURE;
+    }
+
+    // Create indexer
+    let indexer = match Indexer::new(&config) {
+        Ok(indexer) => indexer,
+        Err(e) => {
+            eprintln!("error: failed to initialize indexer: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    println!("Rebuilding search index...");
+    println!();
+
+    // Run full reindex
+    let mut reporter = ConsoleReporter::new(true);
+    match indexer.full_reindex(&mut reporter) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: indexing failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

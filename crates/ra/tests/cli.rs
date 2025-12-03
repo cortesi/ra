@@ -266,3 +266,149 @@ mod inspect {
             .success();
     }
 }
+
+mod update {
+    use super::*;
+
+    #[test]
+    fn fails_without_trees() {
+        let dir = temp_dir();
+        fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
+
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("no trees defined"));
+    }
+
+    #[test]
+    fn succeeds_with_valid_tree() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+        fs::write(docs.join("readme.md"), "# Test\n\nContent").unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+include = ["**/*.md"]
+"#,
+        )
+        .unwrap();
+
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Indexed 1 files"));
+    }
+
+    #[test]
+    fn creates_index_directory() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+        fs::write(docs.join("test.md"), "# Test").unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        assert!(dir.path().join(".ra").join("index").exists());
+        assert!(dir.path().join(".ra").join("manifest.json").exists());
+    }
+
+    #[test]
+    fn indexes_multiple_files() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+        fs::write(docs.join("one.md"), "# One").unwrap();
+        fs::write(docs.join("two.md"), "# Two").unwrap();
+        fs::write(docs.join("three.txt"), "Three").unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+include = ["**/*.md", "**/*.txt"]
+"#,
+        )
+        .unwrap();
+
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Indexed 3 files"));
+    }
+
+    #[test]
+    fn reports_parse_errors_gracefully() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+        // Valid file
+        fs::write(docs.join("valid.md"), "# Valid").unwrap();
+        // Invalid UTF-8 file - will fail to parse
+        fs::write(docs.join("invalid.md"), vec![0xFF, 0xFE, 0x00, 0x01]).unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        // Should succeed overall but report the error
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("warning: failed to index"));
+    }
+
+    #[test]
+    fn reindex_updates_existing_index() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+        fs::write(docs.join("test.md"), "# Original").unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        // First index
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        // Modify file
+        fs::write(docs.join("test.md"), "# Updated content").unwrap();
+
+        // Reindex should succeed
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Indexed 1 files"));
+    }
+}
