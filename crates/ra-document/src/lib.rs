@@ -12,6 +12,7 @@
 mod chunker;
 mod error;
 mod frontmatter;
+mod parse;
 mod slug;
 
 use std::path::PathBuf;
@@ -19,6 +20,8 @@ use std::path::PathBuf;
 pub use chunker::{ChunkData, Heading, chunk_markdown, determine_chunk_level, extract_headings};
 pub use error::DocumentError;
 pub use frontmatter::{Frontmatter, parse_frontmatter};
+pub use parse::{DEFAULT_MIN_CHUNK_SIZE, ParseResult, parse_file, parse_markdown, parse_text};
+pub use pulldown_cmark::HeadingLevel;
 pub use slug::Slugifier;
 
 /// A parsed document ready for indexing.

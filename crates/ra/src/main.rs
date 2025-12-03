@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 use ra_config::{
     CONFIG_FILENAME, Config, ConfigWarning, discover_config_files, global_config_path,
 };
+use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
 use ra_highlight::{Highlighter, dim, header, rule, subheader};
 
 #[derive(Parser)]
@@ -122,7 +123,7 @@ fn main() -> ExitCode {
             println!("get: {}", id);
         }
         Commands::Inspect { file } => {
-            println!("inspect: {}", file);
+            return cmd_inspect(&file);
         }
         Commands::Init { global, force } => {
             return cmd_init(global, force);
@@ -458,4 +459,111 @@ fn print_hints(warnings: &[ConfigWarning]) {
             println!("  - {hint}");
         }
     }
+}
+
+/// Implements the `ra inspect` command.
+fn cmd_inspect(file: &str) -> ExitCode {
+    let path = Path::new(file);
+
+    // Check if file exists
+    if !path.exists() {
+        eprintln!("error: file not found: {file}");
+        return ExitCode::FAILURE;
+    }
+
+    // Determine file type
+    let file_type = match path.extension().and_then(|e| e.to_str()) {
+        Some("md" | "markdown") => "markdown",
+        Some("txt") => "text",
+        Some(ext) => {
+            eprintln!("error: unsupported file type: .{ext}");
+            eprintln!("Supported types: .md, .markdown, .txt");
+            return ExitCode::FAILURE;
+        }
+        None => {
+            eprintln!("error: file has no extension");
+            eprintln!("Supported types: .md, .markdown, .txt");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Parse the file (using "inspect" as placeholder tree name)
+    let result = match parse_file(path, "inspect", DEFAULT_MIN_CHUNK_SIZE) {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let doc = &result.document;
+
+    // Display results
+    println!("{}", header("Document Inspection"));
+    println!();
+
+    println!("{}", subheader("File Info:"));
+    println!("  Path: {}", path.display());
+    println!("  Type: {file_type}");
+    println!("  Title: {}", doc.title);
+    if !doc.tags.is_empty() {
+        println!("  Tags: {}", doc.tags.join(", "));
+    }
+    println!();
+
+    println!("{}", subheader("Chunking:"));
+    match result.chunk_level {
+        Some(level) => {
+            println!("  Level: h{}", heading_level_to_num(level));
+            println!("  Reason: {}", result.chunk_reason);
+        }
+        None => {
+            println!("  Level: {}", dim("(not chunked)"));
+            println!("  Reason: {}", result.chunk_reason);
+        }
+    }
+    println!("  Chunks: {}", doc.chunks.len());
+    println!();
+
+    println!("{}", subheader("Chunks:"));
+    println!("{}", rule(60));
+    for (i, chunk) in doc.chunks.iter().enumerate() {
+        let chunk_type = if chunk.is_preamble { " (preamble)" } else { "" };
+        println!("{}. {} {}", i + 1, chunk.title, dim(chunk_type));
+        println!("   ID: {}", dim(&chunk.id));
+        println!("   Breadcrumb: {}", dim(&chunk.breadcrumb));
+        println!("   Size: {} chars", chunk.body.len());
+
+        // Show preview of body
+        let preview = chunk_preview(&chunk.body, 100);
+        println!("   Preview: {}", dim(&preview));
+        println!();
+    }
+    println!("{}", rule(60));
+
+    ExitCode::SUCCESS
+}
+
+/// Converts HeadingLevel to a number for display.
+fn heading_level_to_num(level: HeadingLevel) -> u8 {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+/// Creates a preview of chunk content, truncating if necessary.
+fn chunk_preview(content: &str, max_len: usize) -> String {
+    // Take first line or first max_len chars, whichever is shorter
+    let first_line = content.lines().next().unwrap_or("");
+    let preview = if first_line.len() > max_len {
+        format!("{}...", &first_line[..max_len])
+    } else {
+        first_line.to_string()
+    };
+    preview.replace('\n', " ")
 }

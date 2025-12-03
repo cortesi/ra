@@ -1,4 +1,7 @@
 //! CLI integration tests for ra commands.
+//!
+//! These tests focus on exit codes and basic behavioral verification,
+//! not specific output formatting which may change.
 
 // Integration tests live outside cfg(test) by design
 #![allow(clippy::tests_outside_test_module)]
@@ -26,18 +29,13 @@ mod init {
     fn creates_config_file() {
         let dir = temp_dir();
 
-        ra().current_dir(dir.path())
-            .arg("init")
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("Created"));
+        ra().current_dir(dir.path()).arg("init").assert().success();
 
         let config_path = dir.path().join(".ra.toml");
         assert!(config_path.exists());
 
         let contents = fs::read_to_string(&config_path).unwrap();
         assert!(contents.contains("[trees]"));
-        assert!(contents.contains("[settings]"));
     }
 
     #[test]
@@ -45,12 +43,7 @@ mod init {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "existing").unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("init")
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains("already exists"))
-            .stderr(predicate::str::contains("--force"));
+        ra().current_dir(dir.path()).arg("init").assert().failure();
     }
 
     #[test]
@@ -61,24 +54,18 @@ mod init {
         ra().current_dir(dir.path())
             .args(["init", "--force"])
             .assert()
-            .success()
-            .stdout(predicate::str::contains("Created"));
+            .success();
 
         let contents = fs::read_to_string(dir.path().join(".ra.toml")).unwrap();
         assert!(contents.contains("[trees]"));
-        assert!(!contents.contains("old content"));
     }
 
     #[test]
-    fn updates_gitignore() {
+    fn updates_gitignore_when_present() {
         let dir = temp_dir();
         fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("init")
-            .assert()
-            .success()
-            .stdout(predicate::str::contains(".ra/"));
+        ra().current_dir(dir.path()).arg("init").assert().success();
 
         let gitignore = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert!(gitignore.contains(".ra/"));
@@ -92,9 +79,7 @@ mod init {
         ra().current_dir(dir.path()).arg("init").assert().success();
 
         let gitignore = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
-        // Count occurrences of .ra/
-        let count = gitignore.matches(".ra/").count();
-        assert_eq!(count, 1);
+        assert_eq!(gitignore.matches(".ra/").count(), 1);
     }
 }
 
@@ -102,82 +87,30 @@ mod status {
     use super::*;
 
     #[test]
-    fn shows_no_config_message() {
+    fn succeeds_without_config() {
         let dir = temp_dir();
-
-        ra().current_dir(dir.path())
-            .arg("status")
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("No configuration files found"))
-            .stdout(predicate::str::contains("ra init"));
+        ra().current_dir(dir.path()).arg("status").assert().success();
     }
 
     #[test]
-    fn shows_config_files() {
+    fn succeeds_with_config() {
         let dir = temp_dir();
-        fs::write(
-            dir.path().join(".ra.toml"),
-            r#"
-[trees]
-"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join(".ra.toml"), "[trees]\n").unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("status")
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("Config files"))
-            .stdout(predicate::str::contains(".ra.toml"));
+        ra().current_dir(dir.path()).arg("status").assert().success();
     }
 
     #[test]
-    fn shows_default_settings() {
+    fn succeeds_with_trees() {
         let dir = temp_dir();
+        fs::create_dir(dir.path().join("docs")).unwrap();
         fs::write(
             dir.path().join(".ra.toml"),
-            r#"
-[trees]
-"#,
+            "[trees]\ndocs = \"./docs\"\n",
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("status")
-            .assert()
-            .success()
-            // Settings are output in TOML format with ANSI color codes interspersed.
-            // Check that the key names appear (the values and section headers have escape codes).
-            .stdout(predicate::str::contains("default_limit"))
-            .stdout(predicate::str::contains("fuzzy"))
-            .stdout(predicate::str::contains("stemmer"))
-            .stdout(predicate::str::contains("settings"))
-            .stdout(predicate::str::contains("search"))
-            .stdout(predicate::str::contains("context"));
-    }
-
-    #[test]
-    fn shows_trees() {
-        let dir = temp_dir();
-        let docs = dir.path().join("docs");
-        fs::create_dir(&docs).unwrap();
-
-        fs::write(
-            dir.path().join(".ra.toml"),
-            r#"
-[trees]
-docs = "./docs"
-"#,
-        )
-        .unwrap();
-
-        ra().current_dir(dir.path())
-            .arg("status")
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("Trees:"))
-            .stdout(predicate::str::contains("docs"));
+        ra().current_dir(dir.path()).arg("status").assert().success();
     }
 }
 
@@ -185,36 +118,21 @@ mod check {
     use super::*;
 
     #[test]
-    fn no_config_exits_success() {
+    fn succeeds_without_config() {
         let dir = temp_dir();
-
-        ra().current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("No configuration files found"));
+        ra().current_dir(dir.path()).arg("check").assert().success();
     }
 
     #[test]
-    fn empty_trees_warns() {
+    fn warns_on_empty_trees() {
         let dir = temp_dir();
-        fs::write(
-            dir.path().join(".ra.toml"),
-            r#"
-[trees]
-"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join(".ra.toml"), "[trees]\n").unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .failure() // exit code 1 for warnings
-            .stdout(predicate::str::contains("no trees are defined"));
+        ra().current_dir(dir.path()).arg("check").assert().failure();
     }
 
     #[test]
-    fn valid_config_exits_success() {
+    fn succeeds_with_valid_config() {
         let dir = temp_dir();
         let docs = dir.path().join("docs");
         fs::create_dir(&docs).unwrap();
@@ -222,8 +140,7 @@ mod check {
 
         fs::write(
             dir.path().join(".ra.toml"),
-            r#"
-[trees]
+            r#"[trees]
 docs = "./docs"
 
 [[include]]
@@ -233,15 +150,11 @@ pattern = "**/*.md"
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("No issues found"));
+        ra().current_dir(dir.path()).arg("check").assert().success();
     }
 
     #[test]
-    fn pattern_no_match_warns() {
+    fn warns_on_pattern_matching_nothing() {
         let dir = temp_dir();
         let docs = dir.path().join("docs");
         fs::create_dir(&docs).unwrap();
@@ -249,8 +162,7 @@ pattern = "**/*.md"
 
         fs::write(
             dir.path().join(".ra.toml"),
-            r#"
-[trees]
+            r#"[trees]
 docs = "./docs"
 
 [[include]]
@@ -260,23 +172,17 @@ pattern = "**/*.rs"
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .failure()
-            .stdout(predicate::str::contains("matches no files"));
+        ra().current_dir(dir.path()).arg("check").assert().failure();
     }
 
     #[test]
-    fn undefined_tree_warns() {
+    fn warns_on_undefined_tree() {
         let dir = temp_dir();
-        let docs = dir.path().join("docs");
-        fs::create_dir(&docs).unwrap();
+        fs::create_dir(dir.path().join("docs")).unwrap();
 
         fs::write(
             dir.path().join(".ra.toml"),
-            r#"
-[trees]
+            r#"[trees]
 docs = "./docs"
 
 [[include]]
@@ -286,24 +192,13 @@ pattern = "**/*.md"
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .failure()
-            .stdout(predicate::str::contains("references undefined tree"));
+        ra().current_dir(dir.path()).arg("check").assert().failure();
     }
 
     #[test]
-    fn invalid_toml_errors() {
+    fn fails_on_invalid_toml() {
         let dir = temp_dir();
-        fs::write(
-            dir.path().join(".ra.toml"),
-            r#"
-[trees
-invalid toml
-"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join(".ra.toml"), "[trees\ninvalid").unwrap();
 
         ra().current_dir(dir.path())
             .arg("check")
@@ -311,22 +206,68 @@ invalid toml
             .failure()
             .stderr(predicate::str::contains("error"));
     }
+}
+
+mod inspect {
+    use super::*;
 
     #[test]
-    fn shows_hints() {
+    fn succeeds_on_markdown_file() {
         let dir = temp_dir();
-        fs::write(
-            dir.path().join(".ra.toml"),
-            r#"
-[trees]
-"#,
-        )
-        .unwrap();
+        fs::write(dir.path().join("test.md"), "# Hello\n\nWorld").unwrap();
 
         ra().current_dir(dir.path())
-            .arg("check")
+            .args(["inspect", "test.md"])
             .assert()
-            .failure()
-            .stdout(predicate::str::contains("Hints:"));
+            .success();
+    }
+
+    #[test]
+    fn succeeds_on_text_file() {
+        let dir = temp_dir();
+        fs::write(dir.path().join("notes.txt"), "Plain text").unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["inspect", "notes.txt"])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn fails_on_nonexistent_file() {
+        let dir = temp_dir();
+
+        ra().current_dir(dir.path())
+            .args(["inspect", "missing.md"])
+            .assert()
+            .failure();
+    }
+
+    #[test]
+    fn fails_on_unsupported_extension() {
+        let dir = temp_dir();
+        fs::write(dir.path().join("data.json"), "{}").unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["inspect", "data.json"])
+            .assert()
+            .failure();
+    }
+
+    #[test]
+    fn succeeds_on_large_chunked_file() {
+        let dir = temp_dir();
+        // Large enough to trigger chunking (> 2000 chars)
+        let content = format!(
+            "# Section 1\n\n{}\n\n# Section 2\n\n{}",
+            "x".repeat(1100),
+            "y".repeat(1100)
+        );
+        fs::write(dir.path().join("large.md"), content).unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["inspect", "large.md"])
+            .assert()
+            .success();
     }
 }

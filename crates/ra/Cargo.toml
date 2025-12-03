@@ -9,6 +9,7 @@ workspace = true
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ra-config = { path = "../ra-config" }
+ra-document = { path = "../ra-document" }
 ra-highlight = { path = "../ra-highlight" }
 
 [dev-dependencies]

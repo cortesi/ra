@@ -530,6 +530,7 @@ dependencies = [
  "clap",
  "predicates",
  "ra-config",
+ "ra-document",
  "ra-highlight",
  "tempfile",
 ]
