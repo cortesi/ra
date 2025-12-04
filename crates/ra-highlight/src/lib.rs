@@ -179,6 +179,10 @@ pub mod theme {
         bold: true,
         dim: false,
     };
+
+    /// Content/body text style (soft blue-gray).
+    /// Distinguishes document content from metadata while remaining readable.
+    pub const CONTENT: Style = Style::fg(Rgb::new(0x7a, 0xa2, 0xc0));
 }
 
 /// A syntax highlighter that can highlight code for terminal output.
@@ -284,6 +288,29 @@ pub fn rule(width: usize) -> String {
     dim(&"─".repeat(width))
 }
 
+/// Formats text as content/body text (subtle gray).
+pub fn content(text: &str) -> String {
+    theme::CONTENT.apply(text)
+}
+
+/// Indents each line of text with a consistent prefix.
+///
+/// Uses a visual indent of 3 spaces to offset content from headers.
+pub fn indent(text: &str) -> String {
+    const INDENT: &str = "   ";
+    text.lines()
+        .map(|line| format!("{INDENT}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Formats and indents content text for display.
+///
+/// Combines content styling with indentation for clear visual hierarchy.
+pub fn indent_content(text: &str) -> String {
+    indent(&content(text))
+}
+
 /// Applies ANSI highlighting to text at the specified byte ranges.
 ///
 /// Inserts the given prefix before each highlighted region and suffix after.
@@ -348,6 +375,33 @@ pub fn highlight_ranges(text: &str, ranges: &[Range<usize>], prefix: &str, suffi
 /// Highlights text ranges with the search match style.
 pub fn highlight_matches(text: &str, ranges: &[Range<usize>]) -> String {
     highlight_ranges(text, ranges, &theme::MATCH.prefix(), theme::MATCH.suffix())
+}
+
+/// Formats content text with indentation and optional match highlighting.
+///
+/// Applies content styling as the base, with match highlights overlaid.
+/// Each line is indented for visual hierarchy under headers.
+pub fn format_body(text: &str, match_ranges: &[Range<usize>]) -> String {
+    const INDENT: &str = "   ";
+    let content_prefix = theme::CONTENT.prefix();
+    let content_suffix = theme::CONTENT.suffix();
+
+    // First apply match highlighting if any
+    let highlighted = if match_ranges.is_empty() {
+        text.to_string()
+    } else {
+        // For matches, we use a compound style: reset to content after match
+        let match_prefix = theme::MATCH.prefix();
+        let match_suffix = format!("{}{}", theme::MATCH.suffix(), content_prefix);
+        highlight_ranges(text, match_ranges, &match_prefix, &match_suffix)
+    };
+
+    // Then apply content styling and indentation per line
+    highlighted
+        .lines()
+        .map(|line| format!("{INDENT}{content_prefix}{line}{content_suffix}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

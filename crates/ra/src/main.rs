@@ -14,7 +14,9 @@ use ra_config::{
     global_template, local_template,
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
-use ra_highlight::{Highlighter, breadcrumb, dim, header, highlight_matches, rule, subheader};
+use ra_highlight::{
+    Highlighter, breadcrumb, dim, format_body, header, indent_content, rule, subheader,
+};
 use ra_index::{
     IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher, SilentReporter,
     detect_index_status, index_directory, open_searcher,
@@ -300,12 +302,8 @@ fn format_result_full(result: &SearchResult) -> String {
     output.push_str(&format!("─── {} ───\n", header(&result.id)));
     output.push_str(&format!("{}\n\n", breadcrumb(&result.breadcrumb)));
 
-    // Highlight matching terms in the body
-    let body = if result.match_ranges.is_empty() {
-        result.body.clone()
-    } else {
-        highlight_matches(&result.body, &result.match_ranges)
-    };
+    // Format body with content styling, indentation, and match highlighting
+    let body = format_body(&result.body, &result.match_ranges);
     output.push_str(&body);
 
     if !result.body.ends_with('\n') {
@@ -340,14 +338,12 @@ fn format_result_matches(result: &SearchResult) -> String {
     output.push_str(&format!("{}\n\n", breadcrumb(&result.breadcrumb)));
 
     if result.match_ranges.is_empty() {
-        output.push_str(&dim("(no matches)\n"));
+        output.push_str(&dim("   (no matches)\n"));
     } else {
-        // Find which lines contain matches and output only those
-        let matching_lines = extract_matching_lines(&result.body, &result.match_ranges);
-        for line in matching_lines {
-            output.push_str(&line);
-            output.push('\n');
-        }
+        // Find which lines contain matches and format with content styling + indentation
+        let formatted = extract_matching_lines(&result.body, &result.match_ranges);
+        output.push_str(&formatted);
+        output.push('\n');
     }
 
     output.push('\n');
@@ -355,7 +351,8 @@ fn format_result_matches(result: &SearchResult) -> String {
 }
 
 /// Extracts lines from text that contain at least one match range, with highlighting.
-fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> Vec<String> {
+/// Returns formatted lines with content styling, indentation, and match highlighting.
+fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> String {
     use std::{collections::BTreeSet, iter};
 
     // Build a set of line numbers that contain matches
@@ -377,8 +374,8 @@ fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> Vec<Stri
         }
     }
 
-    // Extract and highlight those lines
-    let mut result = Vec::new();
+    // Extract lines and their adjusted match ranges
+    let mut lines_with_ranges: Vec<(&str, Vec<Range<usize>>)> = Vec::new();
     for line_num in matching_line_nums {
         let line_start = line_starts[line_num];
         let line_end = line_starts.get(line_num + 1).copied().unwrap_or(body.len());
@@ -407,17 +404,27 @@ fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> Vec<Stri
             })
             .collect();
 
-        // Highlight the line
-        let highlighted = if line_ranges.is_empty() {
-            line_content.to_string()
-        } else {
-            highlight_matches(line_content, &line_ranges)
-        };
-
-        result.push(highlighted);
+        lines_with_ranges.push((line_content, line_ranges));
     }
 
-    result
+    // Combine lines and format with content styling and match highlighting
+    let combined: String = lines_with_ranges
+        .iter()
+        .map(|(line, _)| *line)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Collect all ranges, adjusting offsets for the combined string
+    let mut combined_ranges: Vec<Range<usize>> = Vec::new();
+    let mut offset = 0;
+    for (line, ranges) in &lines_with_ranges {
+        for r in ranges {
+            combined_ranges.push((r.start + offset)..(r.end + offset));
+        }
+        offset += line.len() + 1; // +1 for newline
+    }
+
+    format_body(&combined, &combined_ranges)
 }
 
 /// Implements the `ra search` command.
@@ -995,48 +1002,50 @@ fn cmd_inspect(file: &str) -> ExitCode {
 
     let doc = &result.document;
 
-    // Display results
-    println!("{}", header("Document Inspection"));
-    println!();
-
-    println!("{}", subheader("File Info:"));
-    println!("  Path: {}", path.display());
-    println!("  Type: {file_type}");
-    println!("  Title: {}", doc.title);
+    // Document header - matches search result format
+    println!(
+        "─── {} ───",
+        header(&format!("{} ({})", path.display(), file_type))
+    );
+    println!("{}", breadcrumb(&doc.title));
     if !doc.tags.is_empty() {
-        println!("  Tags: {}", doc.tags.join(", "));
+        println!("{}", dim(&format!("tags: {}", doc.tags.join(", "))));
     }
+
+    // Chunking info
+    let chunk_info = match result.chunk_level {
+        Some(level) => format!(
+            "h{} chunking ({}) → {} chunks",
+            heading_level_to_num(level),
+            result.chunk_reason,
+            doc.chunks.len()
+        ),
+        None => format!(
+            "not chunked ({}) → {} chunks",
+            result.chunk_reason,
+            doc.chunks.len()
+        ),
+    };
+    println!("{}", dim(&chunk_info));
     println!();
 
-    println!("{}", subheader("Chunking:"));
-    match result.chunk_level {
-        Some(level) => {
-            println!("  Level: h{}", heading_level_to_num(level));
-            println!("  Reason: {}", result.chunk_reason);
-        }
-        None => {
-            println!("  Level: {}", dim("(not chunked)"));
-            println!("  Reason: {}", result.chunk_reason);
-        }
-    }
-    println!("  Chunks: {}", doc.chunks.len());
-    println!();
+    // Display each chunk in search result format
+    for chunk in &doc.chunks {
+        let chunk_label = if chunk.is_preamble {
+            format!("{} (preamble)", chunk.id)
+        } else {
+            chunk.id.clone()
+        };
+        println!("─── {} ───", header(&chunk_label));
+        println!("{}", breadcrumb(&chunk.breadcrumb));
+        println!("{}", dim(&format!("{} chars", chunk.body.len())));
+        println!();
 
-    println!("{}", subheader("Chunks:"));
-    println!("{}", rule(60));
-    for (i, chunk) in doc.chunks.iter().enumerate() {
-        let chunk_type = if chunk.is_preamble { " (preamble)" } else { "" };
-        println!("{}. {} {}", i + 1, chunk.title, dim(chunk_type));
-        println!("   ID: {}", dim(&chunk.id));
-        println!("   Breadcrumb: {}", dim(&chunk.breadcrumb));
-        println!("   Size: {} chars", chunk.body.len());
-
-        // Show preview of body
-        let preview = chunk_preview(&chunk.body, 100);
-        println!("   Preview: {}", dim(&preview));
+        // Show preview of body with content styling and indentation
+        let preview = chunk_preview(&chunk.body, 200);
+        println!("{}", indent_content(&preview));
         println!();
     }
-    println!("{}", rule(60));
 
     ExitCode::SUCCESS
 }
