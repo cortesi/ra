@@ -591,6 +591,180 @@ path = "./docs"
     }
 }
 
+mod context {
+    use super::*;
+
+    fn setup_indexed_dir() -> tempfile::TempDir {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+
+        // Create documentation about Rust authentication
+        fs::write(
+            docs.join("auth.md"),
+            "# Authentication Guide\n\nHow to handle user login and authentication in Rust.",
+        )
+        .unwrap();
+
+        // Create documentation about handlers
+        fs::write(
+            docs.join("handlers.md"),
+            "# HTTP Handlers\n\nImplementing request handlers for your API.",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+
+[context.patterns]
+"*.rs" = ["rust"]
+"src/auth/**" = ["authentication", "login"]
+"#,
+        )
+        .unwrap();
+
+        // Index the content
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        dir
+    }
+
+    #[test]
+    fn fails_without_trees() {
+        let dir = temp_dir();
+        fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
+        fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["context", "test.rs"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("no trees defined"));
+    }
+
+    #[test]
+    fn fails_on_nonexistent_file() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["context", "nonexistent.rs"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("file not found"));
+    }
+
+    #[test]
+    fn skips_binary_files_with_warning() {
+        let dir = setup_indexed_dir();
+
+        // Create a binary file and a text file
+        fs::write(dir.path().join("image.png"), [0x89, 0x50, 0x4E, 0x47]).unwrap();
+        fs::write(dir.path().join("code.rs"), "fn main() {}").unwrap();
+
+        // Should warn about binary but still succeed if there's a text file
+        ra().current_dir(dir.path())
+            .args(["context", "image.png", "code.rs"])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("skipping binary file"));
+    }
+
+    #[test]
+    fn fails_when_only_binary_files() {
+        let dir = setup_indexed_dir();
+
+        // Create only a binary file
+        fs::write(dir.path().join("image.png"), [0x89, 0x50, 0x4E, 0x47]).unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["context", "image.png"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("no analyzable files"));
+    }
+
+    #[test]
+    fn finds_context_for_source_file() {
+        let dir = setup_indexed_dir();
+
+        // Create a source file that should match against auth docs
+        let src = dir.path().join("src");
+        fs::create_dir_all(src.join("auth")).unwrap();
+        fs::write(src.join("auth").join("login.rs"), "fn login() {}").unwrap();
+
+        // Should find auth-related documentation
+        ra().current_dir(dir.path())
+            .args(["context", "src/auth/login.rs"])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn respects_limit() {
+        let dir = setup_indexed_dir();
+        fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        // With limit of 1, should only show 1 result in JSON
+        let output = ra()
+            .current_dir(dir.path())
+            .args(["context", "-n", "1", "--json", "test.rs"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let results = json["queries"][0]["results"].as_array().unwrap();
+        assert!(
+            results.len() <= 1,
+            "Expected at most 1 result, found {}",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn list_mode_output() {
+        let dir = setup_indexed_dir();
+        fs::write(dir.path().join("test.rs"), "fn authenticate() {}").unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["context", "--list", "test.rs"])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn json_output_format() {
+        let dir = setup_indexed_dir();
+        fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["context", "--json", "test.rs"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("\"queries\""));
+    }
+
+    #[test]
+    fn multiple_files_combined() {
+        let dir = setup_indexed_dir();
+
+        // Create multiple source files
+        fs::write(dir.path().join("auth.rs"), "fn login() {}").unwrap();
+        fs::write(dir.path().join("handlers.rs"), "fn handle() {}").unwrap();
+
+        // Should analyze both and combine signals
+        ra().current_dir(dir.path())
+            .args(["context", "auth.rs", "handlers.rs"])
+            .assert()
+            .success();
+    }
+}
+
 mod get {
     use super::*;
 

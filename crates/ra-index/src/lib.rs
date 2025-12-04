@@ -37,6 +37,7 @@
 
 mod analyzer;
 mod config_hash;
+mod context;
 mod diff;
 mod discovery;
 mod document;
@@ -51,6 +52,7 @@ mod status;
 mod writer;
 
 pub use config_hash::{IndexingConfig, SCHEMA_VERSION, compute_config_hash};
+pub use context::{ContextAnalyzer, ContextSignals, is_binary_file};
 pub use diff::{ManifestDiff, apply_diff, diff_manifest};
 pub use discovery::{DiscoveredFile, discover_files, discover_tree_files, file_mtime};
 pub use document::ChunkDocument;

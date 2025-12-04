@@ -5,9 +5,9 @@
 
 use std::{collections::HashMap, path::Path};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 
-use crate::{ConfigError, Tree};
+use crate::{ConfigError, ContextSettings, Tree};
 
 /// Compiled glob patterns for efficient file matching.
 ///
@@ -93,6 +93,50 @@ fn compile_glob(pattern: &str) -> Result<Glob, ConfigError> {
         pattern: pattern.to_string(),
         source: e,
     })
+}
+
+/// Compiled glob patterns for context analysis.
+///
+/// Maps glob patterns to search terms for the `ra context` command.
+/// When a file path matches a pattern, the associated terms are added
+/// to the context search query.
+#[derive(Debug)]
+pub struct CompiledContextPatterns {
+    /// Pairs of (compiled glob matcher, search terms).
+    patterns: Vec<(GlobMatcher, Vec<String>)>,
+}
+
+impl CompiledContextPatterns {
+    /// Compiles context patterns from settings.
+    pub fn compile(settings: &ContextSettings) -> Result<Self, ConfigError> {
+        let mut patterns = Vec::with_capacity(settings.patterns.len());
+
+        for (pattern, terms) in &settings.patterns {
+            let glob = compile_glob(pattern)?;
+            patterns.push((glob.compile_matcher(), terms.clone()));
+        }
+
+        Ok(Self { patterns })
+    }
+
+    /// Returns all search terms that match a given file path.
+    ///
+    /// The path can be relative or absolute; matching is based on the filename
+    /// and path components.
+    pub fn match_terms(&self, path: &Path) -> Vec<String> {
+        let mut terms = Vec::new();
+        for (matcher, pattern_terms) in &self.patterns {
+            if matcher.is_match(path) {
+                terms.extend(pattern_terms.iter().cloned());
+            }
+        }
+        terms
+    }
+
+    /// Returns true if no patterns are configured.
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -215,5 +259,81 @@ mod tests {
         let mut tree_names: Vec<_> = patterns.trees().collect();
         tree_names.sort();
         assert_eq!(tree_names, vec!["alpha", "beta"]);
+    }
+
+    mod context_patterns {
+        use super::*;
+
+        fn make_context_settings(patterns: Vec<(&str, Vec<&str>)>) -> crate::ContextSettings {
+            let mut settings = crate::ContextSettings::default();
+            for (pattern, terms) in patterns {
+                settings.patterns.insert(
+                    pattern.to_string(),
+                    terms.into_iter().map(String::from).collect(),
+                );
+            }
+            settings
+        }
+
+        #[test]
+        fn test_compile_empty() {
+            let settings = crate::ContextSettings::default();
+            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+            assert!(patterns.is_empty());
+        }
+
+        #[test]
+        fn test_match_single_pattern() {
+            let settings = make_context_settings(vec![("*.rs", vec!["rust"])]);
+            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+
+            let terms = patterns.match_terms(Path::new("src/main.rs"));
+            assert_eq!(terms, vec!["rust"]);
+        }
+
+        #[test]
+        fn test_match_multiple_terms() {
+            let settings = make_context_settings(vec![("*.tsx", vec!["typescript", "react"])]);
+            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+
+            let terms = patterns.match_terms(Path::new("components/Button.tsx"));
+            assert!(terms.contains(&"typescript".to_string()));
+            assert!(terms.contains(&"react".to_string()));
+        }
+
+        #[test]
+        fn test_match_multiple_patterns() {
+            let settings = make_context_settings(vec![
+                ("*.rs", vec!["rust"]),
+                ("src/api/**", vec!["http", "handlers"]),
+            ]);
+            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+
+            // Matches only first pattern
+            let terms = patterns.match_terms(Path::new("lib.rs"));
+            assert_eq!(terms, vec!["rust"]);
+
+            // Matches both patterns
+            let terms = patterns.match_terms(Path::new("src/api/handlers.rs"));
+            assert!(terms.contains(&"rust".to_string()));
+            assert!(terms.contains(&"http".to_string()));
+            assert!(terms.contains(&"handlers".to_string()));
+        }
+
+        #[test]
+        fn test_no_match() {
+            let settings = make_context_settings(vec![("*.rs", vec!["rust"])]);
+            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+
+            let terms = patterns.match_terms(Path::new("main.py"));
+            assert!(terms.is_empty());
+        }
+
+        #[test]
+        fn test_invalid_pattern() {
+            let settings = make_context_settings(vec![("[invalid", vec!["test"])]);
+            let result = CompiledContextPatterns::compile(&settings);
+            assert!(result.is_err());
+        }
     }
 }

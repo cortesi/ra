@@ -11,14 +11,14 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use ra_config::{
-    CONFIG_FILENAME, Config, ConfigWarning, discover_config_files, global_config_path,
-    global_template, local_template,
+    CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, discover_config_files,
+    global_config_path, global_template, local_template,
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
 use ra_highlight::{Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader};
 use ra_index::{
-    IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher, SilentReporter,
-    detect_index_status, index_directory, open_searcher,
+    ContextAnalyzer, IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher,
+    SilentReporter, detect_index_status, index_directory, is_binary_file, open_searcher,
 };
 use serde::Serialize;
 
@@ -67,6 +67,14 @@ enum Commands {
         /// Maximum chunks to return
         #[arg(short = 'n', long, default_value = "10")]
         limit: usize,
+
+        /// Output titles and snippets only
+        #[arg(long)]
+        list: bool,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Retrieve a specific chunk or document by ID
@@ -167,8 +175,13 @@ fn main() -> ExitCode {
         } => {
             return cmd_search(&queries, limit, list, matches, json);
         }
-        Commands::Context { files, limit } => {
-            println!("context: {:?} (limit={})", files, limit);
+        Commands::Context {
+            files,
+            limit,
+            list,
+            json,
+        } => {
+            return cmd_context(&files, limit, list, json);
         }
         Commands::Get {
             id,
@@ -569,6 +582,151 @@ fn cmd_search(queries: &[String], limit: usize, list: bool, matches: bool, json:
                     print!("{}", format_result_full(result));
                     println!();
                 }
+            }
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Implements the `ra context` command.
+fn cmd_context(files: &[String], limit: usize, list: bool, json: bool) -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Load configuration
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if config.trees.is_empty() {
+        eprintln!("error: no trees defined in configuration");
+        eprintln!("Run 'ra init' to create a configuration file, then add tree definitions.");
+        return ExitCode::FAILURE;
+    }
+
+    // Compile context patterns
+    let patterns = match CompiledContextPatterns::compile(&config.context) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: failed to compile context patterns: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Create analyzer
+    let analyzer = ContextAnalyzer::new(&config.context, patterns);
+
+    // Analyze each file
+    let mut signals = Vec::new();
+    for file_str in files {
+        let path = Path::new(file_str);
+
+        // Check if file exists
+        if !path.exists() {
+            eprintln!("error: file not found: {file_str}");
+            return ExitCode::FAILURE;
+        }
+
+        // Skip binary files with warning
+        if is_binary_file(path) {
+            eprintln!("warning: skipping binary file: {file_str}");
+            continue;
+        }
+
+        // Analyze the file
+        match analyzer.analyze_file(path) {
+            Ok(signal) => {
+                if !signal.is_empty() {
+                    signals.push(signal);
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: failed to analyze {file_str}: {e}");
+            }
+        }
+    }
+
+    if signals.is_empty() {
+        eprintln!("error: no analyzable files provided");
+        return ExitCode::FAILURE;
+    }
+
+    // Ensure index is fresh
+    let mut searcher = match ensure_index_fresh(&config) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    // Search for context
+    let results = match searcher.search_context(&signals, limit) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: context search failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Build combined query description for JSON output
+    let query_description = files.join(" ");
+
+    // Output results
+    if json {
+        let json_output = JsonSearchOutput {
+            queries: vec![JsonQueryResults {
+                query: query_description,
+                total_matches: results.len(),
+                results: results
+                    .iter()
+                    .map(|r| JsonSearchResult {
+                        id: r.id.clone(),
+                        tree: r.tree.clone(),
+                        path: r.path.clone(),
+                        title: r.title.clone(),
+                        breadcrumb: r.breadcrumb.clone(),
+                        score: r.score,
+                        snippet: r.snippet.clone(),
+                        content: if list {
+                            None
+                        } else {
+                            Some(format!("> {}\n\n{}", r.breadcrumb, r.body))
+                        },
+                    })
+                    .collect(),
+            }],
+        };
+        match serde_json::to_string_pretty(&json_output) {
+            Ok(json_str) => println!("{json_str}"),
+            Err(e) => {
+                eprintln!("error: failed to serialize JSON: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else if list {
+        if results.is_empty() {
+            println!("{}", dim("No relevant context found."));
+        } else {
+            for result in &results {
+                print!("{}", format_result_list(result));
+            }
+        }
+    } else {
+        // Full content mode
+        if results.is_empty() {
+            println!("{}", dim("No relevant context found."));
+        } else {
+            for result in &results {
+                print!("{}", format_result_full(result));
+                println!();
             }
         }
     }

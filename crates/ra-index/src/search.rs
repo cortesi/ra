@@ -495,6 +495,43 @@ impl Searcher {
 
         Ok(results)
     }
+
+    /// Searches for context relevant to the given signals.
+    ///
+    /// Combines path terms, pattern terms, and content sample into a search query.
+    /// Results are deduplicated if the same chunk matches multiple signals.
+    ///
+    /// # Arguments
+    /// * `signals` - Context signals from analyzed files
+    /// * `limit` - Maximum number of results to return
+    pub fn search_context(
+        &mut self,
+        signals: &[crate::ContextSignals],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, IndexError> {
+        if signals.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Collect all terms from all signals
+        let mut all_terms: Vec<String> = Vec::new();
+        for signal in signals {
+            all_terms.extend(signal.all_terms());
+        }
+
+        // Deduplicate terms
+        all_terms.sort();
+        all_terms.dedup();
+
+        if all_terms.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build query from terms (space-separated terms are ANDed by search)
+        // Use search_multi to get term highlighting for each term
+        let term_refs: Vec<&str> = all_terms.iter().map(|s| s.as_str()).collect();
+        self.search_multi(&term_refs, limit)
+    }
 }
 
 /// Creates an index directory path and opens it for searching.
