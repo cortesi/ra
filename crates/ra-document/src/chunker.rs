@@ -165,7 +165,13 @@ pub fn chunk_markdown(content: &str, doc_title: &str, min_chunk_size: usize) -> 
         let slug = slugifier.slugify(&heading.text);
 
         // Build breadcrumb from parent headings
-        update_parent_stack(&mut parent_stack, &headings, heading, chunk_level);
+        update_parent_stack(
+            &mut parent_stack,
+            &headings,
+            heading,
+            chunk_level,
+            doc_title,
+        );
         let breadcrumb = build_breadcrumb(doc_title, &parent_stack, &heading.text);
 
         chunks.push(ChunkData {
@@ -186,6 +192,7 @@ fn update_parent_stack(
     all_headings: &[Heading],
     current: &Heading,
     chunk_level: HeadingLevel,
+    doc_title: &str,
 ) {
     parent_stack.clear();
 
@@ -196,6 +203,11 @@ fn update_parent_stack(
         }
 
         if heading.level < chunk_level {
+            // Skip headings that match the doc title to avoid duplication in breadcrumbs
+            if heading.text == doc_title {
+                continue;
+            }
+
             // This is a parent heading - update the stack
             // Remove any parents at same or lower level
             while parent_stack
@@ -441,5 +453,18 @@ mod tests {
 
         assert_eq!(chunks[0].slug, "overview");
         assert_eq!(chunks[1].slug, "overview-1");
+    }
+
+    #[test]
+    fn test_breadcrumb_no_duplicate_when_h1_matches_doc_title() {
+        // When doc_title matches the H1 heading (a common case when title is derived from H1),
+        // the breadcrumb should not include the H1 twice.
+        let content = "# My Document\n\n## Section 1\n\nContent.\n\n## Section 2\n\nMore.";
+        let chunks = chunk_markdown(content, "My Document", 0);
+
+        assert_eq!(chunks.len(), 2);
+        // Should be "My Document › Section 1", NOT "My Document › My Document › Section 1"
+        assert_eq!(chunks[0].breadcrumb, "> My Document › Section 1");
+        assert_eq!(chunks[1].breadcrumb, "> My Document › Section 2");
     }
 }
