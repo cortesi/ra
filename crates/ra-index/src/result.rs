@@ -6,6 +6,8 @@
 
 use std::ops::Range;
 
+use super::search::MatchDetails;
+
 /// A single search candidate from the index.
 ///
 /// This represents a chunk that matched a search query, with all the metadata
@@ -48,6 +50,8 @@ pub struct SearchCandidate {
     /// Each range represents a contiguous span of bytes that matched a search term.
     /// Ranges are sorted by start position and do not overlap.
     pub match_ranges: Vec<Range<usize>>,
+    /// Detailed match information for verbose output.
+    pub match_details: Option<MatchDetails>,
 }
 
 /// A search result, either a single match or an aggregated parent.
@@ -222,6 +226,19 @@ impl SearchResult {
         }
     }
 
+    /// Returns match details if available.
+    ///
+    /// For single results, returns the candidate's match details.
+    /// For aggregated results, returns the first constituent's details (if any).
+    pub fn match_details(&self) -> Option<&MatchDetails> {
+        match self {
+            Self::Single(candidate) => candidate.match_details.as_ref(),
+            Self::Aggregated { constituents, .. } => {
+                constituents.first().and_then(|c| c.match_details.as_ref())
+            }
+        }
+    }
+
     /// Creates a single result from a candidate.
     pub fn single(candidate: SearchCandidate) -> Self {
         Self::Single(candidate)
@@ -279,6 +296,7 @@ impl From<super::search::SearchResult> for SearchCandidate {
             score: r.score,
             snippet: r.snippet,
             match_ranges: r.match_ranges,
+            match_details: r.match_details,
         }
     }
 }
@@ -309,6 +327,7 @@ mod test {
             score,
             snippet: None,
             match_ranges: vec![],
+            match_details: None,
         }
     }
 

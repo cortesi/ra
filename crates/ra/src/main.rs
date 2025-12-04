@@ -149,9 +149,9 @@ EXAMPLES:
         #[arg(long, default_value = "0.5")]
         aggregation_threshold: f32,
 
-        /// Show verbose output (aggregation details, constituent matches)
-        #[arg(short = 'v', long)]
-        verbose: bool,
+        /// Verbosity level (-v for summary, -vv for full details)
+        #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+        verbose: u8,
 
         /// Limit results to specific trees (can be specified multiple times)
         #[arg(short = 't', long = "tree")]
@@ -322,6 +322,7 @@ fn main() -> ExitCode {
                 aggregation_threshold,
                 disable_aggregation: no_aggregation,
                 trees,
+                verbosity: verbose,
             };
             return cmd_search(&queries, &params, list, matches, json, explain, verbose);
         }
@@ -487,6 +488,125 @@ fn ensure_index_fresh(config: &Config) -> Result<Searcher, ExitCode> {
     }
 }
 
+/// Formats match details for verbose output.
+///
+/// - verbosity 1 (-v): Shows a summary of matched terms and stemming
+/// - verbosity 2 (-vv): Full match details including field breakdown and term frequencies
+/// - verbosity 3+ (-vvv): Adds raw Tantivy score explanation
+fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> String {
+    let mut output = String::new();
+
+    // Get match details from the result (or first constituent for aggregated)
+    let details = result.match_details();
+
+    if let Some(details) = details {
+        // Always show matched terms at verbosity >= 1
+        if verbosity >= 1 {
+            // Show query terms and their stemmed forms
+            if !details.original_terms.is_empty() {
+                let terms_info: Vec<String> = details
+                    .original_terms
+                    .iter()
+                    .zip(details.stemmed_terms.iter())
+                    .map(|(orig, stemmed)| {
+                        if orig == stemmed {
+                            orig.clone()
+                        } else {
+                            format!("{orig} → {stemmed}")
+                        }
+                    })
+                    .collect();
+                output.push_str(&format!("{} {}\n", dim("terms:"), terms_info.join(", ")));
+            }
+
+            // Show term mappings (which document terms matched each query term)
+            if !details.term_mappings.is_empty() {
+                let mut mappings: Vec<String> = Vec::new();
+                for (query_term, matched_terms) in &details.term_mappings {
+                    if matched_terms.is_empty() {
+                        continue;
+                    }
+                    if matched_terms.len() == 1 && &matched_terms[0] == query_term {
+                        // Exact match, no need to show mapping
+                        continue;
+                    }
+                    mappings.push(format!(
+                        "{} matched [{}]",
+                        query_term,
+                        matched_terms.join(", ")
+                    ));
+                }
+                if !mappings.is_empty() {
+                    output.push_str(&format!("{} {}\n", dim("mapped:"), mappings.join("; ")));
+                }
+            }
+        }
+
+        // Show full details at verbosity >= 2
+        if verbosity >= 2 {
+            // Show score breakdown
+            output.push_str(&format!(
+                "{} base={:.2}, boost={:.2}\n",
+                dim("scores:"),
+                details.base_score,
+                details.local_boost
+            ));
+
+            // Show per-field scores
+            if !details.field_scores.is_empty() {
+                let mut field_scores: Vec<String> = details
+                    .field_scores
+                    .iter()
+                    .filter(|(_, score)| **score > 0.0)
+                    .map(|(field, score)| format!("{field}={score:.2}"))
+                    .collect();
+                field_scores.sort();
+                if !field_scores.is_empty() {
+                    output.push_str(&format!(
+                        "  {} {}\n",
+                        dim("fields:"),
+                        field_scores.join(", ")
+                    ));
+                }
+            }
+
+            // Show per-field match details with term frequencies
+            if !details.field_matches.is_empty() {
+                for (field, field_match) in &details.field_matches {
+                    if field_match.matched_terms.is_empty() {
+                        continue;
+                    }
+                    let freq_info: Vec<String> = field_match
+                        .term_frequencies
+                        .iter()
+                        .map(|(term, freq)| format!("{term}×{freq}"))
+                        .collect();
+                    output.push_str(&format!(
+                        "  {} {} ({})\n",
+                        dim(&format!("{field}:")),
+                        field_match.matched_terms.join(", "),
+                        freq_info.join(", ")
+                    ));
+                }
+            }
+        }
+
+        // Show raw Tantivy explanation only at verbosity >= 3 (-vvv)
+        if verbosity >= 3
+            && let Some(explanation) = &details.score_explanation
+        {
+            output.push_str(&format!("{}\n", dim("tantivy explanation:")));
+            for line in explanation.lines() {
+                output.push_str(&format!("  {}\n", dim(line)));
+            }
+        }
+    } else if verbosity >= 1 {
+        output.push_str(&format!("{}\n", dim("(match details not collected)")));
+    }
+
+    output
+}
+
 /// Formats a search result for full content output.
 fn format_result_full(result: &SearchResult) -> String {
     let mut output = String::new();
@@ -607,7 +727,7 @@ fn cmd_search(
     matches: bool,
     json: bool,
     explain: bool,
-    verbose: bool,
+    verbose: u8,
 ) -> ExitCode {
     // Handle --explain mode: parse and display AST without executing search
     if explain {
@@ -721,7 +841,7 @@ fn output_aggregated_results(
     list: bool,
     matches: bool,
     json: bool,
-    verbose: bool,
+    verbose: u8,
     searcher: &Searcher,
 ) -> ExitCode {
     if json {
@@ -778,7 +898,7 @@ fn output_aggregated_results(
                         result.byte_end(),
                     )
                     .unwrap_or_else(|_| result.body().to_string());
-                if verbose {
+                if verbose > 0 {
                     total_words += full_body.split_whitespace().count();
                     total_chars += full_body.len();
                 }
@@ -787,7 +907,7 @@ fn output_aggregated_results(
                     format_aggregated_result_list(result, verbose, &full_body)
                 );
             }
-            if verbose {
+            if verbose > 0 {
                 println!(
                     "{}",
                     dim(&format!(
@@ -826,7 +946,7 @@ fn output_aggregated_results(
                         result.byte_end(),
                     )
                     .unwrap_or_else(|_| result.body().to_string());
-                if verbose {
+                if verbose > 0 {
                     total_words += full_body.split_whitespace().count();
                     total_chars += full_body.len();
                 }
@@ -836,7 +956,7 @@ fn output_aggregated_results(
                 );
                 println!();
             }
-            if verbose {
+            if verbose > 0 {
                 println!(
                     "{}",
                     dim(&format!(
@@ -857,14 +977,20 @@ fn output_aggregated_results(
 ///
 /// The `full_body` parameter contains the complete content from byte_start to byte_end,
 /// including all child nodes' content for parent nodes.
+///
+/// Verbosity levels:
+/// - 0: Basic output
+/// - 1 (-v): Add stats, constituents summary, and match term summary
+/// - 2 (-vv): Full match details including field breakdown and term frequencies
+/// - 3+ (-vvv): Adds raw Tantivy score explanation
 fn format_aggregated_result_full(
     result: &AggregatedSearchResult,
-    verbose: bool,
+    verbose: u8,
     full_body: &str,
 ) -> String {
     let mut output = String::new();
 
-    if verbose && result.is_aggregated() {
+    if verbose > 0 && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
@@ -877,7 +1003,7 @@ fn format_aggregated_result_full(
     output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
 
     // Show stats only in verbose mode
-    if verbose {
+    if verbose > 0 {
         let word_count = full_body.split_whitespace().count();
         let stats = format!(
             "{} words, {} chars, score {:.2}",
@@ -886,6 +1012,11 @@ fn format_aggregated_result_full(
             result.score()
         );
         output.push_str(&format!("{}\n", dim(&stats)));
+    }
+
+    // Show match details when verbose
+    if verbose > 0 {
+        output.push_str(&format_match_details(result, verbose));
     }
 
     // Format body with content styling - use full content including children
@@ -897,7 +1028,9 @@ fn format_aggregated_result_full(
     }
 
     // Show constituents for aggregated results (only in verbose mode)
-    if verbose && let Some(constituents) = result.constituents() {
+    if verbose > 0
+        && let Some(constituents) = result.constituents()
+    {
         output.push_str(&format!(
             "{}\n",
             dim(&format!("─ Constituent matches ({}) ─", constituents.len()))
@@ -920,12 +1053,12 @@ fn format_aggregated_result_full(
 /// The `full_body` parameter is the full content including all children.
 fn format_aggregated_result_list(
     result: &AggregatedSearchResult,
-    verbose: bool,
+    verbose: u8,
     full_body: &str,
 ) -> String {
     let mut output = String::new();
 
-    if verbose && result.is_aggregated() {
+    if verbose > 0 && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
@@ -938,7 +1071,7 @@ fn format_aggregated_result_list(
     output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
 
     // Show stats only in verbose mode
-    if verbose {
+    if verbose > 0 {
         let word_count = full_body.split_whitespace().count();
         let stats = format!(
             "{} words, {} chars, score {:.2}",
@@ -949,8 +1082,15 @@ fn format_aggregated_result_list(
         output.push_str(&format!("{}\n", dim(&stats)));
     }
 
+    // Show match details when verbose
+    if verbose > 0 {
+        output.push_str(&format_match_details(result, verbose));
+    }
+
     // Show constituents for aggregated results (only in verbose mode)
-    if verbose && let Some(constituents) = result.constituents() {
+    if verbose > 0
+        && let Some(constituents) = result.constituents()
+    {
         output.push_str(&format!(
             "{}\n",
             dim(&format!("─ Constituent matches ({}) ─", constituents.len()))
@@ -970,10 +1110,10 @@ fn format_aggregated_result_list(
 }
 
 /// Formats an aggregated search result showing only lines that contain matches.
-fn format_aggregated_result_matches(result: &AggregatedSearchResult, verbose: bool) -> String {
+fn format_aggregated_result_matches(result: &AggregatedSearchResult, verbose: u8) -> String {
     let mut output = String::new();
 
-    if verbose && result.is_aggregated() {
+    if verbose > 0 && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
@@ -985,8 +1125,13 @@ fn format_aggregated_result_matches(result: &AggregatedSearchResult, verbose: bo
     }
     output.push_str(&format!("{}\n\n", breadcrumb(result.breadcrumb())));
 
+    // Show match details when verbose
+    if verbose > 0 {
+        output.push_str(&format_match_details(result, verbose));
+    }
+
     // For aggregated results, show constituent highlights (only in verbose mode)
-    if verbose {
+    if verbose > 0 {
         if let Some(constituents) = result.constituents() {
             for constituent in constituents {
                 if !constituent.match_ranges.is_empty() {

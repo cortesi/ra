@@ -91,6 +91,8 @@ pub struct SearchParams {
     /// trees. This means scores reflect term importance globally. For most use cases
     /// this is acceptable since relative ranking within results remains meaningful.
     pub trees: Vec<String>,
+    /// Verbosity level for match details (0 = none, 1 = summary, 2+ = full).
+    pub verbosity: u8,
 }
 
 impl Default for SearchParams {
@@ -102,6 +104,7 @@ impl Default for SearchParams {
             aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
             disable_aggregation: false,
             trees: Vec::new(),
+            verbosity: 0,
         }
     }
 }
@@ -110,6 +113,12 @@ impl SearchParams {
     /// Sets the trees to filter results to.
     pub fn with_trees(mut self, trees: Vec<String>) -> Self {
         self.trees = trees;
+        self
+    }
+
+    /// Sets the verbosity level for match details.
+    pub fn with_verbosity(mut self, verbosity: u8) -> Self {
+        self.verbosity = verbosity;
         self
     }
 }
@@ -142,6 +151,51 @@ fn merge_ranges(mut a: Vec<Range<usize>>, b: Vec<Range<usize>>) -> Vec<Range<usi
     merged.push(current);
 
     merged
+}
+
+/// Details about how a term matched in a specific field.
+#[derive(Debug, Clone, Default)]
+pub struct FieldMatch {
+    /// The indexed terms that matched in this field.
+    pub matched_terms: Vec<String>,
+    /// Term frequency for each matched term in this field.
+    pub term_frequencies: HashMap<String, u32>,
+}
+
+/// Detailed information about how search terms matched a document.
+#[derive(Debug, Clone, Default)]
+pub struct MatchDetails {
+    /// Original query terms (before stemming).
+    pub original_terms: Vec<String>,
+    /// Query terms after stemming/tokenization.
+    pub stemmed_terms: Vec<String>,
+    /// Map from stemmed query term to indexed terms that matched (including fuzzy).
+    pub term_mappings: HashMap<String, Vec<String>>,
+    /// Match details per field (title, body, tags, path).
+    pub field_matches: HashMap<String, FieldMatch>,
+    /// Base BM25 score before boosts.
+    pub base_score: f32,
+    /// Score contribution from each field.
+    pub field_scores: HashMap<String, f32>,
+    /// Local tree boost multiplier applied (1.0 if global or no boost).
+    pub local_boost: f32,
+    /// Detailed score explanation (for -vv).
+    pub score_explanation: Option<String>,
+}
+
+impl MatchDetails {
+    /// Returns true if match details are populated.
+    pub fn is_populated(&self) -> bool {
+        !self.stemmed_terms.is_empty()
+    }
+
+    /// Returns total match count across all fields.
+    pub fn total_matches(&self) -> u32 {
+        self.field_matches
+            .values()
+            .flat_map(|fm| fm.term_frequencies.values())
+            .sum()
+    }
 }
 
 /// A search result from the index.
@@ -186,6 +240,8 @@ pub struct SearchResult {
     /// Empty when the result was retrieved via `get_by_id` or `get_by_path`,
     /// or when using `search_no_snippets`.
     pub match_ranges: Vec<Range<usize>>,
+    /// Detailed match information for verbose output.
+    pub match_details: Option<MatchDetails>,
 }
 
 /// Default fuzzy distance for search queries.
@@ -422,8 +478,18 @@ impl Searcher {
         let query_terms = self.tokenize_query(query_str);
 
         // Phase 1: Query the index
-        let raw_results =
-            self.execute_query_with_highlights(&*query, &query_terms, params.candidate_limit)?;
+        // Use detailed execution if verbosity is requested
+        let raw_results = if params.verbosity > 0 {
+            self.execute_query_with_details(
+                &*query,
+                query_str,
+                &query_terms,
+                params.candidate_limit,
+                params.verbosity >= 2, // Include full explanation at -vv
+            )?
+        } else {
+            self.execute_query_with_highlights(&*query, &query_terms, params.candidate_limit)?
+        };
 
         // Convert SearchResults to SearchCandidates
         let candidates: Vec<SearchCandidate> = raw_results.into_iter().map(|r| r.into()).collect();
@@ -624,6 +690,198 @@ impl Searcher {
         matched_terms
     }
 
+    /// Finds term mappings from query terms to indexed terms (with fuzzy matching).
+    ///
+    /// Returns a map where keys are query terms and values are the indexed terms
+    /// they matched (including fuzzy matches).
+    fn find_term_mappings(
+        &self,
+        searcher: &tantivy::Searcher,
+        query_terms: &[String],
+    ) -> HashMap<String, Vec<String>> {
+        let mut mappings: HashMap<String, Vec<String>> = HashMap::new();
+
+        if self.fuzzy_distance == 0 {
+            // No fuzzy matching - each term maps to itself
+            for term in query_terms {
+                mappings.insert(term.clone(), vec![term.clone()]);
+            }
+            return mappings;
+        }
+
+        // Search the body field's term dictionary for matching terms
+        for segment_reader in searcher.segment_readers() {
+            if let Ok(inverted_index) = segment_reader.inverted_index(self.schema.body) {
+                let term_dict = inverted_index.terms();
+
+                for query_term in query_terms {
+                    let dfa = LevenshteinDfa(self.lev_builder.build_dfa(query_term));
+                    let mut stream = term_dict.search(dfa).into_stream().unwrap();
+
+                    let entry = mappings.entry(query_term.clone()).or_default();
+                    while stream.advance() {
+                        if let Ok(term_str) = str::from_utf8(stream.key())
+                            && !entry.contains(&term_str.to_string())
+                        {
+                            entry.push(term_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ensure every query term has at least itself as a mapping
+        for term in query_terms {
+            mappings
+                .entry(term.clone())
+                .or_insert_with(|| vec![term.clone()]);
+        }
+
+        mappings
+    }
+
+    /// Counts term frequency in a specific text field for a document.
+    fn count_term_frequency_in_text(
+        &mut self,
+        text: &str,
+        terms: &HashSet<String>,
+    ) -> HashMap<String, u32> {
+        let mut freqs: HashMap<String, u32> = HashMap::new();
+        let mut stream = self.analyzer.token_stream(text);
+        while let Some(token) = stream.next() {
+            if terms.contains(&token.text) {
+                *freqs.entry(token.text.clone()).or_insert(0) += 1;
+            }
+        }
+        freqs
+    }
+
+    /// Collects detailed match information for a search result.
+    fn collect_match_details(
+        &mut self,
+        doc: &TantivyDocument,
+        query: &dyn Query,
+        original_query: &str,
+        query_terms: &[String],
+        term_mappings: &HashMap<String, Vec<String>>,
+        base_score: f32,
+        local_boost: f32,
+        searcher: &tantivy::Searcher,
+        doc_address: tantivy::DocAddress,
+        include_explanation: bool,
+    ) -> MatchDetails {
+        // Collect all matched indexed terms
+        let all_matched_terms: HashSet<String> =
+            term_mappings.values().flatten().cloned().collect();
+
+        // Extract field contents
+        let title = self.get_text_field(doc, self.schema.title);
+        let body = self.get_text_field(doc, self.schema.body);
+        let tags: Vec<String> = doc
+            .get_all(self.schema.tags)
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        let path = self.get_text_field(doc, self.schema.path);
+
+        // Count term frequencies in each field
+        let mut field_matches: HashMap<String, FieldMatch> = HashMap::new();
+        let mut field_scores: HashMap<String, f32> = HashMap::new();
+
+        // Title field
+        let title_freqs = self.count_term_frequency_in_text(&title, &all_matched_terms);
+        if !title_freqs.is_empty() {
+            let matched: Vec<String> = title_freqs.keys().cloned().collect();
+            let title_score: f32 =
+                title_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::TITLE;
+            field_scores.insert("title".to_string(), title_score);
+            field_matches.insert(
+                "title".to_string(),
+                FieldMatch {
+                    matched_terms: matched,
+                    term_frequencies: title_freqs,
+                },
+            );
+        }
+
+        // Body field
+        let body_freqs = self.count_term_frequency_in_text(&body, &all_matched_terms);
+        if !body_freqs.is_empty() {
+            let matched: Vec<String> = body_freqs.keys().cloned().collect();
+            let body_score: f32 = body_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::BODY;
+            field_scores.insert("body".to_string(), body_score);
+            field_matches.insert(
+                "body".to_string(),
+                FieldMatch {
+                    matched_terms: matched,
+                    term_frequencies: body_freqs,
+                },
+            );
+        }
+
+        // Tags field
+        let tags_text = tags.join(" ");
+        let tags_freqs = self.count_term_frequency_in_text(&tags_text, &all_matched_terms);
+        if !tags_freqs.is_empty() {
+            let matched: Vec<String> = tags_freqs.keys().cloned().collect();
+            let tags_score: f32 = tags_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::TAGS;
+            field_scores.insert("tags".to_string(), tags_score);
+            field_matches.insert(
+                "tags".to_string(),
+                FieldMatch {
+                    matched_terms: matched,
+                    term_frequencies: tags_freqs,
+                },
+            );
+        }
+
+        // Path field
+        let path_freqs = self.count_term_frequency_in_text(&path, &all_matched_terms);
+        if !path_freqs.is_empty() {
+            let matched: Vec<String> = path_freqs.keys().cloned().collect();
+            let path_score: f32 = path_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::PATH;
+            field_scores.insert("path".to_string(), path_score);
+            field_matches.insert(
+                "path".to_string(),
+                FieldMatch {
+                    matched_terms: matched,
+                    term_frequencies: path_freqs,
+                },
+            );
+        }
+
+        // Get score explanation if requested
+        let score_explanation = if include_explanation {
+            query
+                .explain(searcher, doc_address)
+                .ok()
+                .map(|e| e.to_pretty_json())
+        } else {
+            None
+        };
+
+        // Extract original terms from query (before tokenization)
+        let original_terms: Vec<String> = original_query
+            .split_whitespace()
+            .filter(|s| !s.starts_with('-') && *s != "OR" && !s.contains(':'))
+            .map(|s| {
+                s.trim_matches(|c| c == '"' || c == '(' || c == ')')
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        MatchDetails {
+            original_terms,
+            stemmed_terms: query_terms.to_vec(),
+            term_mappings: term_mappings.clone(),
+            field_matches,
+            base_score,
+            field_scores,
+            local_boost,
+            score_explanation,
+        }
+    }
+
     /// Builds a highlight query from actual matched terms.
     ///
     /// Creates a non-fuzzy query using the actual terms found in the index,
@@ -741,6 +999,96 @@ impl Searcher {
         Ok(results)
     }
 
+    /// Executes a query with full match detail collection.
+    ///
+    /// This is the most expensive execution mode, collecting detailed information
+    /// about which terms matched, their frequencies, and score breakdowns.
+    fn execute_query_with_details(
+        &mut self,
+        query: &dyn Query,
+        original_query: &str,
+        query_terms: &[String],
+        limit: usize,
+        include_explanation: bool,
+    ) -> Result<Vec<SearchResult>, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let searcher = reader.searcher();
+
+        let top_docs = searcher
+            .search(query, &TopDocs::with_limit(limit))
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        // Find term mappings (query term -> indexed terms)
+        let term_mappings = self.find_term_mappings(&searcher, query_terms);
+
+        // Get all matched terms for highlighting
+        let matched_terms: HashSet<String> = term_mappings.values().flatten().cloned().collect();
+
+        // Build highlight query
+        let highlight_query = self.build_highlight_query(&matched_terms);
+
+        // Create generators
+        let snippet_generator = if let Some(ref hq) = highlight_query {
+            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+            generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
+            Some(generator)
+        } else {
+            None
+        };
+
+        let highlight_generator = if let Some(ref hq) = highlight_query {
+            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+            generator.set_max_num_chars(usize::MAX);
+            Some(generator)
+        } else {
+            None
+        };
+
+        let mut results = Vec::with_capacity(top_docs.len());
+
+        for (score, doc_address) in top_docs {
+            let doc: TantivyDocument = searcher
+                .doc(doc_address)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+
+            let mut result =
+                self.doc_to_result(&doc, score, &snippet_generator, &highlight_generator);
+
+            // Compute local boost for this result
+            let is_global = self
+                .tree_is_global
+                .get(&result.tree)
+                .copied()
+                .unwrap_or(false);
+            let local_boost = if is_global { 1.0 } else { self.local_boost };
+
+            // Collect match details
+            let details = self.collect_match_details(
+                &doc,
+                query,
+                original_query,
+                query_terms,
+                &term_mappings,
+                score,
+                local_boost,
+                &searcher,
+                doc_address,
+                include_explanation,
+            );
+            result.match_details = Some(details);
+
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+
     /// Converts a Tantivy document to a SearchResult.
     fn doc_to_result(
         &self,
@@ -808,6 +1156,7 @@ impl Searcher {
             score,
             snippet,
             match_ranges,
+            match_details: None,
         }
     }
 

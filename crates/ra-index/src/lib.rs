@@ -75,7 +75,10 @@ pub use manifest::{Manifest, ManifestEntry};
 pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::{ContextAnalyzer, ContextSignals, is_binary_file};
 pub use result::{SearchCandidate, SearchResult as AggregatedSearchResult};
-pub use search::{DEFAULT_CANDIDATE_LIMIT, SearchParams, SearchResult, Searcher, open_searcher};
+pub use search::{
+    DEFAULT_CANDIDATE_LIMIT, FieldMatch, MatchDetails, SearchParams, SearchResult, Searcher,
+    open_searcher,
+};
 pub use status::{
     IndexStatus, detect_index_status, index_exists, read_stored_hash, write_config_hash,
 };
