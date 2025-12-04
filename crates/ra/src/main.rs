@@ -311,14 +311,19 @@ fn format_result_full(result: &SearchResult) -> String {
 /// Formats a search result for list mode output.
 fn format_result_list(result: &SearchResult) -> String {
     let mut output = String::new();
-    output.push_str(&format!("{}\n", header(&result.id)));
-    output.push_str(&format!("  {}\n", result.title));
-    output.push_str(&format!("  {}\n", breadcrumb(&result.breadcrumb)));
-    if let Some(snippet) = &result.snippet {
-        // Convert HTML snippet to plain text with markers
-        let plain_snippet = snippet.replace("<b>", "[").replace("</b>", "]");
-        output.push_str(&format!("  {}\n", plain_snippet));
-    }
+    output.push_str(&format!("─── {} ───\n", header(&result.id)));
+    output.push_str(&format!("{}\n", breadcrumb(&result.breadcrumb)));
+
+    // Show stats: match count, content size, score
+    let match_count = result.match_ranges.len();
+    let content_size = result.body.len();
+    let stats = format!(
+        "{} matches, {} chars, score {:.2}",
+        match_count, content_size, result.score
+    );
+    output.push_str(&format!("{}\n", dim(&stats)));
+
+    output.push('\n');
     output
 }
 
