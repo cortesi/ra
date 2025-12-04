@@ -256,6 +256,33 @@ impl SearchResult {
     }
 }
 
+/// Converts from the internal search::SearchResult to a SearchCandidate.
+///
+/// This is used to bridge between the legacy search result type and the new
+/// hierarchical search algorithm types.
+impl From<super::search::SearchResult> for SearchCandidate {
+    fn from(r: super::search::SearchResult) -> Self {
+        Self {
+            id: r.id,
+            doc_id: r.doc_id,
+            parent_id: r.parent_id,
+            title: r.title,
+            tree: r.tree,
+            path: r.path,
+            body: r.body,
+            breadcrumb: r.breadcrumb,
+            depth: r.depth,
+            position: r.position,
+            byte_start: r.byte_start,
+            byte_end: r.byte_end,
+            sibling_count: r.sibling_count,
+            score: r.score,
+            snippet: r.snippet,
+            match_ranges: r.match_ranges,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

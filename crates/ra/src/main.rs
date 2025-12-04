@@ -19,9 +19,9 @@ use ra_highlight::{
     Highlighter, breadcrumb, dim, error, format_body, header, indent_content, subheader, warning,
 };
 use ra_index::{
-    ContextAnalyzer, IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher,
-    SilentReporter, detect_index_status, index_directory, is_binary_file, open_searcher,
-    parse_query,
+    AggregatedSearchResult, ContextAnalyzer, IndexStats, IndexStatus, Indexer, ProgressReporter,
+    SearchParams, SearchResult, Searcher, SilentReporter, detect_index_status, index_directory,
+    is_binary_file, open_searcher, parse_query,
 };
 use serde::Serialize;
 
@@ -132,6 +132,22 @@ EXAMPLES:
         /// Show parsed query AST (for debugging)
         #[arg(long)]
         explain: bool,
+
+        /// Disable hierarchical aggregation
+        #[arg(long)]
+        no_aggregation: bool,
+
+        /// Maximum candidates to retrieve from index (Phase 1)
+        #[arg(long, default_value = "100")]
+        candidate_limit: usize,
+
+        /// Score ratio threshold for relevance cutoff (Phase 2)
+        #[arg(long, default_value = "0.5")]
+        cutoff_ratio: f32,
+
+        /// Sibling ratio threshold for aggregation (Phase 3)
+        #[arg(long, default_value = "0.5")]
+        aggregation_threshold: f32,
     },
 
     /// Get relevant context for files being worked on
@@ -277,8 +293,19 @@ fn main() -> ExitCode {
             matches,
             json,
             explain,
+            no_aggregation,
+            candidate_limit,
+            cutoff_ratio,
+            aggregation_threshold,
         } => {
-            return cmd_search(&queries, limit, list, matches, json, explain);
+            let params = SearchParams {
+                candidate_limit,
+                cutoff_ratio,
+                max_results: limit,
+                aggregation_threshold,
+                disable_aggregation: no_aggregation,
+            };
+            return cmd_search(&queries, &params, list, matches, json, explain);
         }
         Commands::Context {
             files,
@@ -476,25 +503,6 @@ fn format_result_list(result: &SearchResult) -> String {
     output
 }
 
-/// Formats a search result showing only lines that contain matches.
-fn format_result_matches(result: &SearchResult) -> String {
-    let mut output = String::new();
-    output.push_str(&format!("─── {} ───\n", header(&result.id)));
-    output.push_str(&format!("{}\n\n", breadcrumb(&result.breadcrumb)));
-
-    if result.match_ranges.is_empty() {
-        output.push_str(&dim("   (no matches)\n"));
-    } else {
-        // Find which lines contain matches and format with content styling + indentation
-        let formatted = extract_matching_lines(&result.body, &result.match_ranges);
-        output.push_str(&formatted);
-        output.push('\n');
-    }
-
-    output.push('\n');
-    output
-}
-
 /// Extracts lines from text that contain at least one match range, with highlighting.
 /// Returns formatted lines with content styling, indentation, and match highlighting.
 fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> String {
@@ -575,7 +583,7 @@ fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> String {
 /// Implements the `ra search` command.
 fn cmd_search(
     queries: &[String],
-    limit: usize,
+    params: &SearchParams,
     list: bool,
     matches: bool,
     json: bool,
@@ -595,6 +603,25 @@ fn cmd_search(
                 for line in expr.to_string().lines() {
                     println!("   {line}");
                 }
+                println!();
+
+                // Show search parameters
+                println!("{}", subheader("Search Parameters:"));
+                println!("   Phase 1: candidate_limit = {}", params.candidate_limit);
+                println!("   Phase 2: cutoff_ratio = {}", params.cutoff_ratio);
+                println!("   Phase 2: max_results = {}", params.max_results);
+                println!(
+                    "   Phase 3: aggregation_threshold = {}",
+                    params.aggregation_threshold
+                );
+                println!(
+                    "   Phase 3: aggregation = {}",
+                    if params.disable_aggregation {
+                        "disabled"
+                    } else {
+                        "enabled"
+                    }
+                );
             }
             Ok(None) => {
                 println!("{}", dim("(empty query)"));
@@ -636,9 +663,18 @@ fn cmd_search(
         Err(code) => return code,
     };
 
-    // Execute search - use search_multi for multiple queries to deduplicate and merge highlights
-    let query_refs: Vec<&str> = queries.iter().map(|s| s.as_str()).collect();
-    let results = match searcher.search_multi(&query_refs, limit) {
+    // Execute search using three-phase algorithm
+    // Multiple query arguments are combined with OR for backwards compatibility
+    let combined_query = if queries.len() == 1 {
+        queries[0].clone()
+    } else {
+        queries
+            .iter()
+            .map(|q| format!("({q})"))
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    };
+    let results = match searcher.search_aggregated(&combined_query, params) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: search failed: {e}");
@@ -646,37 +682,48 @@ fn cmd_search(
         }
     };
 
-    // Wrap in a single-element vec for compatibility with output logic
-    let combined_query = queries.join(" ");
-    let all_results: Vec<(String, Vec<SearchResult>)> = vec![(combined_query, results)];
-
     // Output results
+    output_aggregated_results(&results, &combined_query, list, matches, json)
+}
+
+/// Outputs aggregated search results in various formats.
+fn output_aggregated_results(
+    results: &[AggregatedSearchResult],
+    query: &str,
+    list: bool,
+    matches: bool,
+    json: bool,
+) -> ExitCode {
     if json {
         let json_output = JsonSearchOutput {
-            queries: all_results
-                .iter()
-                .map(|(query, results)| JsonQueryResults {
-                    query: query.clone(),
-                    total_matches: results.len(),
-                    results: results
-                        .iter()
-                        .map(|r| JsonSearchResult {
-                            id: r.id.clone(),
-                            tree: r.tree.clone(),
-                            path: r.path.clone(),
-                            title: r.title.clone(),
-                            breadcrumb: r.breadcrumb.clone(),
-                            score: r.score,
-                            snippet: r.snippet.clone(),
+            queries: vec![JsonQueryResults {
+                query: query.to_string(),
+                total_matches: results.len(),
+                results: results
+                    .iter()
+                    .map(|r| {
+                        let constituents_count = r.constituents().map(|c| c.len()).unwrap_or(0);
+                        JsonSearchResult {
+                            id: r.id().to_string(),
+                            tree: r.tree().to_string(),
+                            path: r.path().to_string(),
+                            title: r.title().to_string(),
+                            breadcrumb: r.breadcrumb().to_string(),
+                            score: r.score(),
+                            snippet: if r.is_aggregated() {
+                                Some(format!("[Aggregated: {} matches]", constituents_count))
+                            } else {
+                                None
+                            },
                             content: if list {
                                 None
                             } else {
-                                Some(format!("> {}\n\n{}", r.breadcrumb, r.body))
+                                Some(format!("> {}\n\n{}", r.breadcrumb(), r.body()))
                             },
-                        })
-                        .collect(),
-                })
-                .collect(),
+                        }
+                    })
+                    .collect(),
+            }],
         };
         match serde_json::to_string_pretty(&json_output) {
             Ok(json_str) => println!("{json_str}"),
@@ -686,42 +733,142 @@ fn cmd_search(
             }
         }
     } else if list {
-        for (_query, results) in &all_results {
-            if results.is_empty() {
-                println!("{}", dim("No results found."));
-            } else {
-                for result in results {
-                    print!("{}", format_result_list(result));
-                }
+        if results.is_empty() {
+            println!("{}", dim("No results found."));
+        } else {
+            for result in results {
+                print!("{}", format_aggregated_result_list(result));
             }
-            println!();
         }
+        println!();
     } else if matches {
         // Matches-only mode: show only lines containing matches
-        for (_query, results) in &all_results {
-            if results.is_empty() {
-                println!("{}", dim("No results found."));
-            } else {
-                for result in results {
-                    print!("{}", format_result_matches(result));
-                }
+        if results.is_empty() {
+            println!("{}", dim("No results found."));
+        } else {
+            for result in results {
+                print!("{}", format_aggregated_result_matches(result));
             }
         }
     } else {
         // Full content mode
-        for (_query, results) in &all_results {
-            if results.is_empty() {
-                println!("{}", dim("No results found."));
-            } else {
-                for result in results {
-                    print!("{}", format_result_full(result));
-                    println!();
-                }
+        if results.is_empty() {
+            println!("{}", dim("No results found."));
+        } else {
+            for result in results {
+                print!("{}", format_aggregated_result_full(result));
+                println!();
             }
         }
     }
 
     ExitCode::SUCCESS
+}
+
+/// Formats an aggregated search result for full content output.
+fn format_aggregated_result_full(result: &AggregatedSearchResult) -> String {
+    let mut output = String::new();
+
+    if result.is_aggregated() {
+        let constituents = result.constituents().unwrap();
+        output.push_str(&format!(
+            "─── {} [aggregated: {} matches] ───\n",
+            header(result.id()),
+            constituents.len()
+        ));
+    } else {
+        output.push_str(&format!("─── {} ───\n", header(result.id())));
+    }
+    output.push_str(&format!("{}\n\n", breadcrumb(result.breadcrumb())));
+
+    // Format body with content styling
+    // For aggregated results, we show the parent body, not all constituent bodies
+    let body = result.body();
+    output.push_str(&format_body(body, &[]));
+
+    if !body.ends_with('\n') {
+        output.push('\n');
+    }
+
+    // Show constituents for aggregated results
+    if let Some(constituents) = result.constituents() {
+        output.push_str(&format!(
+            "\n{}\n",
+            dim(&format!("─ Constituent matches ({}) ─", constituents.len()))
+        ));
+        for constituent in constituents {
+            output.push_str(&format!(
+                "  {} {} {}\n",
+                dim("•"),
+                constituent.id,
+                dim(&format!("(score: {:.2})", constituent.score))
+            ));
+        }
+    }
+
+    output
+}
+
+/// Formats an aggregated search result for list mode output.
+fn format_aggregated_result_list(result: &AggregatedSearchResult) -> String {
+    let mut output = String::new();
+
+    if result.is_aggregated() {
+        let constituents = result.constituents().unwrap();
+        output.push_str(&format!(
+            "─── {} [aggregated: {} matches] ───\n",
+            header(result.id()),
+            constituents.len()
+        ));
+    } else {
+        output.push_str(&format!("─── {} ───\n", header(result.id())));
+    }
+    output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
+
+    // Show stats: content size, score
+    let content_size = result.body().len();
+    let stats = format!("{} chars, score {:.2}", content_size, result.score());
+    output.push_str(&format!("{}\n", dim(&stats)));
+
+    output.push('\n');
+    output
+}
+
+/// Formats an aggregated search result showing only lines that contain matches.
+fn format_aggregated_result_matches(result: &AggregatedSearchResult) -> String {
+    let mut output = String::new();
+
+    if result.is_aggregated() {
+        let constituents = result.constituents().unwrap();
+        output.push_str(&format!(
+            "─── {} [aggregated: {} matches] ───\n",
+            header(result.id()),
+            constituents.len()
+        ));
+    } else {
+        output.push_str(&format!("─── {} ───\n", header(result.id())));
+    }
+    output.push_str(&format!("{}\n\n", breadcrumb(result.breadcrumb())));
+
+    // For aggregated results, show constituent highlights
+    if let Some(constituents) = result.constituents() {
+        for constituent in constituents {
+            if !constituent.match_ranges.is_empty() {
+                output.push_str(&format!("{}\n", dim(&format!("• {}", constituent.id))));
+                let formatted =
+                    extract_matching_lines(&constituent.body, &constituent.match_ranges);
+                output.push_str(&formatted);
+                output.push('\n');
+            }
+        }
+    } else {
+        // Single result - show its own body with no match highlighting
+        // (match_ranges would need to be on the result type)
+        output.push_str(&dim("   (match details not available)\n"));
+    }
+
+    output.push('\n');
+    output
 }
 
 /// Implements the `ra context` command.

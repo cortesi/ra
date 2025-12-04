@@ -42,11 +42,13 @@
 
 #![warn(missing_docs)]
 
+mod aggregate;
 mod analyzer;
 mod config_hash;
 mod diff;
 mod discovery;
 mod document;
+mod elbow;
 mod error;
 mod indexer;
 mod location;
@@ -58,10 +60,12 @@ mod search;
 mod status;
 mod writer;
 
+pub use aggregate::{DEFAULT_AGGREGATION_THRESHOLD, ParentInfo, aggregate, aggregate_default};
 pub use config_hash::{IndexingConfig, SCHEMA_VERSION, compute_config_hash};
 pub use diff::{ManifestDiff, apply_diff, diff_manifest};
 pub use discovery::{DiscoveredFile, discover_files, discover_tree_files, file_mtime};
 pub use document::ChunkDocument;
+pub use elbow::{DEFAULT_CUTOFF_RATIO, DEFAULT_MAX_RESULTS, elbow_cutoff, elbow_cutoff_default};
 pub use error::IndexError;
 pub use indexer::{IndexStats, Indexer, ProgressReporter, SilentReporter};
 pub use location::{
@@ -71,7 +75,7 @@ pub use manifest::{Manifest, ManifestEntry};
 pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::{ContextAnalyzer, ContextSignals, is_binary_file};
 pub use result::{SearchCandidate, SearchResult as AggregatedSearchResult};
-pub use search::{SearchResult, Searcher, open_searcher};
+pub use search::{DEFAULT_CANDIDATE_LIMIT, SearchParams, SearchResult, Searcher, open_searcher};
 pub use status::{
     IndexStatus, detect_index_status, index_exists, read_stored_hash, write_config_hash,
 };

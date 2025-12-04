@@ -33,7 +33,8 @@ impl IndexWriter {
     /// Opens or creates an index at the given path with the specified stemmer language.
     ///
     /// If the index doesn't exist, it will be created with the standard schema.
-    /// If it exists, it will be opened and validated against the expected schema.
+    /// If it exists but the schema doesn't match (e.g., after a schema version change),
+    /// the old index is deleted and a new one is created.
     ///
     /// The `language` parameter is a language name string (e.g., "english", "french")
     /// that controls which stemmer is used for text analysis.
@@ -43,14 +44,7 @@ impl IndexWriter {
         // Ensure directory exists
         fs::create_dir_all(path)?;
 
-        let dir = MmapDirectory::open(path).map_err(|e| {
-            let err: tantivy::TantivyError = e.into();
-            IndexError::open_index(path.to_path_buf(), &err)
-        })?;
-
-        // Try to open existing index or create new one
-        let index = Index::open_or_create(dir, schema.schema().clone())
-            .map_err(|e| IndexError::open_index(path.to_path_buf(), &e))?;
+        let index = Self::open_or_recreate_index(path, &schema)?;
 
         // Register our custom text analyzer with the configured stemmer language
         let analyzer = build_analyzer_from_name(language)?;
@@ -65,6 +59,49 @@ impl IndexWriter {
             writer,
             schema,
         })
+    }
+
+    /// Opens an existing index or creates a new one. If the schema doesn't match,
+    /// deletes the old index and creates a fresh one.
+    fn open_or_recreate_index(path: &Path, schema: &IndexSchema) -> Result<Index, IndexError> {
+        let dir = MmapDirectory::open(path).map_err(|e| {
+            let err: tantivy::TantivyError = e.into();
+            IndexError::open_index(path.to_path_buf(), &err)
+        })?;
+
+        // Try to open existing index or create new one
+        match Index::open_or_create(dir, schema.schema().clone()) {
+            Ok(index) => Ok(index),
+            Err(e) => {
+                // Check if this is a schema mismatch error
+                let error_msg = e.to_string();
+                if error_msg.contains("schema does not match") || error_msg.contains("Schema error")
+                {
+                    // Delete the old index and create a new one
+                    Self::delete_index_files(path)?;
+
+                    // Recreate directory and open fresh index
+                    fs::create_dir_all(path)?;
+                    let dir = MmapDirectory::open(path).map_err(|e| {
+                        let err: tantivy::TantivyError = e.into();
+                        IndexError::open_index(path.to_path_buf(), &err)
+                    })?;
+
+                    Index::open_or_create(dir, schema.schema().clone())
+                        .map_err(|e| IndexError::open_index(path.to_path_buf(), &e))
+                } else {
+                    Err(IndexError::open_index(path.to_path_buf(), &e))
+                }
+            }
+        }
+    }
+
+    /// Deletes all files in an index directory.
+    fn delete_index_files(path: &Path) -> Result<(), IndexError> {
+        if path.exists() {
+            fs::remove_dir_all(path)?;
+        }
+        Ok(())
     }
 
     /// Adds a chunk document to the index.

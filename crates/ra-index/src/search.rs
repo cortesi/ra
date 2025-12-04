@@ -51,14 +51,52 @@ impl Automaton for LevenshteinDfa {
 }
 
 use crate::{
-    IndexError,
+    IndexError, ParentInfo,
+    aggregate::{DEFAULT_AGGREGATION_THRESHOLD, aggregate},
     analyzer::{RA_TOKENIZER, build_analyzer_from_name},
+    elbow::{DEFAULT_CUTOFF_RATIO, DEFAULT_MAX_RESULTS, elbow_cutoff},
     query::{QueryCompiler, parse},
+    result::{SearchCandidate, SearchResult as AggregatedSearchResult},
     schema::{IndexSchema, boost},
 };
 
 /// Default maximum number of characters in a snippet.
 const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
+
+/// Default number of candidates to retrieve from the index in Phase 1.
+pub const DEFAULT_CANDIDATE_LIMIT: usize = 100;
+
+/// Parameters controlling the three-phase search algorithm.
+///
+/// The search algorithm proceeds in three phases:
+/// 1. **Phase 1 (Query)**: Retrieve up to `candidate_limit` matches from the index
+/// 2. **Phase 2 (Elbow)**: Apply relevance cutoff using `cutoff_ratio` and `max_results`
+/// 3. **Phase 3 (Aggregate)**: Aggregate sibling matches using `aggregation_threshold`
+#[derive(Debug, Clone)]
+pub struct SearchParams {
+    /// Maximum candidates to retrieve in Phase 1. Default: 100.
+    pub candidate_limit: usize,
+    /// Score ratio threshold for Phase 2 elbow detection. Default: 0.5.
+    pub cutoff_ratio: f32,
+    /// Maximum results after Phase 2. Default: 20.
+    pub max_results: usize,
+    /// Sibling ratio threshold for Phase 3 aggregation. Default: 0.5.
+    pub aggregation_threshold: f32,
+    /// Whether to skip Phase 3 aggregation. Default: false.
+    pub disable_aggregation: bool,
+}
+
+impl Default for SearchParams {
+    fn default() -> Self {
+        Self {
+            candidate_limit: DEFAULT_CANDIDATE_LIMIT,
+            cutoff_ratio: DEFAULT_CUTOFF_RATIO,
+            max_results: DEFAULT_MAX_RESULTS,
+            aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
+            disable_aggregation: false,
+        }
+    }
+}
 
 /// Merges two sets of byte ranges, combining overlapping or adjacent ranges.
 ///
@@ -324,6 +362,111 @@ impl Searcher {
         };
 
         self.execute_query_no_highlights(&*query, limit)
+    }
+
+    /// Searches using the three-phase hierarchical algorithm.
+    ///
+    /// This is the full search pipeline with elbow detection and aggregation:
+    /// 1. **Phase 1**: Query the index for candidates
+    /// 2. **Phase 2**: Apply elbow cutoff to filter relevant results
+    /// 3. **Phase 3**: Aggregate sibling matches into parent nodes
+    ///
+    /// # Arguments
+    /// * `query_str` - The search query string
+    /// * `params` - Search parameters controlling each phase
+    ///
+    /// # Returns
+    /// A vector of aggregated search results, ordered by relevance score.
+    pub fn search_aggregated(
+        &mut self,
+        query_str: &str,
+        params: &SearchParams,
+    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+        let query = match self.build_query(query_str)? {
+            Some(q) => q,
+            None => return Ok(Vec::new()),
+        };
+
+        // Tokenize query for highlighting
+        let query_terms = self.tokenize_query(query_str);
+
+        // Phase 1: Query the index
+        let raw_results =
+            self.execute_query_with_highlights(&*query, &query_terms, params.candidate_limit)?;
+
+        // Convert SearchResults to SearchCandidates
+        let candidates: Vec<SearchCandidate> = raw_results.into_iter().map(|r| r.into()).collect();
+
+        // Phase 2: Apply elbow cutoff
+        let filtered = elbow_cutoff(candidates, params.cutoff_ratio, params.max_results);
+
+        // Phase 3: Aggregate (if enabled)
+        if params.disable_aggregation {
+            // Return as single results without aggregation
+            Ok(filtered
+                .into_iter()
+                .map(AggregatedSearchResult::single)
+                .collect())
+        } else {
+            // Look up parent nodes from the index
+            let results = aggregate(filtered, params.aggregation_threshold, |parent_id| {
+                self.lookup_parent(parent_id)
+            });
+            Ok(results)
+        }
+    }
+
+    /// Looks up a parent node by ID for aggregation.
+    fn lookup_parent(&self, parent_id: &str) -> Option<ParentInfo> {
+        let reader = self.index.reader().ok()?;
+        let searcher = reader.searcher();
+
+        // Build exact term query on ID field
+        let term = Term::from_field_text(self.schema.id, parent_id);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(1)).ok()?;
+
+        if let Some((_, doc_address)) = top_docs.first() {
+            let doc: TantivyDocument = searcher.doc(*doc_address).ok()?;
+
+            let id = self.get_text_field(&doc, self.schema.id);
+            let doc_id = self.get_text_field(&doc, self.schema.doc_id);
+            let parent_id_str = self.get_text_field(&doc, self.schema.parent_id);
+            let parent_id = if parent_id_str.is_empty() {
+                None
+            } else {
+                Some(parent_id_str)
+            };
+            let title = self.get_text_field(&doc, self.schema.title);
+            let tree = self.get_text_field(&doc, self.schema.tree);
+            let path = self.get_text_field(&doc, self.schema.path);
+            let body = self.get_text_field(&doc, self.schema.body);
+            let breadcrumb = self.get_text_field(&doc, self.schema.breadcrumb);
+            let depth = self.get_u64_field(&doc, self.schema.depth);
+            let position = self.get_u64_field(&doc, self.schema.position);
+            let byte_start = self.get_u64_field(&doc, self.schema.byte_start);
+            let byte_end = self.get_u64_field(&doc, self.schema.byte_end);
+            let sibling_count = self.get_u64_field(&doc, self.schema.sibling_count);
+
+            Some(ParentInfo {
+                id,
+                doc_id,
+                parent_id,
+                title,
+                tree,
+                path,
+                body,
+                breadcrumb,
+                depth,
+                position,
+                byte_start,
+                byte_end,
+                sibling_count,
+            })
+        } else {
+            None
+        }
     }
 
     /// Parses and compiles a query string into a Tantivy query.
