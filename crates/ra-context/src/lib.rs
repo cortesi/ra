@@ -9,6 +9,8 @@
 //!
 //! These signals are combined into a search query that finds relevant context.
 
+#![warn(missing_docs)]
+
 use std::{
     collections::HashSet,
     fs::File,

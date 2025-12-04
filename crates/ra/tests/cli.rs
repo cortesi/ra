@@ -236,7 +236,7 @@ mod inspect {
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["inspect", "test.md"])
+            .args(["inspect", "doc", "test.md"])
             .assert()
             .success();
     }
@@ -248,7 +248,7 @@ mod inspect {
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["inspect", "notes.txt"])
+            .args(["inspect", "doc", "notes.txt"])
             .assert()
             .success();
     }
@@ -259,7 +259,7 @@ mod inspect {
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["inspect", "missing.md"])
+            .args(["inspect", "doc", "missing.md"])
             .assert()
             .failure();
     }
@@ -271,7 +271,7 @@ mod inspect {
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["inspect", "data.json"])
+            .args(["inspect", "doc", "data.json"])
             .assert()
             .failure();
     }
@@ -289,7 +289,7 @@ mod inspect {
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["inspect", "large.md"])
+            .args(["inspect", "doc", "large.md"])
             .assert()
             .success();
     }

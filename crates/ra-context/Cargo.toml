@@ -1,0 +1,14 @@
+[package]
+name = "ra-context"
+version = "0.1.0"
+edition = "2024"
+description = "Context analysis for ra research assistant"
+
+[dependencies]
+ra-config = { path = "../ra-config" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

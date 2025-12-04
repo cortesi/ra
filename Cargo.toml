@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ra", "crates/ra-config", "crates/ra-document", "crates/ra-highlight", "crates/ra-index"]
+members = ["crates/ra", "crates/ra-config", "crates/ra-context", "crates/ra-document", "crates/ra-highlight", "crates/ra-index"]
 
 
 

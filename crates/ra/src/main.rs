@@ -139,10 +139,11 @@ enum Commands {
         json: bool,
     },
 
-    /// Show how ra parses a file
+    /// Inspect documents or context signals
     Inspect {
-        /// File to inspect
-        file: String,
+        /// What to inspect
+        #[command(subcommand)]
+        what: InspectWhat,
     },
 
     /// Initialize ra configuration in current directory
@@ -207,6 +208,21 @@ enum LsWhat {
     Chunks,
 }
 
+#[derive(Clone, Subcommand)]
+/// What to inspect with `ra inspect`.
+enum InspectWhat {
+    /// Show how ra parses a document
+    Doc {
+        /// File to inspect
+        file: String,
+    },
+    /// Show context signals for a file
+    Ctx {
+        /// File to analyze for context
+        file: String,
+    },
+}
+
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -250,8 +266,8 @@ fn main() -> ExitCode {
         } => {
             return cmd_get(&id, full_document, json);
         }
-        Commands::Inspect { file } => {
-            return cmd_inspect(&file);
+        Commands::Inspect { what } => {
+            return cmd_inspect(what);
         }
         Commands::Init { global, force } => {
             return cmd_init(global, force);
@@ -1421,7 +1437,15 @@ fn print_hints(warnings: &[ConfigWarning]) {
 }
 
 /// Implements the `ra inspect` command.
-fn cmd_inspect(file: &str) -> ExitCode {
+fn cmd_inspect(what: InspectWhat) -> ExitCode {
+    match what {
+        InspectWhat::Doc { file } => cmd_inspect_doc(&file),
+        InspectWhat::Ctx { file } => cmd_inspect_ctx(&file),
+    }
+}
+
+/// Implements `ra inspect doc` - show how ra parses a document.
+fn cmd_inspect_doc(file: &str) -> ExitCode {
     let path = Path::new(file);
 
     // Check if file exists
@@ -1459,7 +1483,7 @@ fn cmd_inspect(file: &str) -> ExitCode {
 
     // Document header - matches search result format
     println!(
-        "─── {} ───",
+        "--- {} ---",
         header(&format!("{} ({})", path.display(), file_type))
     );
     println!("{}", breadcrumb(&doc.title));
@@ -1470,13 +1494,13 @@ fn cmd_inspect(file: &str) -> ExitCode {
     // Chunking info
     let chunk_info = match result.chunk_level {
         Some(level) => format!(
-            "h{} chunking ({}) → {} chunks",
+            "h{} chunking ({}) -> {} chunks",
             heading_level_to_num(level),
             result.chunk_reason,
             doc.chunks.len()
         ),
         None => format!(
-            "not chunked ({}) → {} chunks",
+            "not chunked ({}) -> {} chunks",
             result.chunk_reason,
             doc.chunks.len()
         ),
@@ -1491,7 +1515,7 @@ fn cmd_inspect(file: &str) -> ExitCode {
         } else {
             chunk.id.clone()
         };
-        println!("─── {} ───", header(&chunk_label));
+        println!("--- {} ---", header(&chunk_label));
         println!("{}", breadcrumb(&chunk.breadcrumb));
         println!("{}", dim(&format!("{} chars", chunk.body.len())));
         println!();
@@ -1500,6 +1524,96 @@ fn cmd_inspect(file: &str) -> ExitCode {
         let preview = chunk_preview(&chunk.body, 200);
         println!("{}", indent_content(&preview));
         println!();
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Implements `ra inspect ctx` - show context signals for a file.
+fn cmd_inspect_ctx(file: &str) -> ExitCode {
+    use ra_context::{ContextAnalyzer, is_binary_file};
+
+    let path = Path::new(file);
+
+    // Check if file exists
+    if !path.exists() {
+        eprintln!("error: file not found: {file}");
+        return ExitCode::FAILURE;
+    }
+
+    // Check if binary
+    if is_binary_file(path) {
+        eprintln!("error: binary file: {file}");
+        return ExitCode::FAILURE;
+    }
+
+    // Load config to get context patterns
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Compile context patterns
+    let patterns = match CompiledContextPatterns::compile(&config.context) {
+        Ok(patterns) => patterns,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Create analyzer and analyze the file
+    let analyzer = ContextAnalyzer::new(&config.context, patterns);
+    let signals = match analyzer.analyze_file(path) {
+        Ok(signals) => signals,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Display results
+    println!("{}", subheader("Context signals:"));
+    println!("   {}", path.display());
+    println!();
+
+    println!("{}", subheader("Path terms:"));
+    if signals.path_terms.is_empty() {
+        println!("   {}", dim("(none)"));
+    } else {
+        for term in &signals.path_terms {
+            println!("   {term}");
+        }
+    }
+    println!();
+
+    println!("{}", subheader("Pattern terms:"));
+    if signals.pattern_terms.is_empty() {
+        println!("   {}", dim("(none)"));
+    } else {
+        for term in &signals.pattern_terms {
+            println!("   {term}");
+        }
+    }
+    println!();
+
+    println!("{}", subheader("Combined search terms:"));
+    let all_terms = signals.all_terms();
+    if all_terms.is_empty() {
+        println!("   {}", dim("(none)"));
+    } else {
+        println!("   {}", all_terms.join(", "));
     }
 
     ExitCode::SUCCESS

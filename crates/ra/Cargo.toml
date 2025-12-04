@@ -9,6 +9,7 @@ workspace = true
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ra-config = { path = "../ra-config" }
+ra-context = { path = "../ra-context" }
 ra-document = { path = "../ra-document" }
 ra-highlight = { path = "../ra-highlight" }
 ra-index = { version = "0.1.0", path = "../ra-index" }

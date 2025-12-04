@@ -863,6 +863,7 @@ dependencies = [
  "clap",
  "predicates",
  "ra-config",
+ "ra-context",
  "ra-document",
  "ra-highlight",
  "ra-index",
@@ -882,6 +883,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "toml",
+]
+
+[[package]]
+name = "ra-context"
+version = "0.1.0"
+dependencies = [
+ "ra-config",
+ "tempfile",
 ]
 
 [[package]]
@@ -908,6 +917,7 @@ version = "0.1.0"
 dependencies = [
  "directories",
  "ra-config",
+ "ra-context",
  "ra-document",
  "serde",
  "serde_json",
