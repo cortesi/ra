@@ -60,6 +60,7 @@ pub use location::{
     config_hash_path, global_index_directory, index_directory, is_local_config, manifest_path,
 };
 pub use manifest::{Manifest, ManifestEntry};
+pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::{ContextAnalyzer, ContextSignals, is_binary_file};
 pub use search::{SearchResult, Searcher, open_searcher};
 pub use status::{

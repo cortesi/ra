@@ -408,6 +408,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fst"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ab85b9b05e3978cc9a9cf8fea7f01b494e1a09ed3037e16ba39edc7a29eb61a"
+
+[[package]]
 name = "getopts"
 version = "0.2.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,6 +561,9 @@ name = "levenshtein_automata"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25"
+dependencies = [
+ "fst",
+]
 
 [[package]]
 name = "libc"
@@ -916,6 +925,7 @@ name = "ra-index"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "levenshtein_automata",
  "ra-config",
  "ra-context",
  "ra-document",
@@ -923,6 +933,7 @@ dependencies = [
  "serde_json",
  "siphasher",
  "tantivy",
+ "tantivy-fst",
  "tempfile",
  "thiserror 2.0.17",
  "walkdir",

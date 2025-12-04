@@ -2,6 +2,8 @@
 //!
 //! Represents parsed query expressions before compilation to Tantivy queries.
 
+use std::fmt;
+
 /// A parsed query expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryExpr {
@@ -62,6 +64,43 @@ impl QueryExpr {
             1 => flattened.into_iter().next().unwrap(),
             _ => Self::Or(flattened),
         }
+    }
+
+    /// Formats the expression as a tree structure with the given indentation level.
+    fn fmt_tree(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
+        let prefix = "  ".repeat(indent);
+        match self {
+            Self::Term(s) => writeln!(f, "{prefix}Term({s:?})"),
+            Self::Phrase(words) => writeln!(f, "{prefix}Phrase({words:?})"),
+            Self::Not(inner) => {
+                writeln!(f, "{prefix}Not")?;
+                inner.fmt_tree(f, indent + 1)
+            }
+            Self::And(exprs) => {
+                writeln!(f, "{prefix}And")?;
+                for expr in exprs {
+                    expr.fmt_tree(f, indent + 1)?;
+                }
+                Ok(())
+            }
+            Self::Or(exprs) => {
+                writeln!(f, "{prefix}Or")?;
+                for expr in exprs {
+                    expr.fmt_tree(f, indent + 1)?;
+                }
+                Ok(())
+            }
+            Self::Field { name, expr } => {
+                writeln!(f, "{prefix}Field({name:?})")?;
+                expr.fmt_tree(f, indent + 1)
+            }
+        }
+    }
+}
+
+impl fmt::Display for QueryExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_tree(f, 0)
     }
 }
 

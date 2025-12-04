@@ -21,6 +21,8 @@
 //! 4. AND (implicit, between adjacent terms)
 //! 5. OR (explicit keyword)
 
+use std::{error::Error, fmt, mem};
+
 use super::{
     ast::QueryExpr,
     lexer::{LexError, Token, tokenize},
@@ -35,8 +37,8 @@ pub struct ParseError {
     pub token_index: Option<usize>,
 }
 
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(idx) = self.token_index {
             write!(f, "at token {}: {}", idx, self.message)
         } else {
@@ -45,7 +47,7 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-impl std::error::Error for ParseError {}
+impl Error for ParseError {}
 
 impl From<LexError> for ParseError {
     fn from(err: LexError) -> Self {
@@ -58,11 +60,14 @@ impl From<LexError> for ParseError {
 
 /// Recursive descent parser for query expressions.
 struct Parser {
+    /// Token stream to parse.
     tokens: Vec<Token>,
+    /// Current position in token stream.
     position: usize,
 }
 
 impl Parser {
+    /// Creates a new parser from a token stream.
     fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
@@ -118,14 +123,14 @@ impl Parser {
 
     /// Checks if the current token can start a unary expression.
     fn can_start_unary(&self) -> bool {
-        match self.peek() {
-            Some(Token::Term(_)) => true,
-            Some(Token::Phrase(_)) => true,
-            Some(Token::Not) => true,
-            Some(Token::LParen) => true,
-            Some(Token::FieldPrefix(_)) => true,
-            _ => false,
-        }
+        matches!(
+            self.peek(),
+            Some(Token::Term(_))
+                | Some(Token::Phrase(_))
+                | Some(Token::Not)
+                | Some(Token::LParen)
+                | Some(Token::FieldPrefix(_))
+        )
     }
 
     /// Parses: unary → "-" unary | primary
@@ -263,7 +268,7 @@ impl Parser {
     /// Checks if the current token matches the given token.
     fn check(&self, token: &Token) -> bool {
         self.peek()
-            .map(|t| std::mem::discriminant(t) == std::mem::discriminant(token))
+            .map(|t| mem::discriminant(t) == mem::discriminant(token))
             .unwrap_or(false)
     }
 

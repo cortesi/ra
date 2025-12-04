@@ -21,6 +21,7 @@ use ra_highlight::{
 use ra_index::{
     ContextAnalyzer, IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher,
     SilentReporter, detect_index_status, index_directory, is_binary_file, open_searcher,
+    parse_query,
 };
 use serde::Serialize;
 
@@ -104,6 +105,10 @@ enum Commands {
         /// Output in JSON format
         #[arg(long)]
         json: bool,
+
+        /// Show parsed query AST (for debugging)
+        #[arg(long)]
+        explain: bool,
     },
 
     /// Get relevant context for files being worked on
@@ -248,8 +253,9 @@ fn main() -> ExitCode {
             list,
             matches,
             json,
+            explain,
         } => {
-            return cmd_search(&queries, limit, list, matches, json);
+            return cmd_search(&queries, limit, list, matches, json, explain);
         }
         Commands::Context {
             files,
@@ -544,7 +550,40 @@ fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> String {
 }
 
 /// Implements the `ra search` command.
-fn cmd_search(queries: &[String], limit: usize, list: bool, matches: bool, json: bool) -> ExitCode {
+fn cmd_search(
+    queries: &[String],
+    limit: usize,
+    list: bool,
+    matches: bool,
+    json: bool,
+    explain: bool,
+) -> ExitCode {
+    // Handle --explain mode: parse and display AST without executing search
+    if explain {
+        let combined_query = queries.join(" ");
+        println!("{}", subheader("Query:"));
+        println!("   {combined_query}");
+        println!();
+
+        match parse_query(&combined_query) {
+            Ok(Some(expr)) => {
+                println!("{}", subheader("Parsed AST:"));
+                // Indent each line of the AST output
+                for line in expr.to_string().lines() {
+                    println!("   {line}");
+                }
+            }
+            Ok(None) => {
+                println!("{}", dim("(empty query)"));
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+
     let cwd = match env::current_dir() {
         Ok(cwd) => cwd,
         Err(e) => {

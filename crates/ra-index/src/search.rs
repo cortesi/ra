@@ -5,26 +5,56 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    str,
 };
 
+use levenshtein_automata::{Distance, LevenshteinAutomatonBuilder, SINK_STATE};
 use tantivy::{
     Index, TantivyDocument, Term,
     collector::TopDocs,
     directory::MmapDirectory,
-    query::{AllQuery, Query, TermQuery},
+    query::{AllQuery, BooleanQuery, BoostQuery, Occur, Query, TermQuery},
     schema::{Field, IndexRecordOption, Value},
     snippet::SnippetGenerator,
+    tokenizer::{TextAnalyzer, TokenStream},
 };
+use tantivy_fst::Automaton;
+
+/// Wrapper that implements `tantivy_fst::Automaton` for `levenshtein_automata::DFA`.
+struct LevenshteinDfa(levenshtein_automata::DFA);
+
+impl Automaton for LevenshteinDfa {
+    type State = u32;
+
+    fn start(&self) -> Self::State {
+        self.0.initial_state()
+    }
+
+    fn is_match(&self, state: &Self::State) -> bool {
+        match self.0.distance(*state) {
+            Distance::Exact(_) => true,
+            Distance::AtLeast(_) => false,
+        }
+    }
+
+    fn can_match(&self, state: &Self::State) -> bool {
+        *state != SINK_STATE
+    }
+
+    fn accept(&self, state: &Self::State, byte: u8) -> Self::State {
+        self.0.transition(*state, byte)
+    }
+}
 
 use crate::{
     IndexError,
     analyzer::{RA_TOKENIZER, build_analyzer_from_name},
-    query::QueryBuilder,
-    schema::IndexSchema,
+    query::{QueryCompiler, parse},
+    schema::{IndexSchema, boost},
 };
 
 /// Default maximum number of characters in a snippet.
@@ -90,14 +120,23 @@ pub struct SearchResult {
     pub match_ranges: Vec<Range<usize>>,
 }
 
+/// Default fuzzy distance for search queries.
+const DEFAULT_FUZZY_DISTANCE: u8 = 1;
+
 /// Searches the index for matching documents.
 pub struct Searcher {
     /// The Tantivy index.
     index: Index,
     /// Schema with field handles.
     schema: IndexSchema,
-    /// Query builder for constructing queries.
-    query_builder: QueryBuilder,
+    /// Query compiler for search (with fuzzy matching).
+    query_compiler: QueryCompiler,
+    /// Text analyzer for tokenizing query terms.
+    analyzer: TextAnalyzer,
+    /// Levenshtein automaton builder for fuzzy term matching.
+    lev_builder: LevenshteinAutomatonBuilder,
+    /// Fuzzy distance used for matching.
+    fuzzy_distance: u8,
     /// Map from tree name to whether it's global.
     tree_is_global: HashMap<String, bool>,
     /// Local tree boost multiplier.
@@ -112,13 +151,11 @@ impl Searcher {
     /// * `language` - Stemmer language (e.g., "english")
     /// * `trees` - Tree configurations for determining global vs local boost
     /// * `local_boost` - Multiplier for local (non-global) tree results
-    /// * `fuzzy_distance` - Levenshtein distance for fuzzy matching (0 = disabled)
     pub fn open(
         path: &Path,
         language: &str,
         trees: &[ra_config::Tree],
         local_boost: f32,
-        fuzzy_distance: u8,
     ) -> Result<Self, IndexError> {
         if !path.exists() {
             return Err(IndexError::OpenIndex {
@@ -138,9 +175,14 @@ impl Searcher {
 
         // Register our custom text analyzer
         let analyzer = build_analyzer_from_name(language)?;
-        index.tokenizers().register(RA_TOKENIZER, analyzer);
+        index.tokenizers().register(RA_TOKENIZER, analyzer.clone());
 
-        let query_builder = QueryBuilder::new(schema.clone(), language, fuzzy_distance)?;
+        // Use fuzzy matching for search to handle typos and variations
+        let fuzzy_distance = DEFAULT_FUZZY_DISTANCE;
+        let query_compiler = QueryCompiler::new(schema.clone(), language, fuzzy_distance)?;
+
+        // Build Levenshtein automaton builder for extracting matched terms
+        let lev_builder = LevenshteinAutomatonBuilder::new(fuzzy_distance, true);
 
         // Build tree global/local map
         let tree_is_global: HashMap<String, bool> = trees
@@ -151,7 +193,10 @@ impl Searcher {
         Ok(Self {
             index,
             schema,
-            query_builder,
+            query_compiler,
+            analyzer,
+            lev_builder,
+            fuzzy_distance,
             tree_is_global,
             local_boost,
         })
@@ -166,7 +211,6 @@ impl Searcher {
             &config.search.stemmer,
             &config.trees,
             config.settings.local_boost,
-            config.search.fuzzy_distance,
         )
     }
 
@@ -183,12 +227,15 @@ impl Searcher {
         query_str: &str,
         limit: usize,
     ) -> Result<Vec<SearchResult>, IndexError> {
-        let query = match self.query_builder.build(query_str) {
+        let query = match self.build_query(query_str)? {
             Some(q) => q,
             None => return Ok(Vec::new()),
         };
 
-        self.execute_query(&*query, limit, true)
+        // Tokenize query to extract search terms for highlighting
+        let query_terms = self.tokenize_query(query_str);
+
+        self.execute_query_with_highlights(&*query, &query_terms, limit)
     }
 
     /// Searches the index for documents matching multiple topics.
@@ -257,20 +304,132 @@ impl Searcher {
         query_str: &str,
         limit: usize,
     ) -> Result<Vec<SearchResult>, IndexError> {
-        let query = match self.query_builder.build(query_str) {
+        let query = match self.build_query(query_str)? {
             Some(q) => q,
             None => return Ok(Vec::new()),
         };
 
-        self.execute_query(&*query, limit, false)
+        self.execute_query_no_highlights(&*query, limit)
     }
 
-    /// Executes a query and returns results.
-    fn execute_query(
+    /// Parses and compiles a query string into a Tantivy query.
+    fn build_query(&mut self, query_str: &str) -> Result<Option<Box<dyn Query>>, IndexError> {
+        use crate::query::QueryError;
+
+        let expr = parse(query_str).map_err(|e| {
+            // Convert ParseError to QueryError, adding the query string for context
+            let query_err: QueryError = e.into();
+            IndexError::Query(query_err.with_query(query_str))
+        })?;
+        match expr {
+            Some(e) => {
+                let result = self.query_compiler.compile(&e).map_err(|e| {
+                    // Convert CompileError to QueryError, adding the query string for context
+                    let query_err: QueryError = e.into();
+                    IndexError::Query(query_err.with_query(query_str))
+                })?;
+                Ok(result)
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Tokenizes a query string to extract individual search terms.
+    fn tokenize_query(&mut self, query_str: &str) -> Vec<String> {
+        let mut stream = self.analyzer.token_stream(query_str);
+        let mut tokens = Vec::new();
+        while let Some(token) = stream.next() {
+            tokens.push(token.text.clone());
+        }
+        tokens
+    }
+
+    /// Finds actual terms in the index that match the query terms (including fuzzy matches).
+    ///
+    /// For each query term, uses a Levenshtein automaton to search the term dictionary
+    /// and collect all indexed terms that match within the fuzzy distance.
+    fn find_matched_terms(
+        &self,
+        searcher: &tantivy::Searcher,
+        query_terms: &[String],
+    ) -> HashSet<String> {
+        let mut matched_terms = HashSet::new();
+
+        // Only do fuzzy matching lookup if fuzzy is enabled
+        if self.fuzzy_distance == 0 {
+            // No fuzzy matching - just return query terms as-is
+            for term in query_terms {
+                matched_terms.insert(term.clone());
+            }
+            return matched_terms;
+        }
+
+        // Search the body field's term dictionary for matching terms
+        for segment_reader in searcher.segment_readers() {
+            if let Ok(inverted_index) = segment_reader.inverted_index(self.schema.body) {
+                let term_dict = inverted_index.terms();
+
+                for query_term in query_terms {
+                    // Build a Levenshtein DFA for this query term
+                    let dfa = LevenshteinDfa(self.lev_builder.build_dfa(query_term));
+
+                    // Search the term dictionary with the automaton
+                    let mut stream = term_dict.search(dfa).into_stream().unwrap();
+
+                    while stream.advance() {
+                        // The key is the actual indexed term (as bytes)
+                        if let Ok(term_str) = str::from_utf8(stream.key()) {
+                            matched_terms.insert(term_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no terms found in index (e.g., new terms), fall back to query terms
+        if matched_terms.is_empty() {
+            for term in query_terms {
+                matched_terms.insert(term.clone());
+            }
+        }
+
+        matched_terms
+    }
+
+    /// Builds a highlight query from actual matched terms.
+    ///
+    /// Creates a non-fuzzy query using the actual terms found in the index,
+    /// which allows Tantivy's SnippetGenerator to highlight them correctly.
+    fn build_highlight_query(&self, matched_terms: &HashSet<String>) -> Option<Box<dyn Query>> {
+        if matched_terms.is_empty() {
+            return None;
+        }
+
+        // Build a boolean query that matches any of the actual terms in the body field
+        let clauses: Vec<(Occur, Box<dyn Query>)> = matched_terms
+            .iter()
+            .map(|term_text| {
+                let term = Term::from_field_text(self.schema.body, term_text);
+                let query: Box<dyn Query> =
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+                let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, boost::BODY));
+                (Occur::Should, boosted)
+            })
+            .collect();
+
+        Some(Box::new(BooleanQuery::new(clauses)))
+    }
+
+    /// Executes a query with snippet and highlight generation.
+    ///
+    /// Uses query terms to find actual matched terms in the index via Levenshtein
+    /// automata, then builds a highlight query from those actual terms. This ensures
+    /// highlights match what the fuzzy search actually found.
+    fn execute_query_with_highlights(
         &self,
         query: &dyn Query,
+        query_terms: &[String],
         limit: usize,
-        generate_snippets: bool,
     ) -> Result<Vec<SearchResult>, IndexError> {
         let reader = self
             .index
@@ -283,9 +442,15 @@ impl Searcher {
             .search(query, &TopDocs::with_limit(limit))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        // Create snippet generator for excerpts (limited chars)
-        let snippet_generator = if generate_snippets {
-            let mut generator = SnippetGenerator::create(&searcher, query, self.schema.body)
+        // Find actual terms in the index that match our query terms (including fuzzy matches)
+        let matched_terms = self.find_matched_terms(&searcher, query_terms);
+
+        // Build a highlight query from the actual matched terms (non-fuzzy)
+        let highlight_query = self.build_highlight_query(&matched_terms);
+
+        // Create snippet generator for excerpts using the highlight query
+        let snippet_generator = if let Some(ref hq) = highlight_query {
+            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
             generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
             Some(generator)
@@ -294,9 +459,8 @@ impl Searcher {
         };
 
         // Create a separate generator for full-body match highlighting.
-        // We set a very large max_num_chars to capture all matches in the body.
-        let highlight_generator = if generate_snippets {
-            let mut generator = SnippetGenerator::create(&searcher, query, self.schema.body)
+        let highlight_generator = if let Some(ref hq) = highlight_query {
+            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
             generator.set_max_num_chars(usize::MAX);
             Some(generator)
@@ -312,6 +476,37 @@ impl Searcher {
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
             let result = self.doc_to_result(&doc, score, &snippet_generator, &highlight_generator);
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+
+    /// Executes a query without generating snippets or highlights (faster).
+    fn execute_query_no_highlights(
+        &self,
+        query: &dyn Query,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let searcher = reader.searcher();
+
+        let top_docs = searcher
+            .search(query, &TopDocs::with_limit(limit))
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let mut results = Vec::with_capacity(top_docs.len());
+
+        for (score, doc_address) in top_docs {
+            let doc: TantivyDocument = searcher
+                .doc(doc_address)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+
+            let result = self.doc_to_result(&doc, score, &None, &None);
             results.push(result);
         }
 
@@ -634,7 +829,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         let results = searcher.search("rust", 10).unwrap();
 
@@ -647,7 +842,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         let results = searcher.search("rust", 2).unwrap();
 
@@ -659,7 +854,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         let results = searcher.search("python", 10).unwrap();
 
@@ -671,7 +866,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         let results = searcher.search("", 10).unwrap();
 
@@ -685,7 +880,7 @@ mod test {
 
         let local_boost = 2.0;
         let mut searcher =
-            Searcher::open(temp.path(), "english", &make_trees(), local_boost, 0).unwrap();
+            Searcher::open(temp.path(), "english", &make_trees(), local_boost).unwrap();
 
         // Search for "error" which only matches the global tree document
         let results = searcher.search("error", 10).unwrap();
@@ -707,7 +902,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         let results = searcher.search("async", 10).unwrap();
 
@@ -727,7 +922,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         let results = searcher.search("safety", 10).unwrap();
 
@@ -746,7 +941,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         let results = searcher.search_no_snippets("safety", 10).unwrap();
 
@@ -759,7 +954,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         // "async" matches one doc, "error" matches another
         let results = searcher.search_multi(&["async", "error"], 10).unwrap();
@@ -773,7 +968,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         assert_eq!(searcher.num_docs().unwrap(), 3);
     }
@@ -783,7 +978,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         let nonexistent = temp.path().join("nonexistent");
 
-        let result = Searcher::open(&nonexistent, "english", &[], 1.5, 0);
+        let result = Searcher::open(&nonexistent, "english", &[], 1.5);
 
         assert!(result.is_err());
     }
@@ -793,7 +988,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         // Exact phrase should match
         let results = searcher.search("\"systems programming\"", 10).unwrap();
@@ -807,7 +1002,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         // Both "rust" and "programming" match the intro doc
         let results = searcher.search_multi(&["rust", "programming"], 10).unwrap();
@@ -829,7 +1024,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         // "rust" and "safety" both appear in the intro doc
         let results = searcher.search_multi(&["rust", "safety"], 10).unwrap();
@@ -857,7 +1052,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         // Search for same document with two different terms
         let results = searcher.search_multi(&["rust", "systems"], 10).unwrap();
@@ -930,31 +1125,28 @@ mod test {
         }
         writer.commit().unwrap();
 
-        // Search with fuzzy_distance = 0 (exact match) - should NOT find "werewolf"
-        // because the indexed term is "werewolv" (stemmed from "werewolves")
-        // and "werewolf" doesn't stem the same way
-        let mut searcher_exact =
-            Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
-        let results_exact = searcher_exact.search("werewolf", 10).unwrap();
+        // With fuzzy matching (distance=1), "werewolf" SHOULD find "werewolves"
+        // because "werewolf" stems to "werewolf" and "werewolves" stems to "werewolv",
+        // and fuzzy matching allows 1 edit distance.
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let results = searcher.search("werewolf", 10).unwrap();
         assert!(
-            results_exact.is_empty(),
-            "Exact search should not match werewolf -> werewolves"
+            !results.is_empty(),
+            "Fuzzy search should match werewolf -> werewolves"
         );
+        assert!(results[0].body.contains("werewolves"));
 
-        // Search with fuzzy_distance = 2 - SHOULD find it
-        // "werewolf" (no stem change) vs "werewolv" (stemmed) differ by ~2 chars
-        let mut searcher_fuzzy =
-            Searcher::open(temp.path(), "english", &make_trees(), 1.5, 2).unwrap();
-        let results_fuzzy = searcher_fuzzy.search("werewolf", 10).unwrap();
+        // Searching for "werewolves" should also work (exact stem match)
+        let results = searcher.search("werewolves", 10).unwrap();
         assert!(
-            !results_fuzzy.is_empty(),
-            "Fuzzy search with distance 2 should match werewolf -> werewolves"
+            !results.is_empty(),
+            "Searching for 'werewolves' should match"
         );
-        assert!(results_fuzzy[0].body.contains("werewolves"));
+        assert!(results[0].body.contains("werewolves"));
     }
 
     #[test]
-    fn fuzzy_search_disabled_with_zero_distance() {
+    fn fuzzy_search_matches_typos() {
         let temp = TempDir::new().unwrap();
 
         let docs = vec![ChunkDocument {
@@ -975,14 +1167,66 @@ mod test {
         }
         writer.commit().unwrap();
 
-        // With distance 0, "foz" should not match "fox"
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        // With fuzzy matching (distance=1), "foz" SHOULD match "fox" (1 character difference)
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
         let results = searcher.search("foz", 10).unwrap();
-        assert!(results.is_empty(), "Distance 0 should not match foz -> fox");
+        assert!(
+            !results.is_empty(),
+            "Fuzzy search should match foz -> fox (1 edit)"
+        );
 
-        // With distance 1, "foz" should match "fox"
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 1).unwrap();
+        // "fox" should match "fox" exactly
+        let results = searcher.search("fox", 10).unwrap();
+        assert!(!results.is_empty(), "Exact search should match fox -> fox");
+
+        // "xyz" should NOT match "fox" (too many edits)
+        let results = searcher.search("xyz", 10).unwrap();
+        assert!(
+            results.is_empty(),
+            "Fuzzy search should not match xyz -> fox (3 edits)"
+        );
+    }
+
+    #[test]
+    fn fuzzy_search_highlights_actual_terms() {
+        let temp = TempDir::new().unwrap();
+
+        let docs = vec![ChunkDocument {
+            id: "local:docs/test.md".to_string(),
+            title: "Test".to_string(),
+            tags: vec![],
+            path: "docs/test.md".to_string(),
+            path_components: vec!["docs".to_string(), "test".to_string()],
+            tree: "local".to_string(),
+            body: "The quick brown fox jumps over the lazy dog.".to_string(),
+            breadcrumb: "Test".to_string(),
+            mtime: SystemTime::UNIX_EPOCH,
+        }];
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        // Search for "foz" which fuzzy-matches "fox"
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
         let results = searcher.search("foz", 10).unwrap();
-        assert!(!results.is_empty(), "Distance 1 should match foz -> fox");
+
+        assert!(!results.is_empty(), "Should find result");
+
+        // The snippet should contain highlighting for "fox" (the actual matched term),
+        // not "foz" (the query term that doesn't appear in the text)
+        let snippet = results[0].snippet.as_ref().expect("Should have snippet");
+        assert!(
+            snippet.contains("<b>") || snippet.contains("fox"),
+            "Snippet should highlight actual matched term"
+        );
+
+        // match_ranges should point to the actual "fox" in the body
+        assert!(
+            !results[0].match_ranges.is_empty(),
+            "Should have match ranges for actual terms"
+        );
     }
 }

@@ -633,6 +633,48 @@ path = "./docs"
             .success()
             .stderr(predicate::str::contains("Index needs rebuild"));
     }
+
+    #[test]
+    fn query_syntax_error_shows_context() {
+        let dir = setup_indexed_dir();
+
+        // Unclosed quote should show error with context
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "\"unclosed"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("syntax error"))
+            .stderr(predicate::str::contains("unclosed quote"));
+    }
+
+    #[test]
+    fn query_syntax_error_unclosed_paren() {
+        let dir = setup_indexed_dir();
+
+        // Unclosed parenthesis
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "(rust"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("syntax error"))
+            .stderr(predicate::str::contains("parenthesis"));
+    }
+
+    #[test]
+    fn query_unknown_field_error() {
+        let dir = setup_indexed_dir();
+
+        // Unknown field should show hint about valid fields
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "unknown:value"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unknown field"))
+            .stderr(predicate::str::contains("hint"));
+    }
 }
 
 mod context {

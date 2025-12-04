@@ -2,7 +2,7 @@
 //!
 //! Converts a query string into a stream of tokens for the parser.
 
-use std::{iter::Peekable, str::Chars};
+use std::{error::Error, fmt, iter::Peekable, str::Chars};
 
 /// A token in the query language.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,26 +36,51 @@ pub struct LexError {
     pub message: String,
     /// Byte position in input where error occurred.
     pub position: usize,
+    /// The original input string.
+    pub input: String,
 }
 
-impl std::fmt::Display for LexError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "at position {}: {}", self.position, self.message)
+impl LexError {
+    /// Creates a new lexer error.
+    pub(super) fn new(message: impl Into<String>, position: usize, input: &str) -> Self {
+        Self {
+            message: message.into(),
+            position,
+            input: input.to_string(),
+        }
+    }
+
+    /// Formats the error with a position indicator showing where the error occurred.
+    pub fn format_with_context(&self) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("query syntax error: {}\n", self.message));
+        result.push_str(&format!("  {}\n", self.input));
+        result.push_str(&format!("  {}^", " ".repeat(self.position)));
+        result
     }
 }
 
-impl std::error::Error for LexError {}
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.format_with_context())
+    }
+}
+
+impl Error for LexError {}
 
 /// Tokenizes a query string.
-pub struct Lexer<'a> {
+struct Lexer<'a> {
+    /// The original input string.
     input: &'a str,
+    /// Character iterator with one-character lookahead.
     chars: Peekable<Chars<'a>>,
+    /// Current byte position in input.
     position: usize,
 }
 
 impl<'a> Lexer<'a> {
     /// Creates a new lexer for the given input.
-    pub fn new(input: &'a str) -> Self {
+    fn new(input: &'a str) -> Self {
         Self {
             input,
             chars: input.chars().peekable(),
@@ -63,8 +88,13 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Creates an error at a specific position.
+    fn error_at(&self, message: impl Into<String>, position: usize) -> LexError {
+        LexError::new(message, position, self.input)
+    }
+
     /// Tokenizes the entire input, returning all tokens or an error.
-    pub fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
+    fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
 
         while let Some(token) = self.next_token()? {
@@ -118,11 +148,8 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 None => {
-                    // Unclosed quote - treat rest as phrase content
-                    return Err(LexError {
-                        message: "unclosed quote".into(),
-                        position: start_pos,
-                    });
+                    // Unclosed quote
+                    return Err(self.error_at("unclosed quote", start_pos));
                 }
             }
         }

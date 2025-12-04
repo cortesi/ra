@@ -4,6 +4,8 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
+use crate::query::QueryError;
+
 /// Errors that can occur when working with the search index.
 #[derive(Debug, Error)]
 pub enum IndexError {
@@ -31,6 +33,10 @@ pub enum IndexError {
     /// Invalid stemmer language.
     #[error("unsupported stemmer language: {0}")]
     InvalidLanguage(String),
+
+    /// Search query error.
+    #[error("{0}")]
+    Query(#[from] QueryError),
 }
 
 impl IndexError {
