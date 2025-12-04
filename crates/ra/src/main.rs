@@ -13,7 +13,7 @@ use ra_config::{
     global_template, local_template,
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
-use ra_highlight::{Highlighter, dim, header, rule, subheader};
+use ra_highlight::{Highlighter, breadcrumb, dim, header, highlight_matches, rule, subheader};
 use ra_index::{
     IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher, SilentReporter,
     detect_index_status, index_directory, open_searcher,
@@ -291,9 +291,17 @@ fn ensure_index_fresh(config: &Config) -> Result<Searcher, ExitCode> {
 /// Formats a search result for full content output.
 fn format_result_full(result: &SearchResult) -> String {
     let mut output = String::new();
-    output.push_str(&format!("─── {} ───\n", result.id));
-    output.push_str(&format!("> {}\n\n", result.breadcrumb));
-    output.push_str(&result.body);
+    output.push_str(&format!("─── {} ───\n", header(&result.id)));
+    output.push_str(&format!("{}\n\n", breadcrumb(&result.breadcrumb)));
+
+    // Highlight matching terms in the body
+    let body = if result.match_ranges.is_empty() {
+        result.body.clone()
+    } else {
+        highlight_matches(&result.body, &result.match_ranges)
+    };
+    output.push_str(&body);
+
     if !result.body.ends_with('\n') {
         output.push('\n');
     }
@@ -303,8 +311,9 @@ fn format_result_full(result: &SearchResult) -> String {
 /// Formats a search result for list mode output.
 fn format_result_list(result: &SearchResult) -> String {
     let mut output = String::new();
-    output.push_str(&format!("{}\n", result.id));
+    output.push_str(&format!("{}\n", header(&result.id)));
     output.push_str(&format!("  {}\n", result.title));
+    output.push_str(&format!("  {}\n", breadcrumb(&result.breadcrumb)));
     if let Some(snippet) = &result.snippet {
         // Convert HTML snippet to plain text with markers
         let plain_snippet = snippet.replace("<b>", "[").replace("</b>", "]");
@@ -394,11 +403,7 @@ fn cmd_search(queries: &[String], limit: usize, list: bool, json: bool) -> ExitC
             }
         }
     } else if list {
-        for (query, results) in &all_results {
-            if queries.len() > 1 {
-                println!("{}", header(&format!("Query: {query}")));
-                println!();
-            }
+        for (_query, results) in &all_results {
             if results.is_empty() {
                 println!("{}", dim("No results found."));
             } else {
@@ -410,11 +415,7 @@ fn cmd_search(queries: &[String], limit: usize, list: bool, json: bool) -> ExitC
         }
     } else {
         // Full content mode
-        for (query, results) in &all_results {
-            if queries.len() > 1 {
-                println!("{}", header(&format!("Query: {query}")));
-                println!();
-            }
+        for (_query, results) in &all_results {
             if results.is_empty() {
                 println!("{}", dim("No results found."));
             } else {

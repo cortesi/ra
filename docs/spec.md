@@ -895,19 +895,6 @@ OPTIONS:
 
 By default, `ra agents` writes only `AGENTS.md`. Use `--all` to generate all variants, or select specific ones with `--claude` and `--gemini`.
 
-## Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| `tantivy` | Full-text search engine |
-| `rmcp` | MCP server implementation |
-| `tiktoken-rs` | Token counting for context limits |
-| `globset` | Glob pattern matching |
-| `serde` | Serialization |
-| `toml` | Configuration parsing |
-| `pulldown-cmark` | Markdown parsing |
-| `clap` | CLI argument parsing |
-| `directories` | Platform-specific paths |
 
 ## Future Directions
 

@@ -5,6 +5,7 @@
 
 use std::{
     collections::HashMap,
+    ops::Range,
     path::{Path, PathBuf},
 };
 
@@ -46,6 +47,15 @@ pub struct SearchResult {
     pub score: f32,
     /// Optional snippet with query terms highlighted.
     pub snippet: Option<String>,
+    /// Byte ranges within `body` where search terms match.
+    ///
+    /// These ranges can be used to highlight matching terms in the full body text.
+    /// Each range represents a contiguous span of bytes that matched a search term.
+    /// Ranges are sorted by start position and do not overlap.
+    ///
+    /// Empty when the result was retrieved via `get_by_id` or `get_by_path`,
+    /// or when using `search_no_snippets`.
+    pub match_ranges: Vec<Range<usize>>,
 }
 
 /// Searches the index for matching documents.
@@ -198,11 +208,22 @@ impl Searcher {
             .search(query, &TopDocs::with_limit(limit))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        // Create snippet generator if needed
+        // Create snippet generator for excerpts (limited chars)
         let snippet_generator = if generate_snippets {
             let mut generator = SnippetGenerator::create(&searcher, query, self.schema.body)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
             generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
+            Some(generator)
+        } else {
+            None
+        };
+
+        // Create a separate generator for full-body match highlighting.
+        // We set a very large max_num_chars to capture all matches in the body.
+        let highlight_generator = if generate_snippets {
+            let mut generator = SnippetGenerator::create(&searcher, query, self.schema.body)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+            generator.set_max_num_chars(usize::MAX);
             Some(generator)
         } else {
             None
@@ -215,7 +236,7 @@ impl Searcher {
                 .doc(doc_address)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
-            let result = self.doc_to_result(&doc, score, &snippet_generator);
+            let result = self.doc_to_result(&doc, score, &snippet_generator, &highlight_generator);
             results.push(result);
         }
 
@@ -228,6 +249,7 @@ impl Searcher {
         doc: &TantivyDocument,
         base_score: f32,
         snippet_generator: &Option<SnippetGenerator>,
+        highlight_generator: &Option<SnippetGenerator>,
     ) -> SearchResult {
         let id = self.get_text_field(doc, self.schema.id);
         let title = self.get_text_field(doc, self.schema.title);
@@ -250,6 +272,15 @@ impl Searcher {
             snippet.to_html()
         });
 
+        // Extract match ranges from the full body
+        let match_ranges = highlight_generator
+            .as_ref()
+            .map(|generator| {
+                let snippet = generator.snippet(&body);
+                snippet.highlighted().to_vec()
+            })
+            .unwrap_or_default();
+
         SearchResult {
             id,
             title,
@@ -259,6 +290,7 @@ impl Searcher {
             breadcrumb,
             score,
             snippet,
+            match_ranges,
         }
     }
 
@@ -307,7 +339,7 @@ impl Searcher {
                 .doc(*doc_address)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
-            let result = self.doc_to_result(&doc, *score, &None);
+            let result = self.doc_to_result(&doc, *score, &None, &None);
             Ok(Some(result))
         } else {
             Ok(None)
@@ -346,7 +378,7 @@ impl Searcher {
             .into_iter()
             .filter_map(|(score, doc_address)| {
                 let doc: TantivyDocument = searcher.doc(doc_address).ok()?;
-                let result = self.doc_to_result(&doc, score, &None);
+                let result = self.doc_to_result(&doc, score, &None, &None);
                 // Check if ID starts with our prefix (either exact or with # separator)
                 if result.id == id_prefix || result.id.starts_with(&format!("{id_prefix}#")) {
                     Some(result)
