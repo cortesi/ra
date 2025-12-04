@@ -1,13 +1,15 @@
-# ra global configuration file (~/.ra.toml)
-# Settings here apply to all projects unless overridden by local configs
+# ra global configuration (~/.ra.toml)
+# Settings here apply to all projects unless overridden by local configs.
 
-# Define global knowledge trees accessible from any project.
-# Each tree is a named collection of documents with its own path and patterns.
-
-[tree.docs]
-path = "~/Documents/docs"
-include = ["**/*.md"]
-
-[tree.references]
-path = "~/references"
+# Global knowledge trees - accessible from any directory.
+[tree.notes]
+path = "~/notes"
 include = ["**/*.md", "**/*.txt"]
+
+# Default settings for all projects
+[settings]
+default_limit = 5
+
+# Search settings
+[search]
+stemmer = "english"

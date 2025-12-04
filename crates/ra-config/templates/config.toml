@@ -1,67 +1,39 @@
 # ra configuration file
 # See https://github.com/cortesi/ra for documentation
 
-# Define knowledge trees - directories containing documents to index.
-# Each tree is a named collection of documents with its own path and patterns.
+# Stop here - ignore parent directories and global config
+# root = true
 
+# Knowledge trees - directories containing documents to index.
+# Each tree has a name, path, and file patterns.
 [tree.docs]
 path = "./docs"
 include = ["**/*.md"]
 exclude = ["**/drafts/**"]
 
-[tree.notes]
-path = "~/notes"
-include = ["**/*.md", "**/*.txt"]
-
-# General settings
+# General settings (showing defaults)
 [settings]
-default_limit = 5
-local_boost = 1.5
-chunk_at_headings = true
-max_chunk_size = 50000
+default_limit = 5          # results per query
+local_boost = 1.5          # relevance boost for local trees
+chunk_at_headings = true   # split documents at heading boundaries
+max_chunk_size = 50000     # warning threshold for large chunks
 
 # Search settings
 [search]
-stemmer = "english"
+stemmer = "english"        # stemming language for search
 
-# Context command settings
-# These control how `ra context` analyzes files to find relevant documentation.
+# Context command settings - controls how `ra context` finds relevant docs
 [context]
-limit = 10
-min_term_frequency = 2
-min_word_length = 4
-max_word_length = 30
-sample_size = 50000
+limit = 10                 # chunks to return
+min_word_length = 4        # minimum word length for term extraction
+max_word_length = 30       # maximum word length for term extraction
+sample_size = 50000        # bytes to sample from large files
 
-# Glob patterns that inject additional search terms when matched.
-# When `ra context` analyzes a file, it matches the file path against these
-# patterns and adds the corresponding terms to the search query. This helps
-# find relevant documentation based on file type or project structure.
-#
-# Multiple patterns can match the same file - all matching terms are merged.
-# Child configs can override patterns from parent configs for the same glob.
-
+# Context patterns - inject search terms based on file paths.
+# When `ra context` analyzes a file, matching patterns add terms to the query.
+# Use these to connect code files to relevant documentation.
 [context.patterns]
-"*.rs" = ["rust"]
-"*.py" = ["python"]
-"*.go" = ["golang"]
-"*.ts" = ["typescript"]
-"*.tsx" = ["typescript", "react"]
-"*.jsx" = ["javascript", "react"]
-"*.rb" = ["ruby"]
-"*.ex" = ["elixir"]
-"*.exs" = ["elixir"]
-"*.clj" = ["clojure"]
-"*.hs" = ["haskell"]
-"*.swift" = ["swift"]
-"*.kt" = ["kotlin"]
-"*.java" = ["java"]
-"*.c" = ["c"]
-"*.cpp" = ["cpp"]
-"*.h" = ["c", "cpp"]
-"*.hpp" = ["cpp"]
-"src/api/**" = ["http", "handlers", "routing", "REST"]
-"src/auth/**" = ["authentication", "security", "jwt"]
-"src/db/**" = ["database", "queries", "migrations"]
-"tests/**" = ["testing", "fixtures"]
-"migrations/**" = ["database", "schema"]
+"*.rs" = ["rust"]                      # file extension
+"*.tsx" = ["typescript", "react"]      # multiple terms
+"src/api/**" = ["http", "routing"]     # directory patterns
+"tests/**" = ["testing"]               # test directories

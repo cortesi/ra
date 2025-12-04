@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use directories::BaseDirs;
 
+use crate::parse::is_root_config;
+
 /// The configuration filename.
 pub const CONFIG_FILENAME: &str = ".ra.toml";
 
@@ -17,24 +19,33 @@ pub const CONFIG_FILENAME: &str = ".ra.toml";
 ///
 /// The function:
 /// 1. Walks up from `cwd` to the filesystem root, collecting any `.ra.toml` files found
-/// 2. Appends `~/.ra.toml` if it exists (lowest precedence)
+/// 2. Stops if a config file has `root = true` set
+/// 3. Appends `~/.ra.toml` if it exists and no root config was found (lowest precedence)
 ///
 /// Returns an empty vector if no configuration files are found.
 pub fn discover_config_files(cwd: &Path) -> Vec<PathBuf> {
     let mut configs = Vec::new();
+    let mut found_root = false;
 
     // Walk up from cwd, collecting .ra.toml files
     let mut current = Some(cwd);
     while let Some(dir) = current {
         let config_path = dir.join(CONFIG_FILENAME);
         if config_path.is_file() {
+            // Check if this is a root config before adding
+            let is_root = is_root_config(&config_path);
             configs.push(config_path);
+            if is_root {
+                found_root = true;
+                break;
+            }
         }
         current = dir.parent();
     }
 
-    // Append global config if it exists and isn't already included
-    if let Some(global_path) = global_config_path()
+    // Append global config if it exists, no root was found, and it isn't already included
+    if !found_root
+        && let Some(global_path) = global_config_path()
         && global_path.is_file()
         && !configs.contains(&global_path)
     {
@@ -96,6 +107,18 @@ mod tests {
             let config = self.root.path().join(CONFIG_FILENAME);
             fs::write(&config, "# root config\n").unwrap();
             config
+        }
+
+        fn create_config_with_content(&self, rel_path: &str, content: &str) -> PathBuf {
+            let dir = self.root.path().join(rel_path);
+            fs::create_dir_all(&dir).unwrap();
+            let config = dir.join(CONFIG_FILENAME);
+            fs::write(&config, content).unwrap();
+            config
+        }
+
+        fn create_root_config(&self, rel_path: &str) -> PathBuf {
+            self.create_config_with_content(rel_path, "root = true\n")
         }
     }
 
@@ -192,5 +215,68 @@ mod tests {
         // Should not include the directory
         let local_configs: Vec<_> = configs.iter().filter(|p| !is_global_config(p)).collect();
         assert!(local_configs.is_empty());
+    }
+
+    #[test]
+    fn test_root_config_stops_discovery() {
+        let test_dir = TestDir::new();
+        // Parent config that should be ignored
+        let _parent_config = test_dir.create_config_at_root();
+        // Root config in middle - should stop here
+        let root_config = test_dir.create_root_config("project");
+        let working_dir = test_dir.create_dir("project/src");
+
+        let configs = discover_config_files(&working_dir);
+
+        // Should only include the root config, not parent or global
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0], root_config);
+    }
+
+    #[test]
+    fn test_root_config_at_cwd() {
+        let test_dir = TestDir::new();
+        let _parent_config = test_dir.create_config_at_root();
+        let root_config = test_dir.create_root_config("project");
+
+        let configs = discover_config_files(&test_dir.path().join("project"));
+
+        // Should only include the root config
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0], root_config);
+    }
+
+    #[test]
+    fn test_root_config_includes_child_configs() {
+        let test_dir = TestDir::new();
+        let _parent_config = test_dir.create_config_at_root();
+        let root_config = test_dir.create_root_config("project");
+        let child_config = test_dir.create_config("project/sub");
+        let working_dir = test_dir.create_dir("project/sub/deep");
+
+        let configs = discover_config_files(&working_dir);
+
+        // Should include child and root, but not parent or global
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0], child_config);
+        assert_eq!(configs[1], root_config);
+    }
+
+    #[test]
+    fn test_root_false_does_not_stop_discovery() {
+        let test_dir = TestDir::new();
+        let parent_config = test_dir.create_config_at_root();
+        // Explicit root = false should not stop discovery
+        let mid_config = test_dir.create_config_with_content("project", "root = false\n");
+        let working_dir = test_dir.create_dir("project/src");
+
+        let configs = discover_config_files(&working_dir);
+
+        let local_configs: Vec<_> = configs.iter().filter(|p| !is_global_config(p)).collect();
+
+        // Should include both configs
+        assert_eq!(local_configs.len(), 2);
+        assert_eq!(local_configs[0], &mid_config);
+        assert_eq!(local_configs[1], &parent_config);
     }
 }

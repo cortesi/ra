@@ -25,8 +25,8 @@ pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, 
 pub use error::ConfigError;
 pub use merge::{ParsedConfig, merge_configs};
 pub use parse::{
-    RawConfig, RawContextSettings, RawSearchSettings, RawSettings, RawTree, parse_config,
-    parse_config_file, parse_config_str,
+    RawConfig, RawContextSettings, RawSearchSettings, RawSettings, RawTree, is_root_config,
+    parse_config, parse_config_file, parse_config_str,
 };
 pub use patterns::{CompiledContextPatterns, CompiledPatterns};
 pub use resolve::resolve_tree_path;

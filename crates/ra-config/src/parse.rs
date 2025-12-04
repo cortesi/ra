@@ -17,6 +17,8 @@ use crate::ConfigError;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RawConfig {
+    /// When true, stop discovery here - ignore parent and global configs.
+    pub root: Option<bool>,
     /// General settings section.
     pub settings: Option<RawSettings>,
     /// Search settings section.
@@ -105,6 +107,20 @@ pub fn parse_config_str(contents: &str, path: &Path) -> Result<RawConfig, Config
 /// Useful for validating template content.
 pub fn parse_config(contents: &str) -> Result<RawConfig, TomlError> {
     toml::from_str(contents)
+}
+
+/// Checks if a config file has `root = true` set.
+///
+/// This is used during discovery to stop traversal at root configs.
+/// Returns false if the file cannot be read or parsed.
+pub fn is_root_config(path: &Path) -> bool {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(config) = toml::from_str::<RawConfig>(&contents) else {
+        return false;
+    };
+    config.root == Some(true)
 }
 
 #[cfg(test)]
@@ -346,5 +362,56 @@ exclude = ["**/private/**"]
         assert_eq!(trees.get("local").unwrap().path, "./docs");
         assert_eq!(trees.get("project").unwrap().path, "../shared/docs");
         assert_eq!(trees.get("reference").unwrap().path, "/absolute/path/docs");
+    }
+
+    #[test]
+    fn test_parse_root_true() {
+        let toml = "root = true\n";
+        let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
+        assert_eq!(config.root, Some(true));
+    }
+
+    #[test]
+    fn test_parse_root_false() {
+        let toml = "root = false\n";
+        let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
+        assert_eq!(config.root, Some(false));
+    }
+
+    #[test]
+    fn test_parse_root_not_specified() {
+        let toml = "[settings]\ndefault_limit = 5\n";
+        let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
+        assert_eq!(config.root, None);
+    }
+
+    #[test]
+    fn test_is_root_config_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".ra.toml");
+        fs::write(&config_path, "root = true\n").unwrap();
+        assert!(is_root_config(&config_path));
+    }
+
+    #[test]
+    fn test_is_root_config_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".ra.toml");
+        fs::write(&config_path, "root = false\n").unwrap();
+        assert!(!is_root_config(&config_path));
+    }
+
+    #[test]
+    fn test_is_root_config_not_specified() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".ra.toml");
+        fs::write(&config_path, "[settings]\ndefault_limit = 5\n").unwrap();
+        assert!(!is_root_config(&config_path));
+    }
+
+    #[test]
+    fn test_is_root_config_nonexistent() {
+        let path = Path::new("/nonexistent/.ra.toml");
+        assert!(!is_root_config(path));
     }
 }
