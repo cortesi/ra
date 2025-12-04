@@ -14,7 +14,7 @@ use ra_config::Config;
 use siphasher::sip::SipHasher24;
 
 /// Current schema version. Bump this when index field definitions change.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Settings that affect indexing and are included in the config hash.
 ///

@@ -20,6 +20,8 @@
 //! // Add a document
 //! let doc = ChunkDocument {
 //!     id: "local:docs/test.md#intro".to_string(),
+//!     doc_id: "local:docs/test.md".to_string(),
+//!     parent_id: Some("local:docs/test.md".to_string()),
 //!     title: "Introduction".to_string(),
 //!     tags: vec!["rust".to_string()],
 //!     path: "docs/test.md".to_string(),
@@ -27,6 +29,11 @@
 //!     tree: "local".to_string(),
 //!     body: "Content here".to_string(),
 //!     breadcrumb: "Test Doc › Introduction".to_string(),
+//!     depth: 1,
+//!     position: 1,
+//!     byte_start: 0,
+//!     byte_end: 100,
+//!     sibling_count: 1,
 //!     mtime: SystemTime::now(),
 //! };
 //! writer.add_document(&doc).unwrap();
@@ -45,6 +52,7 @@ mod indexer;
 mod location;
 mod manifest;
 mod query;
+mod result;
 mod schema;
 mod search;
 mod status;
@@ -62,6 +70,7 @@ pub use location::{
 pub use manifest::{Manifest, ManifestEntry};
 pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::{ContextAnalyzer, ContextSignals, is_binary_file};
+pub use result::{SearchCandidate, SearchResult as AggregatedSearchResult};
 pub use search::{SearchResult, Searcher, open_searcher};
 pub use status::{
     IndexStatus, detect_index_status, index_exists, read_stored_hash, write_config_hash,

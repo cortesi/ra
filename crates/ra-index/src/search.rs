@@ -95,6 +95,10 @@ fn merge_ranges(mut a: Vec<Range<usize>>, b: Vec<Range<usize>>) -> Vec<Range<usi
 pub struct SearchResult {
     /// Unique chunk identifier.
     pub id: String,
+    /// Document identifier (same for all chunks in a file).
+    pub doc_id: String,
+    /// Parent chunk identifier, or None for document nodes.
+    pub parent_id: Option<String>,
     /// Chunk title.
     pub title: String,
     /// Tree name this chunk belongs to.
@@ -105,6 +109,16 @@ pub struct SearchResult {
     pub body: String,
     /// Breadcrumb showing hierarchy path.
     pub breadcrumb: String,
+    /// Hierarchy depth: 0 for document, 1-6 for h1-h6.
+    pub depth: u64,
+    /// Document order index (0-based pre-order traversal).
+    pub position: u64,
+    /// Byte offset where content span starts.
+    pub byte_start: u64,
+    /// Byte offset where content span ends.
+    pub byte_end: u64,
+    /// Number of siblings including this node.
+    pub sibling_count: u64,
     /// Search relevance score (after boosting).
     pub score: f32,
     /// Optional snippet with query terms highlighted.
@@ -522,11 +536,23 @@ impl Searcher {
         highlight_generator: &Option<SnippetGenerator>,
     ) -> SearchResult {
         let id = self.get_text_field(doc, self.schema.id);
+        let doc_id = self.get_text_field(doc, self.schema.doc_id);
+        let parent_id_str = self.get_text_field(doc, self.schema.parent_id);
+        let parent_id = if parent_id_str.is_empty() {
+            None
+        } else {
+            Some(parent_id_str)
+        };
         let title = self.get_text_field(doc, self.schema.title);
         let tree = self.get_text_field(doc, self.schema.tree);
         let path = self.get_text_field(doc, self.schema.path);
         let body = self.get_text_field(doc, self.schema.body);
         let breadcrumb = self.get_text_field(doc, self.schema.breadcrumb);
+        let depth = self.get_u64_field(doc, self.schema.depth);
+        let position = self.get_u64_field(doc, self.schema.position);
+        let byte_start = self.get_u64_field(doc, self.schema.byte_start);
+        let byte_end = self.get_u64_field(doc, self.schema.byte_end);
+        let sibling_count = self.get_u64_field(doc, self.schema.sibling_count);
 
         // Apply local boost for non-global trees
         let is_global = self.tree_is_global.get(&tree).copied().unwrap_or(false);
@@ -553,11 +579,18 @@ impl Searcher {
 
         SearchResult {
             id,
+            doc_id,
+            parent_id,
             title,
             tree,
             path,
             body,
             breadcrumb,
+            depth,
+            position,
+            byte_start,
+            byte_end,
+            sibling_count,
             score,
             snippet,
             match_ranges,
@@ -570,6 +603,11 @@ impl Searcher {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string()
+    }
+
+    /// Extracts a u64 field value from a document.
+    fn get_u64_field(&self, doc: &TantivyDocument, field: Field) -> u64 {
+        doc.get_first(field).and_then(|v| v.as_u64()).unwrap_or(0)
     }
 
     /// Returns the number of documents in the index.
@@ -757,6 +795,8 @@ mod test {
         let docs = vec![
             ChunkDocument {
                 id: "local:docs/rust.md#intro".to_string(),
+                doc_id: "local:docs/rust.md".to_string(),
+                parent_id: Some("local:docs/rust.md".to_string()),
                 title: "Introduction to Rust".to_string(),
                 tags: vec!["rust".to_string(), "programming".to_string()],
                 path: "docs/rust.md".to_string(),
@@ -765,10 +805,17 @@ mod test {
                 body: "Rust is a systems programming language focused on safety and performance."
                     .to_string(),
                 breadcrumb: "Getting Started › Introduction to Rust".to_string(),
+                depth: 1,
+                position: 1,
+                byte_start: 50,
+                byte_end: 200,
+                sibling_count: 2,
                 mtime: SystemTime::UNIX_EPOCH,
             },
             ChunkDocument {
                 id: "local:docs/async.md#basics".to_string(),
+                doc_id: "local:docs/async.md".to_string(),
+                parent_id: Some("local:docs/async.md".to_string()),
                 title: "Async Programming".to_string(),
                 tags: vec!["rust".to_string(), "async".to_string()],
                 path: "docs/async.md".to_string(),
@@ -777,10 +824,17 @@ mod test {
                 body: "Asynchronous programming in Rust uses futures and the async/await syntax."
                     .to_string(),
                 breadcrumb: "Advanced Topics › Async Programming".to_string(),
+                depth: 1,
+                position: 1,
+                byte_start: 30,
+                byte_end: 150,
+                sibling_count: 1,
                 mtime: SystemTime::UNIX_EPOCH,
             },
             ChunkDocument {
                 id: "global:reference/errors.md#handling".to_string(),
+                doc_id: "global:reference/errors.md".to_string(),
+                parent_id: Some("global:reference/errors.md".to_string()),
                 title: "Error Handling".to_string(),
                 tags: vec!["rust".to_string(), "errors".to_string()],
                 path: "reference/errors.md".to_string(),
@@ -792,6 +846,11 @@ mod test {
                 tree: "global".to_string(),
                 body: "Rust error handling uses Result and Option types for safety.".to_string(),
                 breadcrumb: "Reference › Error Handling".to_string(),
+                depth: 1,
+                position: 1,
+                byte_start: 20,
+                byte_end: 100,
+                sibling_count: 3,
                 mtime: SystemTime::UNIX_EPOCH,
             },
         ];
@@ -1109,6 +1168,8 @@ mod test {
         // Create index with "werewolves" in body
         let docs = vec![ChunkDocument {
             id: "local:docs/monsters.md#intro".to_string(),
+            doc_id: "local:docs/monsters.md".to_string(),
+            parent_id: Some("local:docs/monsters.md".to_string()),
             title: "Monster Guide".to_string(),
             tags: vec!["fantasy".to_string()],
             path: "docs/monsters.md".to_string(),
@@ -1116,6 +1177,11 @@ mod test {
             tree: "local".to_string(),
             body: "This guide covers werewolves and vampires.".to_string(),
             breadcrumb: "Bestiary › Monster Guide".to_string(),
+            depth: 1,
+            position: 1,
+            byte_start: 0,
+            byte_end: 50,
+            sibling_count: 1,
             mtime: SystemTime::UNIX_EPOCH,
         }];
 
@@ -1151,6 +1217,8 @@ mod test {
 
         let docs = vec![ChunkDocument {
             id: "local:docs/test.md".to_string(),
+            doc_id: "local:docs/test.md".to_string(),
+            parent_id: None,
             title: "Test".to_string(),
             tags: vec![],
             path: "docs/test.md".to_string(),
@@ -1158,6 +1226,11 @@ mod test {
             tree: "local".to_string(),
             body: "The quick brown fox jumps over the lazy dog.".to_string(),
             breadcrumb: "Test".to_string(),
+            depth: 0,
+            position: 0,
+            byte_start: 0,
+            byte_end: 100,
+            sibling_count: 1,
             mtime: SystemTime::UNIX_EPOCH,
         }];
 
@@ -1193,6 +1266,8 @@ mod test {
 
         let docs = vec![ChunkDocument {
             id: "local:docs/test.md".to_string(),
+            doc_id: "local:docs/test.md".to_string(),
+            parent_id: None,
             title: "Test".to_string(),
             tags: vec![],
             path: "docs/test.md".to_string(),
@@ -1200,6 +1275,11 @@ mod test {
             tree: "local".to_string(),
             body: "The quick brown fox jumps over the lazy dog.".to_string(),
             breadcrumb: "Test".to_string(),
+            depth: 0,
+            position: 0,
+            byte_start: 0,
+            byte_end: 100,
+            sibling_count: 1,
             mtime: SystemTime::UNIX_EPOCH,
         }];
 
@@ -1228,5 +1308,130 @@ mod test {
             !results[0].match_ranges.is_empty(),
             "Should have match ranges for actual terms"
         );
+    }
+
+    #[test]
+    fn hierarchical_fields_stored_and_retrieved() {
+        let temp = TempDir::new().unwrap();
+
+        // Create a document node and a heading node
+        let docs = vec![
+            ChunkDocument {
+                id: "local:docs/guide.md".to_string(),
+                doc_id: "local:docs/guide.md".to_string(),
+                parent_id: None, // Document node has no parent
+                title: "Guide".to_string(),
+                tags: vec![],
+                path: "docs/guide.md".to_string(),
+                path_components: vec!["docs".to_string(), "guide".to_string(), "md".to_string()],
+                tree: "local".to_string(),
+                body: "This is the preamble content.".to_string(),
+                breadcrumb: "> Guide".to_string(),
+                depth: 0, // Document node
+                position: 0,
+                byte_start: 0,
+                byte_end: 30,
+                sibling_count: 1,
+                mtime: SystemTime::UNIX_EPOCH,
+            },
+            ChunkDocument {
+                id: "local:docs/guide.md#section-one".to_string(),
+                doc_id: "local:docs/guide.md".to_string(),
+                parent_id: Some("local:docs/guide.md".to_string()),
+                title: "Section One".to_string(),
+                tags: vec![],
+                path: "docs/guide.md".to_string(),
+                path_components: vec!["docs".to_string(), "guide".to_string(), "md".to_string()],
+                tree: "local".to_string(),
+                body: "Section one unique content here.".to_string(),
+                breadcrumb: "> Guide › Section One".to_string(),
+                depth: 1, // h1 heading
+                position: 1,
+                byte_start: 30,
+                byte_end: 100,
+                sibling_count: 2,
+                mtime: SystemTime::UNIX_EPOCH,
+            },
+        ];
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        // Search for "preamble" - should find document node
+        let results = searcher.search("preamble", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        let doc_result = &results[0];
+        assert_eq!(doc_result.id, "local:docs/guide.md");
+        assert_eq!(doc_result.doc_id, "local:docs/guide.md");
+        assert!(doc_result.parent_id.is_none());
+        assert_eq!(doc_result.depth, 0);
+        assert_eq!(doc_result.position, 0);
+        assert_eq!(doc_result.byte_start, 0);
+        assert_eq!(doc_result.byte_end, 30);
+        assert_eq!(doc_result.sibling_count, 1);
+
+        // Search for "section unique" - should find heading node
+        let results = searcher.search("section unique", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        let heading_result = &results[0];
+        assert_eq!(heading_result.id, "local:docs/guide.md#section-one");
+        assert_eq!(heading_result.doc_id, "local:docs/guide.md");
+        assert_eq!(
+            heading_result.parent_id,
+            Some("local:docs/guide.md".to_string())
+        );
+        assert_eq!(heading_result.depth, 1);
+        assert_eq!(heading_result.position, 1);
+        assert_eq!(heading_result.byte_start, 30);
+        assert_eq!(heading_result.byte_end, 100);
+        assert_eq!(heading_result.sibling_count, 2);
+    }
+
+    #[test]
+    fn get_by_id_returns_hierarchical_fields() {
+        let temp = TempDir::new().unwrap();
+
+        let doc = ChunkDocument {
+            id: "local:test.md#intro".to_string(),
+            doc_id: "local:test.md".to_string(),
+            parent_id: Some("local:test.md".to_string()),
+            title: "Introduction".to_string(),
+            tags: vec![],
+            path: "test.md".to_string(),
+            path_components: vec!["test".to_string(), "md".to_string()],
+            tree: "local".to_string(),
+            body: "Intro content.".to_string(),
+            breadcrumb: "> Test › Introduction".to_string(),
+            depth: 1,
+            position: 1,
+            byte_start: 10,
+            byte_end: 50,
+            sibling_count: 3,
+            mtime: SystemTime::UNIX_EPOCH,
+        };
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        writer.add_document(&doc).unwrap();
+        writer.commit().unwrap();
+
+        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        let result = searcher
+            .get_by_id("local:test.md#intro")
+            .unwrap()
+            .expect("should find document");
+
+        assert_eq!(result.doc_id, "local:test.md");
+        assert_eq!(result.parent_id, Some("local:test.md".to_string()));
+        assert_eq!(result.depth, 1);
+        assert_eq!(result.position, 1);
+        assert_eq!(result.byte_start, 10);
+        assert_eq!(result.byte_end, 50);
+        assert_eq!(result.sibling_count, 3);
     }
 }

@@ -74,6 +74,11 @@ impl IndexWriter {
         let mut tantivy_doc = TantivyDocument::new();
 
         tantivy_doc.add_text(self.schema.id, &doc.id);
+        tantivy_doc.add_text(self.schema.doc_id, &doc.doc_id);
+        tantivy_doc.add_text(
+            self.schema.parent_id,
+            doc.parent_id.as_deref().unwrap_or(""),
+        );
         tantivy_doc.add_text(self.schema.title, &doc.title);
 
         // Add tags as a single concatenated string (each tag will be tokenized)
@@ -89,6 +94,13 @@ impl IndexWriter {
         tantivy_doc.add_text(self.schema.tree, &doc.tree);
         tantivy_doc.add_text(self.schema.body, &doc.body);
         tantivy_doc.add_text(self.schema.breadcrumb, &doc.breadcrumb);
+
+        // Hierarchical metadata
+        tantivy_doc.add_u64(self.schema.depth, doc.depth as u64);
+        tantivy_doc.add_u64(self.schema.position, doc.position as u64);
+        tantivy_doc.add_u64(self.schema.byte_start, doc.byte_start as u64);
+        tantivy_doc.add_u64(self.schema.byte_end, doc.byte_end as u64);
+        tantivy_doc.add_u64(self.schema.sibling_count, doc.sibling_count as u64);
 
         // Convert SystemTime to Tantivy DateTime
         let datetime = DateTime::from_timestamp_secs(
@@ -176,6 +188,8 @@ mod test {
     fn make_test_chunk_doc() -> ChunkDocument {
         ChunkDocument {
             id: "local:docs/test.md#intro".to_string(),
+            doc_id: "local:docs/test.md".to_string(),
+            parent_id: Some("local:docs/test.md".to_string()),
             title: "Introduction".to_string(),
             tags: vec!["rust".to_string(), "tutorial".to_string()],
             path: "docs/test.md".to_string(),
@@ -183,6 +197,11 @@ mod test {
             tree: "local".to_string(),
             body: "This is the introduction.".to_string(),
             breadcrumb: "Test Document › Introduction".to_string(),
+            depth: 1,
+            position: 1,
+            byte_start: 50,
+            byte_end: 150,
+            sibling_count: 2,
             mtime: SystemTime::UNIX_EPOCH,
         }
     }
@@ -218,6 +237,8 @@ mod test {
         let docs = vec![
             ChunkDocument {
                 id: "local:a.md#one".to_string(),
+                doc_id: "local:a.md".to_string(),
+                parent_id: Some("local:a.md".to_string()),
                 title: "One".to_string(),
                 tags: vec![],
                 path: "a.md".to_string(),
@@ -225,10 +246,17 @@ mod test {
                 tree: "local".to_string(),
                 body: "First".to_string(),
                 breadcrumb: "A › One".to_string(),
+                depth: 1,
+                position: 1,
+                byte_start: 0,
+                byte_end: 50,
+                sibling_count: 1,
                 mtime: SystemTime::UNIX_EPOCH,
             },
             ChunkDocument {
                 id: "local:b.md#two".to_string(),
+                doc_id: "local:b.md".to_string(),
+                parent_id: Some("local:b.md".to_string()),
                 title: "Two".to_string(),
                 tags: vec![],
                 path: "b.md".to_string(),
@@ -236,6 +264,11 @@ mod test {
                 tree: "local".to_string(),
                 body: "Second".to_string(),
                 breadcrumb: "B › Two".to_string(),
+                depth: 1,
+                position: 1,
+                byte_start: 0,
+                byte_end: 60,
+                sibling_count: 1,
                 mtime: SystemTime::UNIX_EPOCH,
             },
         ];
