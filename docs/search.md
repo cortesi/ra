@@ -387,174 +387,50 @@ so memory pressure scales with concurrent readers rather than index size.
 
 ---
 
-# Next Steps
+## Hierarchical Aggregation
 
-This section describes planned improvements to search and chunking.
+ra implements a three-phase search algorithm that automatically aggregates
+sibling matches into their parent sections when appropriate. This provides
+unified context instead of fragmenting related content.
 
+For the authoritative specification of the chunking and aggregation algorithms,
+see [docs/chunking.md](chunking.md).
 
-## Hierarchical Chunk Merging
+### Three-Phase Search Algorithm
 
-Currently, chunks are flat—each is an independent search result. When multiple
-chunks from the same document section match, we return them separately. This
-fragments context that should be unified.
+1. **Phase 1 (Query)**: Retrieve candidates from the index up to `candidate_limit`
+2. **Phase 2 (Elbow)**: Apply relevance cutoff using score ratio detection
+3. **Phase 3 (Aggregate)**: Merge sibling matches into parent nodes
 
-### The Problem
+### Aggregation Behavior
 
-Consider a document structured as:
+When multiple sibling chunks match a query and their count exceeds the
+aggregation threshold (default: 50% of siblings), they are merged into their
+parent node. This cascades up the hierarchy.
 
-```markdown
-# Guide
-## Error Handling          <- h2 chunk
-### Result Type            <- h3 (child of Error Handling)
-### Option Type            <- h3 (child of Error Handling)
-## Logging                 <- h2 chunk
+**Example**: If a document has:
+```
+# Error Handling
+## Result Type      <- matches "error"
+## Option Type      <- matches "error"
 ```
 
-If chunked at h2, searching for "error" returns "Error Handling" as one chunk.
-But if chunked at h3, searching for "error" might match both "Result Type" and
-"Option Type" separately, when what we really want is to return the entire
-"Error Handling" section.
+Both h2 sections match, meeting the threshold (2/2 = 100%), so they aggregate
+into the "Error Handling" parent section.
 
-Similarly, if the filename is `error-handling.md` and we search for "error",
-we may want to return the entire file rather than individual chunks.
+### CLI Parameters
 
-### Design: Chunk Hierarchy
+Control the search algorithm via CLI flags:
 
-Model chunks as a tree rather than a flat list. Each chunk knows its parent,
-and we can merge child chunks into their parent when appropriate.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--candidate-limit` | 100 | Max candidates from Phase 1 |
+| `--cutoff-ratio` | 0.5 | Score drop threshold for Phase 2 |
+| `--aggregation-threshold` | 0.5 | Sibling ratio for Phase 3 |
+| `--no-aggregation` | false | Disable hierarchical aggregation |
 
-#### New Index Fields
+### Aggregated Results Display
 
-Add these fields to the schema:
-
-| Field | Type | Purpose |
-|-------|------|---------|
-| `doc_id` | STRING | Document identifier (`tree:path`) |
-| `parent_id` | STRING | Parent chunk ID (empty for top-level) |
-| `depth` | u64 | Nesting depth (0 = document, 1 = h1, 2 = h2, ...) |
-| `position` | u64 | Ordering within document (0, 1, 2, ...) |
-
-The `doc_id` field enables efficient "all chunks from document X" queries.
-The `parent_id` enables walking up the hierarchy.
-The `depth` and `position` fields enable reconstruction of document structure.
-
-#### Hierarchy Construction
-
-During chunking, track the full hierarchy:
-
-```rust
-struct ChunkNode {
-    chunk: Chunk,
-    parent_id: Option<String>,
-    depth: u32,
-    position: u32,
-    children: Vec<String>,  // child chunk IDs
-}
-```
-
-For a document chunked at h3:
-- Preamble: depth=0, parent=None
-- h1 sections: depth=1, parent=preamble (or None)
-- h2 sections: depth=2, parent=containing h1
-- h3 chunks: depth=3, parent=containing h2
-
-#### Merge Algorithm
-
-After search returns raw chunk matches, apply hierarchical merging:
-
-```
-1. Group matches by doc_id
-2. For each document with multiple matches:
-   a. Build the chunk tree from parent_id relationships
-   b. Walk up from each matching chunk
-   c. If a parent chunk contains N matching children where N >= threshold:
-      - Replace the N children with the parent
-      - Score the parent as max(child scores) + bonus
-   d. Recurse up the tree (merged parents may themselves merge)
-3. Return merged results
-```
-
-**Merge threshold**: A parent absorbs children when:
-- 2+ children match the same query, OR
-- A child match + parent title/path match the query
-
-**Score combination**: When merging, the parent's score is:
-```
-merged_score = max(child_scores) * (1 + 0.1 * num_children)
-```
-
-This rewards broader matches while preserving relative ranking.
-
-#### Example
-
-Query: `error`
-
-Raw matches:
-- `docs:guide.md#result-type` (score: 2.1)
-- `docs:guide.md#option-type` (score: 1.8)
-- `docs:api.md#error-codes` (score: 3.2)
-
-Hierarchy for guide.md:
-```
-guide.md#preamble (depth=0)
-└── guide.md#error-handling (depth=1, title matches "error")
-    ├── guide.md#result-type (depth=2, matched)
-    └── guide.md#option-type (depth=2, matched)
-```
-
-Merge decision:
-- Two siblings match under `#error-handling`
-- Parent title also matches query
-- Merge: return `#error-handling` instead of both children
-
-Final results:
-- `docs:guide.md#error-handling` (score: 2.1 * 1.2 = 2.52)
-- `docs:api.md#error-codes` (score: 3.2)
-
-#### Document-Level Merging
-
-The same logic applies at the document level. If:
-- The filename matches the query (`error-handling.md` for query `error`), AND
-- Multiple chunks from that file match
-
-Then consider returning the entire document as a single result.
-
-Implementation: add a synthetic "document chunk" at depth=0 that represents
-the full file. Its body is the concatenation of all chunks (or the raw file
-content). When path/filename match is strong and child matches are numerous,
-merge to document level.
-
-#### Configurable Behavior
-
-Add settings to control merging:
-
-```toml
-[search]
-merge_threshold = 2          # min children to trigger merge
-merge_bonus = 0.1            # score bonus per merged child
-max_merge_depth = 2          # don't merge above this depth (0 = allow doc-level)
-```
-
-#### Backward Compatibility
-
-The new fields are additions—existing indexes can be rebuilt with `ra update`.
-The merge algorithm runs post-search, so it's transparent to the underlying
-Tantivy queries.
-
-### Implementation Phases
-
-**Phase 1: Index Schema Changes**
-- Add `doc_id`, `parent_id`, `depth`, `position` fields
-- Update chunker to emit hierarchy metadata
-- Update indexer to store new fields
-- Bump schema version (triggers rebuild)
-
-**Phase 2: Merge Algorithm**
-- Implement post-search merge pass
-- Add configuration options
-- Handle edge cases (single-chunk docs, deep nesting)
-
-**Phase 3: Refinement**
-- Tune merge thresholds based on real usage
-- Consider snippet generation for merged results
-- Optimize performance for large result sets
+Aggregated results show `[aggregated: N matches]` in the header and list
+constituent chunk IDs. The parent's body content is displayed with references
+to which child chunks matched.

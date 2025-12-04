@@ -8,10 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pulldown_cmark::HeadingLevel;
-
 use crate::{
-    Document, DocumentError, Frontmatter, build_chunk_tree, extract_headings_old, node::Node,
+    Document, DocumentError, Frontmatter, build_chunk_tree, extract_headings, node::Node,
     parse_frontmatter, tree::ChunkTree,
 };
 
@@ -116,9 +114,9 @@ fn determine_title(frontmatter: &Frontmatter, content: &str, path: &Path) -> Str
         return title.clone();
     }
 
-    // 2. Try first h1 heading (using the old chunker's extract_headings)
-    let headings = extract_headings_old(content);
-    if let Some(h1) = headings.iter().find(|h| h.level == HeadingLevel::H1) {
+    // 2. Try first h1 heading
+    let headings = extract_headings(content);
+    if let Some(h1) = headings.iter().find(|h| h.level == 1) {
         return h1.text.clone();
     }
 

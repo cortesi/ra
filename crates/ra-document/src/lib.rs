@@ -10,7 +10,6 @@
 #![warn(missing_docs)]
 
 pub mod build;
-mod chunker;
 mod error;
 mod frontmatter;
 pub mod node;
@@ -21,10 +20,6 @@ pub mod tree;
 use std::path::PathBuf;
 
 pub use build::{HeadingInfo, build_chunk_tree, extract_headings};
-pub use chunker::{
-    ChunkData, Heading, chunk_markdown, determine_chunk_level,
-    extract_headings as extract_headings_old,
-};
 pub use error::DocumentError;
 pub use frontmatter::{Frontmatter, parse_frontmatter};
 pub use parse::{ParseResult, parse_file, parse_markdown, parse_text};
