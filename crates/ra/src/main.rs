@@ -148,6 +148,10 @@ EXAMPLES:
         /// Sibling ratio threshold for aggregation (Phase 3)
         #[arg(long, default_value = "0.5")]
         aggregation_threshold: f32,
+
+        /// Show verbose output (aggregation details, constituent matches)
+        #[arg(short = 'v', long)]
+        verbose: bool,
     },
 
     /// Get relevant context for files being worked on
@@ -297,6 +301,7 @@ fn main() -> ExitCode {
             candidate_limit,
             cutoff_ratio,
             aggregation_threshold,
+            verbose,
         } => {
             // If no limit specified, use a very high max_results so elbow detection
             // is the only cutoff. Otherwise use the specified limit.
@@ -308,7 +313,7 @@ fn main() -> ExitCode {
                 aggregation_threshold,
                 disable_aggregation: no_aggregation,
             };
-            return cmd_search(&queries, &params, list, matches, json, explain);
+            return cmd_search(&queries, &params, list, matches, json, explain, verbose);
         }
         Commands::Context {
             files,
@@ -591,6 +596,7 @@ fn cmd_search(
     matches: bool,
     json: bool,
     explain: bool,
+    verbose: bool,
 ) -> ExitCode {
     // Handle --explain mode: parse and display AST without executing search
     if explain {
@@ -686,7 +692,7 @@ fn cmd_search(
     };
 
     // Output results
-    output_aggregated_results(&results, &combined_query, list, matches, json)
+    output_aggregated_results(&results, &combined_query, list, matches, json, verbose)
 }
 
 /// Outputs aggregated search results in various formats.
@@ -696,6 +702,7 @@ fn output_aggregated_results(
     list: bool,
     matches: bool,
     json: bool,
+    verbose: bool,
 ) -> ExitCode {
     if json {
         let json_output = JsonSearchOutput {
@@ -740,7 +747,7 @@ fn output_aggregated_results(
             println!("{}", dim("No results found."));
         } else {
             for result in results {
-                print!("{}", format_aggregated_result_list(result));
+                print!("{}", format_aggregated_result_list(result, verbose));
             }
         }
         println!();
@@ -750,7 +757,7 @@ fn output_aggregated_results(
             println!("{}", dim("No results found."));
         } else {
             for result in results {
-                print!("{}", format_aggregated_result_matches(result));
+                print!("{}", format_aggregated_result_matches(result, verbose));
             }
         }
     } else {
@@ -759,7 +766,7 @@ fn output_aggregated_results(
             println!("{}", dim("No results found."));
         } else {
             for result in results {
-                print!("{}", format_aggregated_result_full(result));
+                print!("{}", format_aggregated_result_full(result, verbose));
                 println!();
             }
         }
@@ -769,10 +776,10 @@ fn output_aggregated_results(
 }
 
 /// Formats an aggregated search result for full content output.
-fn format_aggregated_result_full(result: &AggregatedSearchResult) -> String {
+fn format_aggregated_result_full(result: &AggregatedSearchResult, verbose: bool) -> String {
     let mut output = String::new();
 
-    if result.is_aggregated() {
+    if verbose && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
@@ -782,21 +789,22 @@ fn format_aggregated_result_full(result: &AggregatedSearchResult) -> String {
     } else {
         output.push_str(&format!("─── {} ───\n", header(result.id())));
     }
-    output.push_str(&format!("{}\n\n", breadcrumb(result.breadcrumb())));
+    output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
 
     // Format body with content styling
     // For aggregated results, we show the parent body, not all constituent bodies
     let body = result.body();
-    output.push_str(&format_body(body, &[]));
-
-    if !body.ends_with('\n') {
+    let body_trimmed = body.trim();
+    if !body_trimmed.is_empty() {
+        output.push('\n');
+        output.push_str(&format_body(body_trimmed, &[]));
         output.push('\n');
     }
 
-    // Show constituents for aggregated results
-    if let Some(constituents) = result.constituents() {
+    // Show constituents for aggregated results (only in verbose mode)
+    if verbose && let Some(constituents) = result.constituents() {
         output.push_str(&format!(
-            "\n{}\n",
+            "{}\n",
             dim(&format!("─ Constituent matches ({}) ─", constituents.len()))
         ));
         for constituent in constituents {
@@ -813,10 +821,10 @@ fn format_aggregated_result_full(result: &AggregatedSearchResult) -> String {
 }
 
 /// Formats an aggregated search result for list mode output.
-fn format_aggregated_result_list(result: &AggregatedSearchResult) -> String {
+fn format_aggregated_result_list(result: &AggregatedSearchResult, verbose: bool) -> String {
     let mut output = String::new();
 
-    if result.is_aggregated() {
+    if verbose && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
@@ -833,15 +841,31 @@ fn format_aggregated_result_list(result: &AggregatedSearchResult) -> String {
     let stats = format!("{} chars, score {:.2}", content_size, result.score());
     output.push_str(&format!("{}\n", dim(&stats)));
 
+    // Show constituents for aggregated results (only in verbose mode)
+    if verbose && let Some(constituents) = result.constituents() {
+        output.push_str(&format!(
+            "{}\n",
+            dim(&format!("─ Constituent matches ({}) ─", constituents.len()))
+        ));
+        for constituent in constituents {
+            output.push_str(&format!(
+                "  {} {} {}\n",
+                dim("•"),
+                constituent.id,
+                dim(&format!("(score: {:.2})", constituent.score))
+            ));
+        }
+    }
+
     output.push('\n');
     output
 }
 
 /// Formats an aggregated search result showing only lines that contain matches.
-fn format_aggregated_result_matches(result: &AggregatedSearchResult) -> String {
+fn format_aggregated_result_matches(result: &AggregatedSearchResult, verbose: bool) -> String {
     let mut output = String::new();
 
-    if result.is_aggregated() {
+    if verbose && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
@@ -853,21 +877,27 @@ fn format_aggregated_result_matches(result: &AggregatedSearchResult) -> String {
     }
     output.push_str(&format!("{}\n\n", breadcrumb(result.breadcrumb())));
 
-    // For aggregated results, show constituent highlights
-    if let Some(constituents) = result.constituents() {
-        for constituent in constituents {
-            if !constituent.match_ranges.is_empty() {
-                output.push_str(&format!("{}\n", dim(&format!("• {}", constituent.id))));
-                let formatted =
-                    extract_matching_lines(&constituent.body, &constituent.match_ranges);
-                output.push_str(&formatted);
-                output.push('\n');
+    // For aggregated results, show constituent highlights (only in verbose mode)
+    if verbose {
+        if let Some(constituents) = result.constituents() {
+            for constituent in constituents {
+                if !constituent.match_ranges.is_empty() {
+                    output.push_str(&format!("{}\n", dim(&format!("• {}", constituent.id))));
+                    let formatted =
+                        extract_matching_lines(&constituent.body, &constituent.match_ranges);
+                    output.push_str(&formatted);
+                    output.push('\n');
+                }
             }
+        } else {
+            // Single result - show its own body with no match highlighting
+            // (match_ranges would need to be on the result type)
+            output.push_str(&dim("   (match details not available)\n"));
         }
     } else {
-        // Single result - show its own body with no match highlighting
-        // (match_ranges would need to be on the result type)
-        output.push_str(&dim("   (match details not available)\n"));
+        // Non-verbose mode: for aggregated results show nothing special,
+        // for single results show basic match info if available
+        output.push_str(&dim("   (use -v for match details)\n"));
     }
 
     output.push('\n');
