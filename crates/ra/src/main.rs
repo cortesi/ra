@@ -854,7 +854,23 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
 
 /// Implements the `ra init` command.
 fn cmd_init(global: bool, force: bool) -> ExitCode {
-    let config_path = if global {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Determine if we're in the home directory
+    let is_home_dir = global_config_path()
+        .and_then(|p| p.parent().map(|h| h == cwd))
+        .unwrap_or(false);
+
+    // Use global template if --global flag or if we're in the home directory
+    let use_global = global || is_home_dir;
+
+    let config_path = if use_global {
         match global_config_path() {
             Some(path) => path,
             None => {
@@ -863,13 +879,6 @@ fn cmd_init(global: bool, force: bool) -> ExitCode {
             }
         }
     } else {
-        let cwd = match env::current_dir() {
-            Ok(cwd) => cwd,
-            Err(e) => {
-                eprintln!("error: could not determine current directory: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
         cwd.join(CONFIG_FILENAME)
     };
 
@@ -884,7 +893,7 @@ fn cmd_init(global: bool, force: bool) -> ExitCode {
     }
 
     // Write the config file (commented out as an example)
-    let template = if global {
+    let template = if use_global {
         global_template()
     } else {
         local_template()
@@ -898,7 +907,7 @@ fn cmd_init(global: bool, force: bool) -> ExitCode {
     println!("Created {}", config_path.display());
 
     // For local configs, try to add .ra/ to .gitignore
-    if !global && let Err(e) = update_gitignore(&config_path) {
+    if !use_global && let Err(e) = update_gitignore(&config_path) {
         eprintln!("warning: could not update .gitignore: {e}");
     }
 
