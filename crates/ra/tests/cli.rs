@@ -675,6 +675,127 @@ path = "./docs"
             .stderr(predicate::str::contains("unknown field"))
             .stderr(predicate::str::contains("hint"));
     }
+
+    #[test]
+    fn negation_excludes_results() {
+        let dir = setup_indexed_dir();
+
+        // Search for programming but exclude python (as single query string)
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "programming -python"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Rust"))
+            .stdout(predicate::str::is_match("Python").unwrap().not());
+    }
+
+    #[test]
+    fn or_finds_either_term() {
+        let dir = setup_indexed_dir();
+
+        // Search for rust OR python - should find both
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "--json", "rust OR python"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let results = json["queries"][0]["results"].as_array().unwrap();
+        assert!(
+            results.len() >= 2,
+            "Expected at least 2 results for OR query"
+        );
+    }
+
+    #[test]
+    fn grouping_with_or() {
+        let dir = setup_indexed_dir();
+
+        // (rust OR python) should find both
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "(rust OR python)"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Rust").or(predicate::str::contains("Python")));
+    }
+
+    #[test]
+    fn field_specific_title_search() {
+        let dir = setup_indexed_dir();
+
+        // title:rust should find only the Rust document
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "title:rust"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Rust Programming"));
+    }
+
+    #[test]
+    fn tree_filter() {
+        let dir = setup_indexed_dir();
+
+        // tree:docs should work (it's the only tree) - as single query string
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "tree:docs programming"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Programming"));
+
+        // tree:nonexistent should find nothing - as single query string
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "tree:nonexistent programming"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("No results found"));
+    }
+
+    #[test]
+    fn phrase_search() {
+        let dir = setup_indexed_dir();
+
+        // Exact phrase should match
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "\"systems programming\""])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Rust"));
+    }
+
+    #[test]
+    fn complex_query() {
+        let dir = setup_indexed_dir();
+
+        // Complex query combining multiple operators (as single query string)
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "title:(rust OR python) -dynamic"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Rust"));
+    }
+
+    #[test]
+    fn explain_shows_ast() {
+        let dir = setup_indexed_dir();
+
+        // --explain should show the parsed AST
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "--explain", "rust OR golang"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Parsed AST"))
+            .stdout(predicate::str::contains("Or"));
+    }
 }
 
 mod context {

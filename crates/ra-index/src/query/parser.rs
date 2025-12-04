@@ -291,6 +291,8 @@ pub fn parse(input: &str) -> Result<Option<QueryExpr>, ParseError> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
 
     fn term(s: &str) -> QueryExpr {
@@ -589,6 +591,38 @@ mod tests {
                 phrase(&["error", "handling"]),
                 phrase(&["exception", "handling"])
             ]))
+        );
+    }
+
+    #[test]
+    fn performance_many_queries() {
+        // Verify parsing is fast enough for practical use
+        let queries = [
+            "rust",
+            "rust async await",
+            "\"error handling\"",
+            "-deprecated",
+            "rust OR golang OR python",
+            "(a b) OR (c d)",
+            "title:guide (rust OR golang) -deprecated",
+            "tree:docs path:api/handlers",
+            "title:(rust OR golang) -deprecated body:\"error handling\"",
+            "((a OR b) c) OR ((d OR e) f) -g",
+        ];
+
+        let start = Instant::now();
+        for _ in 0..1000 {
+            for query in &queries {
+                let _ = parse(query).unwrap();
+            }
+        }
+        let elapsed = start.elapsed();
+
+        // 10,000 parses should complete in well under 1 second
+        assert!(
+            elapsed.as_millis() < 1000,
+            "Parsing 10,000 queries took {:?}, expected < 1s",
+            elapsed
         );
     }
 }

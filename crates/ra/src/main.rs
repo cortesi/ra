@@ -85,6 +85,29 @@ fn print_hierarchical_help() {
 /// Supported `ra` subcommands.
 enum Commands {
     /// Search and output matching chunks
+    #[command(after_help = "\
+QUERY SYNTAX:
+  term              Term must appear
+  term1 term2       Both terms (implicit AND)
+  \"phrase\"          Exact phrase match
+  -term             Term must NOT appear
+  term1 OR term2    Either term
+  (expr)            Grouping
+
+FIELD QUERIES:
+  title:term        Search in titles only
+  body:term         Search in body text only
+  tags:term         Search in tags only
+  path:term         Search in file paths only
+  tree:name         Filter to specific tree
+
+EXAMPLES:
+  ra search rust async
+  ra search '\"error handling\"'
+  ra search 'rust -deprecated'
+  ra search 'rust OR golang'
+  ra search 'title:guide (rust OR golang)'
+  ra search 'tree:docs authentication'")]
     Search {
         /// Search queries
         #[arg(required = true)]

@@ -133,16 +133,104 @@ allowing searches for "api" to match files in the api directory.
 
 ### Query Syntax
 
-Agents provide simple search terms:
+ra supports a rich query syntax with boolean operators, grouping, negation, and
+field-specific searches.
 
-| Input | Interpretation |
-|-------|----------------|
-| `error handling` | Both terms must appear (AND) |
-| `"error handling"` | Exact phrase |
-| `"error handling" logging` | Phrase AND term |
+#### Basic Operators
 
-Multiple quoted strings perform multi-topic search—each phrase is searched
-separately, results are merged with deduplication.
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `term` | Term must appear | `rust` |
+| `term1 term2` | Both terms must appear (implicit AND) | `rust async` |
+| `"phrase"` | Exact phrase match | `"error handling"` |
+| `-term` | Term must NOT appear | `-deprecated` |
+| `term1 OR term2` | Either term (case-insensitive) | `rust OR golang` |
+| `(expr)` | Grouping | `(rust OR golang) async` |
+
+#### Field-Specific Queries
+
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `title:term` | Search only in titles | `title:guide` |
+| `body:term` | Search only in body text | `body:configuration` |
+| `tags:term` | Search only in tags | `tags:tutorial` |
+| `path:term` | Search only in file paths | `path:api` |
+| `tree:name` | Filter to specific tree | `tree:docs` |
+
+Field queries support all operators:
+- `title:"getting started"` — phrase in title
+- `title:(rust OR golang)` — either term in title
+- `-title:deprecated` — title must NOT contain term
+
+#### Operator Precedence
+
+From highest to lowest:
+1. Quoted phrases: `"..."`
+2. Field prefixes: `field:`
+3. Negation: `-`
+4. Grouping: `(...)`
+5. OR (explicit keyword)
+6. AND (implicit, between adjacent terms)
+
+#### Examples
+
+```
+rust async                      # rust AND async
+"error handling"                # exact phrase
+rust -deprecated                # rust but NOT deprecated
+rust OR golang                  # either language
+(rust async) OR (go goroutine)  # grouped alternatives
+title:guide rust                # "guide" in title AND "rust" anywhere
+tree:docs authentication        # search only in "docs" tree
+title:(api OR sdk) -internal    # api or sdk in title, excluding internal
+```
+
+#### Shell Escaping
+
+When using ra from the command line, be aware of shell interpretation:
+
+```bash
+# Quotes need escaping or outer quotes
+ra search '"error handling"'           # single quotes protect double quotes
+ra search "\"error handling\""         # escaped double quotes
+
+# Parentheses need quoting
+ra search '(rust OR golang) async'     # single quotes protect parens
+ra search "(rust OR golang) async"     # double quotes also work
+
+# OR is safe (no shell meaning)
+ra search rust OR golang               # works without quotes
+
+# Negation is safe (not at line start)
+ra search rust -deprecated             # works without quotes
+```
+
+#### Debugging Queries
+
+Use `--explain` to see how ra parses your query:
+
+```bash
+$ ra search --explain 'title:guide (rust OR golang)'
+Query AST: And([Field { name: "title", expr: Term("guide") }, Or([Term("rust"), Term("golang")])])
+```
+
+#### Error Messages
+
+ra provides helpful error messages for invalid queries:
+
+```
+$ ra search 'title:'
+Error: expected term, phrase, or group after 'title:'
+
+$ ra search '(rust async'
+Error: expected closing parenthesis
+
+$ ra search '"unclosed phrase'
+Error: unclosed quote starting at position 0
+
+$ ra search 'foo:bar'
+Error: unknown field 'foo'. Valid fields: title, body, tags, path, tree
+```
 
 ### Query Construction
 
@@ -176,6 +264,9 @@ single-character edits (insertions, deletions, substitutions, transpositions).
 - "foz" matches "fox" (substitution)
 - "hadle" matches "handle" (missing letter)
 - "recieve" matches "receive" (transposition)
+
+Fuzzy matching applies to regular terms. Phrases require exact word matches
+(though each word in the phrase is still stemmed).
 
 Configure via `search.fuzzy_distance` (0 disables fuzzy matching).
 
@@ -299,72 +390,6 @@ so memory pressure scales with concurrent readers rather than index size.
 # Next Steps
 
 This section describes planned improvements to search and chunking.
-
-
-## Extended Query Syntax
-
-The current query syntax is minimal: bare terms are AND'd, quoted strings are
-phrases. We need to expose more of Tantivy's query capabilities.
-
-### Proposed Syntax
-
-| Syntax | Meaning | Example |
-|--------|---------|---------|
-| `term` | Term must appear | `rust` |
-| `"phrase"` | Exact phrase | `"error handling"` |
-| `-term` | Term must NOT appear | `-deprecated` |
-| `term1 OR term2` | Either term | `rust OR golang` |
-| `(a b) OR (c d)` | Grouping | `(rust async) OR (go goroutine)` |
-| `field:term` | Field-specific | `title:guide` |
-| `tree:name` | Filter by tree | `tree:docs` |
-| `path:prefix` | Filter by path | `path:api/` |
-
-### Operator Precedence
-
-From highest to lowest:
-1. Quoted phrases: `"..."`
-2. Field prefixes: `field:`
-3. Negation: `-`
-4. Grouping: `(...)`
-5. OR (explicit)
-6. AND (implicit, between adjacent terms)
-
-**Examples:**
-
-```
-rust -deprecated                    # rust AND NOT deprecated
-rust OR golang                      # rust OR golang
-"error handling" -legacy            # phrase AND NOT legacy
-title:guide rust                    # title contains "guide" AND body contains "rust"
-tree:local authentication           # only search "local" tree
-(rust async) OR (go goroutine)      # grouped alternatives
-```
-
-### Implementation
-
-The query parser will produce an AST:
-
-```rust
-enum QueryExpr {
-    Term(String),
-    Phrase(Vec<String>),
-    Not(Box<QueryExpr>),
-    And(Vec<QueryExpr>),
-    Or(Vec<QueryExpr>),
-    Field { field: String, expr: Box<QueryExpr> },
-}
-```
-
-This maps directly to Tantivy's query types:
-- `Term` / `Phrase` → existing logic
-- `Not` → `BooleanQuery` with `Occur::MustNot`
-- `And` → `BooleanQuery` with `Occur::Must`
-- `Or` → `BooleanQuery` with `Occur::Should` (with minimum_should_match=1)
-- `Field` → query on specific field only (no multi-field expansion)
-
-Special field handlers:
-- `tree:` → filter using the STRING-indexed tree field
-- `path:` → prefix query on path field
 
 
 ## Hierarchical Chunk Merging
@@ -524,18 +549,12 @@ Tantivy queries.
 - Update indexer to store new fields
 - Bump schema version (triggers rebuild)
 
-**Phase 2: Query Syntax**
-- Implement extended parser with NOT, OR, grouping
-- Add field-specific query support
-- Add `tree:` and `path:` filters
-- Update CLI and MCP tool schemas
-
-**Phase 3: Merge Algorithm**
+**Phase 2: Merge Algorithm**
 - Implement post-search merge pass
 - Add configuration options
 - Handle edge cases (single-chunk docs, deep nesting)
 
-**Phase 4: Refinement**
+**Phase 3: Refinement**
 - Tune merge thresholds based on real usage
 - Consider snippet generation for merged results
 - Optimize performance for large result sets
