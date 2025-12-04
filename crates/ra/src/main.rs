@@ -113,9 +113,9 @@ EXAMPLES:
         #[arg(required = true)]
         queries: Vec<String>,
 
-        /// Results per query
-        #[arg(short = 'n', long, default_value = "5")]
-        limit: usize,
+        /// Hard limit on number of results (default: no limit, use elbow detection)
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
 
         /// Output titles and snippets only
         #[arg(long)]
@@ -298,10 +298,13 @@ fn main() -> ExitCode {
             cutoff_ratio,
             aggregation_threshold,
         } => {
+            // If no limit specified, use a very high max_results so elbow detection
+            // is the only cutoff. Otherwise use the specified limit.
+            let max_results = limit.unwrap_or(usize::MAX);
             let params = SearchParams {
                 candidate_limit,
                 cutoff_ratio,
-                max_results: limit,
+                max_results,
                 aggregation_threshold,
                 disable_aggregation: no_aggregation,
             };

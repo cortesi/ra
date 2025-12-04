@@ -109,8 +109,9 @@ separately.
 
 2. **Empty body**
    - A body is considered empty if it contains only whitespace.
-   - Nodes with empty bodies are still part of the tree structure but are not
-     emitted as chunks to the index.
+   - Nodes with empty bodies are still indexed, ensuring their titles and
+     paths remain searchable. This allows finding documents and sections
+     by name even when they contain only sub-sections with no direct content.
 
 3. **Leaves**
    - A **leaf** is any node with no children.

@@ -145,16 +145,21 @@ impl ChunkTree {
     ///
     /// This produces `TreeChunk` structs ready for indexing, including
     /// body text extraction and breadcrumb generation.
+    ///
+    /// All nodes are extracted, including those with empty bodies. This ensures
+    /// that document and section titles are searchable even when they have no
+    /// direct content (only child sections).
     pub fn extract_chunks(&self, doc_title: &str) -> Vec<TreeChunk> {
-        self.iter_chunks()
+        self.iter_preorder()
             .map(|node| {
                 let breadcrumb = self.build_breadcrumb(node, doc_title);
+                let body = self.body(node);
                 TreeChunk {
                     id: node.id.clone(),
                     doc_id: node.doc_id.clone(),
                     parent_id: node.parent_id.clone(),
                     title: node.title.clone(),
-                    body: self.body(node).to_string(),
+                    body: body.to_string(),
                     breadcrumb,
                     depth: node.depth,
                     position: node.position,
