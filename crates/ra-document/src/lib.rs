@@ -9,11 +9,14 @@
 
 #![warn(missing_docs)]
 
+pub mod build;
 mod chunker;
 mod error;
 mod frontmatter;
+pub mod node;
 mod parse;
 mod slug;
+pub mod tree;
 
 use std::path::PathBuf;
 
