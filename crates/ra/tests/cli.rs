@@ -412,3 +412,309 @@ path = "./docs"
             .stdout(predicate::str::contains("Indexed 1 files"));
     }
 }
+
+mod search {
+    use super::*;
+
+    fn setup_indexed_dir() -> tempfile::TempDir {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+
+        // Create test files with searchable content
+        fs::write(
+            docs.join("rust.md"),
+            "# Rust Programming\n\nRust is a systems programming language focused on safety.",
+        )
+        .unwrap();
+        fs::write(
+            docs.join("python.md"),
+            "# Python Programming\n\nPython is a dynamic scripting language.",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        // Index the content
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        dir
+    }
+
+    #[test]
+    fn fails_without_trees() {
+        let dir = temp_dir();
+        fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
+
+        ra().current_dir(dir.path())
+            .args(["search", "test"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("no trees defined"));
+    }
+
+    #[test]
+    fn finds_matching_documents() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["search", "rust"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Rust Programming"));
+    }
+
+    #[test]
+    fn returns_no_results_message() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["search", "nonexistent"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("No results found"));
+    }
+
+    #[test]
+    fn supports_multiple_queries() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["search", "rust", "python"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Rust"))
+            .stdout(predicate::str::contains("Python"));
+    }
+
+    #[test]
+    fn list_mode_shows_titles() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["search", "--list", "rust"])
+            .assert()
+            .success()
+            // Path is relative to tree root, not including tree path
+            .stdout(predicate::str::contains("docs:rust.md"));
+    }
+
+    #[test]
+    fn json_output_format() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["search", "--json", "rust"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("\"queries\""))
+            .stdout(predicate::str::contains("\"id\""))
+            .stdout(predicate::str::contains("\"title\""));
+    }
+
+    #[test]
+    fn respects_limit() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+
+        // Create many files with "test" content
+        for i in 0..10 {
+            fs::write(
+                docs.join(format!("file{i}.md")),
+                format!("# Test File {i}\n\nThis is test content number {i}."),
+            )
+            .unwrap();
+        }
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        // With limit of 3, should only show 3 results in JSON
+        let output = ra()
+            .current_dir(dir.path())
+            .args(["search", "-n", "3", "--json", "test"])
+            .assert()
+            .success();
+
+        // Parse JSON and check results count
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let results = json["queries"][0]["results"].as_array().unwrap();
+        assert!(
+            results.len() <= 3,
+            "Expected at most 3 results, found {}",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn triggers_auto_index_when_missing() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+        fs::write(docs.join("test.md"), "# Test\n\nContent here.").unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        // Don't call update first - search should auto-index
+        ra().current_dir(dir.path())
+            .args(["search", "test"])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("Index needs rebuild"));
+    }
+}
+
+mod get {
+    use super::*;
+
+    fn setup_indexed_dir() -> tempfile::TempDir {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+
+        // Create a file large enough to trigger chunking (> 2000 chars with multiple h1s)
+        // Each section needs substantial content
+        let content = format!(
+            r#"# Getting Started
+
+This is the introduction to the guide. {}
+
+# Installation
+
+How to install the software. {}
+
+# Configuration
+
+How to configure things. {}
+"#,
+            "x".repeat(800),
+            "y".repeat(800),
+            "z".repeat(800)
+        );
+
+        fs::write(docs.join("guide.md"), content).unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        // Index the content
+        ra().current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        dir
+    }
+
+    #[test]
+    fn fails_with_invalid_id_format() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["get", "invalid-no-colon"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("invalid ID format"));
+    }
+
+    #[test]
+    fn fails_when_not_found() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["get", "docs:nonexistent.md#intro"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("not found"));
+    }
+
+    #[test]
+    fn retrieves_chunk_by_id() {
+        let dir = setup_indexed_dir();
+
+        // The path is relative to the tree root (not including the tree's path)
+        ra().current_dir(dir.path())
+            .args(["get", "docs:guide.md#installation"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Installation"));
+    }
+
+    #[test]
+    fn full_document_returns_all_chunks() {
+        let dir = setup_indexed_dir();
+
+        let output = ra()
+            .current_dir(dir.path())
+            .args(["get", "--full-document", "docs:guide.md#installation"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        // Should contain all sections
+        assert!(stdout.contains("Getting Started") || stdout.contains("preamble"));
+        assert!(stdout.contains("Installation"));
+        assert!(stdout.contains("Configuration"));
+    }
+
+    #[test]
+    fn json_output_format() {
+        let dir = setup_indexed_dir();
+
+        ra().current_dir(dir.path())
+            .args(["get", "--json", "docs:guide.md#installation"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("\"queries\""))
+            .stdout(predicate::str::contains("\"id\""))
+            .stdout(predicate::str::contains("\"content\""));
+    }
+
+    #[test]
+    fn path_without_slug_returns_document() {
+        let dir = setup_indexed_dir();
+
+        let output = ra()
+            .current_dir(dir.path())
+            .args(["get", "docs:guide.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        // Should return all chunks since no specific slug was given
+        assert!(stdout.contains("Installation"));
+        assert!(stdout.contains("Configuration"));
+    }
+}

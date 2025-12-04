@@ -4,10 +4,8 @@
 # Define knowledge trees - directories containing documents to index.
 # Each tree is a named collection of documents with its own path and patterns.
 
-# [tree.docs]
-# path = "./docs"
-# include = ["**/*.md"]
-# exclude = ["**/drafts/**"]
+[tree.docs]
+path = "./docs"
 
 # [tree.notes]
 # path = "~/notes"

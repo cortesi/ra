@@ -28,6 +28,8 @@ pub struct ChunkDocument {
     pub tree: String,
     /// Chunk body content.
     pub body: String,
+    /// Breadcrumb showing hierarchy path.
+    pub breadcrumb: String,
     /// File modification time.
     pub mtime: SystemTime,
 }
@@ -51,6 +53,7 @@ impl ChunkDocument {
             path_components,
             tree: document.tree.clone(),
             body: chunk.body.clone(),
+            breadcrumb: chunk.breadcrumb.clone(),
             mtime,
         }
     }

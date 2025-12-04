@@ -860,6 +860,8 @@ dependencies = [
  "ra-document",
  "ra-highlight",
  "ra-index",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 

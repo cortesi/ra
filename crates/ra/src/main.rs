@@ -14,7 +14,11 @@ use ra_config::{
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
 use ra_highlight::{Highlighter, dim, header, rule, subheader};
-use ra_index::{IndexStats, Indexer, ProgressReporter};
+use ra_index::{
+    IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher, SilentReporter,
+    detect_index_status, index_directory, open_searcher,
+};
+use serde::Serialize;
 
 #[derive(Parser)]
 #[command(name = "ra")]
@@ -42,6 +46,10 @@ enum Commands {
         /// Output titles and snippets only
         #[arg(long)]
         list: bool,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Get relevant context for files being worked on
@@ -57,8 +65,16 @@ enum Commands {
 
     /// Retrieve a specific chunk or document by ID
     Get {
-        /// Chunk or document ID
+        /// Chunk or document ID (tree:path#slug or tree:path)
         id: String,
+
+        /// Return full document even if ID specifies a chunk
+        #[arg(long)]
+        full_document: bool,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show how ra parses a file
@@ -115,14 +131,19 @@ fn main() -> ExitCode {
             queries,
             limit,
             list,
+            json,
         } => {
-            println!("search: {:?} (limit={}, list={})", queries, limit, list);
+            return cmd_search(&queries, limit, list, json);
         }
         Commands::Context { files, limit } => {
             println!("context: {:?} (limit={})", files, limit);
         }
-        Commands::Get { id } => {
-            println!("get: {}", id);
+        Commands::Get {
+            id,
+            full_document,
+            json,
+        } => {
+            return cmd_get(&id, full_document, json);
         }
         Commands::Inspect { file } => {
             return cmd_inspect(&file);
@@ -149,6 +170,377 @@ fn main() -> ExitCode {
                 "agents (stdout={}, claude={}, gemini={}, all={})",
                 stdout, claude, gemini, all
             );
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+// JSON output structures matching the spec.
+// Internal structs for serialization - documentation via JSON schema.
+
+/// A single search result for JSON output.
+#[derive(Serialize)]
+struct JsonSearchResult {
+    /// Chunk ID.
+    id: String,
+    /// Tree name.
+    tree: String,
+    /// File path within tree.
+    path: String,
+    /// Chunk title.
+    title: String,
+    /// Breadcrumb hierarchy.
+    breadcrumb: String,
+    /// Search relevance score.
+    score: f32,
+    /// Snippet with highlighted terms.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snippet: Option<String>,
+    /// Full chunk content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+}
+
+/// Results for a single query in JSON output.
+#[derive(Serialize)]
+struct JsonQueryResults {
+    /// The search query.
+    query: String,
+    /// Matching results.
+    results: Vec<JsonSearchResult>,
+    /// Number of results.
+    total_matches: usize,
+}
+
+/// Top-level JSON output for search command.
+#[derive(Serialize)]
+struct JsonSearchOutput {
+    /// Results grouped by query.
+    queries: Vec<JsonQueryResults>,
+}
+
+/// Ensures the index is fresh, triggering an update if needed.
+/// Returns the searcher if successful.
+fn ensure_index_fresh(config: &Config) -> Result<Searcher, ExitCode> {
+    let status = detect_index_status(config);
+
+    match status {
+        IndexStatus::Current => {
+            // Index is fresh, open and return
+            match open_searcher(config) {
+                Ok(searcher) => Ok(searcher),
+                Err(e) => {
+                    eprintln!("error: failed to open index: {e}");
+                    Err(ExitCode::FAILURE)
+                }
+            }
+        }
+        IndexStatus::Missing | IndexStatus::ConfigChanged => {
+            // Need full reindex
+            eprintln!("Index needs rebuild, updating...");
+            let indexer = match Indexer::new(config) {
+                Ok(indexer) => indexer,
+                Err(e) => {
+                    eprintln!("error: failed to initialize indexer: {e}");
+                    return Err(ExitCode::FAILURE);
+                }
+            };
+
+            let mut reporter = SilentReporter;
+            if let Err(e) = indexer.full_reindex(&mut reporter) {
+                eprintln!("error: indexing failed: {e}");
+                return Err(ExitCode::FAILURE);
+            }
+
+            match open_searcher(config) {
+                Ok(searcher) => Ok(searcher),
+                Err(e) => {
+                    eprintln!("error: failed to open index: {e}");
+                    Err(ExitCode::FAILURE)
+                }
+            }
+        }
+        IndexStatus::Stale => {
+            // Need incremental update
+            let indexer = match Indexer::new(config) {
+                Ok(indexer) => indexer,
+                Err(e) => {
+                    eprintln!("error: failed to initialize indexer: {e}");
+                    return Err(ExitCode::FAILURE);
+                }
+            };
+
+            let mut reporter = SilentReporter;
+            if let Err(e) = indexer.incremental_update(&mut reporter) {
+                eprintln!("error: indexing failed: {e}");
+                return Err(ExitCode::FAILURE);
+            }
+
+            match open_searcher(config) {
+                Ok(searcher) => Ok(searcher),
+                Err(e) => {
+                    eprintln!("error: failed to open index: {e}");
+                    Err(ExitCode::FAILURE)
+                }
+            }
+        }
+    }
+}
+
+/// Formats a search result for full content output.
+fn format_result_full(result: &SearchResult) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("─── {} ───\n", result.id));
+    output.push_str(&format!("> {}\n\n", result.breadcrumb));
+    output.push_str(&result.body);
+    if !result.body.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+/// Formats a search result for list mode output.
+fn format_result_list(result: &SearchResult) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("{}\n", result.id));
+    output.push_str(&format!("  {}\n", result.title));
+    if let Some(snippet) = &result.snippet {
+        // Convert HTML snippet to plain text with markers
+        let plain_snippet = snippet.replace("<b>", "[").replace("</b>", "]");
+        output.push_str(&format!("  {}\n", plain_snippet));
+    }
+    output
+}
+
+/// Implements the `ra search` command.
+fn cmd_search(queries: &[String], limit: usize, list: bool, json: bool) -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Load configuration
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if config.trees.is_empty() {
+        eprintln!("error: no trees defined in configuration");
+        eprintln!("Run 'ra init' to create a configuration file, then add tree definitions.");
+        return ExitCode::FAILURE;
+    }
+
+    // Ensure index is fresh
+    let mut searcher = match ensure_index_fresh(&config) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    // Execute searches for each query
+    let mut all_results: Vec<(String, Vec<SearchResult>)> = Vec::new();
+
+    for query in queries {
+        let results = match searcher.search(query, limit) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: search failed: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        all_results.push((query.clone(), results));
+    }
+
+    // Output results
+    if json {
+        let json_output = JsonSearchOutput {
+            queries: all_results
+                .iter()
+                .map(|(query, results)| JsonQueryResults {
+                    query: query.clone(),
+                    total_matches: results.len(),
+                    results: results
+                        .iter()
+                        .map(|r| JsonSearchResult {
+                            id: r.id.clone(),
+                            tree: r.tree.clone(),
+                            path: r.path.clone(),
+                            title: r.title.clone(),
+                            breadcrumb: r.breadcrumb.clone(),
+                            score: r.score,
+                            snippet: r.snippet.clone(),
+                            content: if list {
+                                None
+                            } else {
+                                Some(format!("> {}\n\n{}", r.breadcrumb, r.body))
+                            },
+                        })
+                        .collect(),
+                })
+                .collect(),
+        };
+        match serde_json::to_string_pretty(&json_output) {
+            Ok(json_str) => println!("{json_str}"),
+            Err(e) => {
+                eprintln!("error: failed to serialize JSON: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else if list {
+        for (query, results) in &all_results {
+            if queries.len() > 1 {
+                println!("{}", header(&format!("Query: {query}")));
+                println!();
+            }
+            if results.is_empty() {
+                println!("{}", dim("No results found."));
+            } else {
+                for result in results {
+                    print!("{}", format_result_list(result));
+                }
+            }
+            println!();
+        }
+    } else {
+        // Full content mode
+        for (query, results) in &all_results {
+            if queries.len() > 1 {
+                println!("{}", header(&format!("Query: {query}")));
+                println!();
+            }
+            if results.is_empty() {
+                println!("{}", dim("No results found."));
+            } else {
+                for result in results {
+                    print!("{}", format_result_full(result));
+                    println!();
+                }
+            }
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Parses a chunk ID into (tree, path, optional slug).
+fn parse_chunk_id(id: &str) -> Option<(String, String, Option<String>)> {
+    // Format: tree:path#slug or tree:path
+    let colon_pos = id.find(':')?;
+    let tree = id[..colon_pos].to_string();
+    let rest = &id[colon_pos + 1..];
+
+    if let Some(hash_pos) = rest.find('#') {
+        let path = rest[..hash_pos].to_string();
+        let slug = rest[hash_pos + 1..].to_string();
+        Some((tree, path, Some(slug)))
+    } else {
+        Some((tree, rest.to_string(), None))
+    }
+}
+
+/// Implements the `ra get` command.
+fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Load configuration
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if config.trees.is_empty() {
+        eprintln!("error: no trees defined in configuration");
+        return ExitCode::FAILURE;
+    }
+
+    // Parse the ID
+    let Some((tree, path, slug)) = parse_chunk_id(id) else {
+        eprintln!("error: invalid ID format: {id}");
+        eprintln!("Expected format: tree:path#slug or tree:path");
+        return ExitCode::FAILURE;
+    };
+
+    // Ensure index is fresh
+    let searcher = match ensure_index_fresh(&config) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    // Get results
+    let results: Vec<SearchResult> = if full_document || slug.is_none() {
+        // Get all chunks from the document
+        match searcher.get_by_path(&tree, &path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: failed to retrieve document: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        // Get specific chunk by ID
+        match searcher.get_by_id(id) {
+            Ok(Some(r)) => vec![r],
+            Ok(None) => vec![],
+            Err(e) => {
+                eprintln!("error: failed to retrieve chunk: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+
+    if results.is_empty() {
+        eprintln!("error: not found: {id}");
+        return ExitCode::FAILURE;
+    }
+
+    // Output results
+    if json {
+        let json_output = JsonSearchOutput {
+            queries: vec![JsonQueryResults {
+                query: id.to_string(),
+                total_matches: results.len(),
+                results: results
+                    .iter()
+                    .map(|r| JsonSearchResult {
+                        id: r.id.clone(),
+                        tree: r.tree.clone(),
+                        path: r.path.clone(),
+                        title: r.title.clone(),
+                        breadcrumb: r.breadcrumb.clone(),
+                        score: r.score,
+                        snippet: None,
+                        content: Some(format!("> {}\n\n{}", r.breadcrumb, r.body)),
+                    })
+                    .collect(),
+            }],
+        };
+        match serde_json::to_string_pretty(&json_output) {
+            Ok(json_str) => println!("{json_str}"),
+            Err(e) => {
+                eprintln!("error: failed to serialize JSON: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        for result in &results {
+            print!("{}", format_result_full(result));
+            println!();
         }
     }
 
@@ -389,8 +781,15 @@ fn cmd_check() -> ExitCode {
     }
     println!();
 
-    // Report index status (placeholder for now)
-    println!("Index: not yet implemented");
+    // Report index status
+    let index_status = detect_index_status(&config);
+    let index_path = index_directory(&config);
+    print!("Index: {}", index_status.description());
+    if let Some(path) = &index_path {
+        println!(" ({})", path.display());
+    } else {
+        println!();
+    }
     println!();
 
     // Report warnings

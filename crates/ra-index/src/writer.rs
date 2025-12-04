@@ -88,6 +88,7 @@ impl IndexWriter {
 
         tantivy_doc.add_text(self.schema.tree, &doc.tree);
         tantivy_doc.add_text(self.schema.body, &doc.body);
+        tantivy_doc.add_text(self.schema.breadcrumb, &doc.breadcrumb);
 
         // Convert SystemTime to Tantivy DateTime
         let datetime = DateTime::from_timestamp_secs(
@@ -181,6 +182,7 @@ mod test {
             path_components: vec!["docs".to_string(), "test".to_string(), "md".to_string()],
             tree: "local".to_string(),
             body: "This is the introduction.".to_string(),
+            breadcrumb: "Test Document › Introduction".to_string(),
             mtime: SystemTime::UNIX_EPOCH,
         }
     }
@@ -222,6 +224,7 @@ mod test {
                 path_components: vec!["a".to_string(), "md".to_string()],
                 tree: "local".to_string(),
                 body: "First".to_string(),
+                breadcrumb: "A › One".to_string(),
                 mtime: SystemTime::UNIX_EPOCH,
             },
             ChunkDocument {
@@ -232,6 +235,7 @@ mod test {
                 path_components: vec!["b".to_string(), "md".to_string()],
                 tree: "local".to_string(),
                 body: "Second".to_string(),
+                breadcrumb: "B › Two".to_string(),
                 mtime: SystemTime::UNIX_EPOCH,
             },
         ];

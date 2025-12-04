@@ -50,6 +50,8 @@ pub struct IndexSchema {
     pub tree: Field,
     /// Chunk body content.
     pub body: Field,
+    /// Breadcrumb showing hierarchy path.
+    pub breadcrumb: Field,
     /// File modification time.
     pub mtime: Field,
 }
@@ -113,6 +115,9 @@ impl IndexSchema {
             .set_stored();
         let body = builder.add_text_field("body", body_options);
 
+        // Breadcrumb field: stored only (not searched, just for display)
+        let breadcrumb = builder.add_text_field("breadcrumb", STORED);
+
         // Mtime field: date, indexed, fast for filtering/sorting
         let mtime_options = DateOptions::default().set_indexed().set_fast();
         let mtime = builder.add_date_field("mtime", mtime_options);
@@ -128,6 +133,7 @@ impl IndexSchema {
             path_components,
             tree,
             body,
+            breadcrumb,
             mtime,
         }
     }
@@ -163,6 +169,7 @@ mod test {
         assert!(tantivy_schema.get_field("path_components").is_ok());
         assert!(tantivy_schema.get_field("tree").is_ok());
         assert!(tantivy_schema.get_field("body").is_ok());
+        assert!(tantivy_schema.get_field("breadcrumb").is_ok());
         assert!(tantivy_schema.get_field("mtime").is_ok());
     }
 

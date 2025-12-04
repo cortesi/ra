@@ -9,11 +9,11 @@ use std::{
 };
 
 use tantivy::{
-    Index, TantivyDocument,
+    Index, TantivyDocument, Term,
     collector::TopDocs,
     directory::MmapDirectory,
-    query::Query,
-    schema::{Field, Value},
+    query::{AllQuery, Query, TermQuery},
+    schema::{Field, IndexRecordOption, Value},
     snippet::SnippetGenerator,
 };
 
@@ -40,6 +40,8 @@ pub struct SearchResult {
     pub path: String,
     /// Chunk body content.
     pub body: String,
+    /// Breadcrumb showing hierarchy path.
+    pub breadcrumb: String,
     /// Search relevance score (after boosting).
     pub score: f32,
     /// Optional snippet with query terms highlighted.
@@ -232,6 +234,7 @@ impl Searcher {
         let tree = self.get_text_field(doc, self.schema.tree);
         let path = self.get_text_field(doc, self.schema.path);
         let body = self.get_text_field(doc, self.schema.body);
+        let breadcrumb = self.get_text_field(doc, self.schema.breadcrumb);
 
         // Apply local boost for non-global trees
         let is_global = self.tree_is_global.get(&tree).copied().unwrap_or(false);
@@ -253,6 +256,7 @@ impl Searcher {
             tree,
             path,
             body,
+            breadcrumb,
             score,
             snippet,
         }
@@ -273,6 +277,89 @@ impl Searcher {
             .reader()
             .map_err(|e| IndexError::Write(e.to_string()))?;
         Ok(reader.searcher().num_docs())
+    }
+
+    /// Retrieves a chunk by its exact ID.
+    ///
+    /// # Arguments
+    /// * `id` - The chunk ID (e.g., `tree:path#slug` or `tree:path`)
+    ///
+    /// # Returns
+    /// The chunk if found, or None if no match exists.
+    pub fn get_by_id(&self, id: &str) -> Result<Option<SearchResult>, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let searcher = reader.searcher();
+
+        // Build exact term query on ID field (STRING field)
+        let term = Term::from_field_text(self.schema.id, id);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+
+        let top_docs = searcher
+            .search(&query, &TopDocs::with_limit(1))
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        if let Some((score, doc_address)) = top_docs.first() {
+            let doc: TantivyDocument = searcher
+                .doc(*doc_address)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+
+            let result = self.doc_to_result(&doc, *score, &None);
+            Ok(Some(result))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Retrieves all chunks from a document by path.
+    ///
+    /// Uses a prefix query on the ID field since IDs have format `tree:path#slug`.
+    /// This finds all chunks that belong to a specific document.
+    ///
+    /// # Arguments
+    /// * `tree` - The tree name
+    /// * `path` - The file path within the tree
+    ///
+    /// # Returns
+    /// All chunks from the specified document, ordered by ID.
+    pub fn get_by_path(&self, tree: &str, path: &str) -> Result<Vec<SearchResult>, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let searcher = reader.searcher();
+
+        // Build ID prefix: "tree:path" - all chunks from this doc start with this
+        let id_prefix = format!("{tree}:{path}");
+
+        // Collect all documents and filter by ID prefix
+        // (Tantivy's prefix query doesn't work well with STRING fields)
+        let all_docs = searcher
+            .search(&AllQuery, &TopDocs::with_limit(10000))
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let mut results: Vec<SearchResult> = all_docs
+            .into_iter()
+            .filter_map(|(score, doc_address)| {
+                let doc: TantivyDocument = searcher.doc(doc_address).ok()?;
+                let result = self.doc_to_result(&doc, score, &None);
+                // Check if ID starts with our prefix (either exact or with # separator)
+                if result.id == id_prefix || result.id.starts_with(&format!("{id_prefix}#")) {
+                    Some(result)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by ID to get consistent ordering
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+
+        Ok(results)
     }
 }
 
@@ -308,6 +395,7 @@ mod test {
                 tree: "local".to_string(),
                 body: "Rust is a systems programming language focused on safety and performance."
                     .to_string(),
+                breadcrumb: "Getting Started › Introduction to Rust".to_string(),
                 mtime: SystemTime::UNIX_EPOCH,
             },
             ChunkDocument {
@@ -319,6 +407,7 @@ mod test {
                 tree: "local".to_string(),
                 body: "Asynchronous programming in Rust uses futures and the async/await syntax."
                     .to_string(),
+                breadcrumb: "Advanced Topics › Async Programming".to_string(),
                 mtime: SystemTime::UNIX_EPOCH,
             },
             ChunkDocument {
@@ -333,6 +422,7 @@ mod test {
                 ],
                 tree: "global".to_string(),
                 body: "Rust error handling uses Result and Option types for safety.".to_string(),
+                breadcrumb: "Reference › Error Handling".to_string(),
                 mtime: SystemTime::UNIX_EPOCH,
             },
         ];

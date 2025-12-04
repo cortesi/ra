@@ -26,6 +26,7 @@
 //!     path_components: vec!["docs".to_string(), "test".to_string(), "md".to_string()],
 //!     tree: "local".to_string(),
 //!     body: "Content here".to_string(),
+//!     breadcrumb: "Test Doc › Introduction".to_string(),
 //!     mtime: SystemTime::now(),
 //! };
 //! writer.add_document(&doc).unwrap();
