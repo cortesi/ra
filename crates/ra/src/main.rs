@@ -14,7 +14,7 @@ use ra_config::{
     CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, discover_config_files,
     format_path_for_display, global_config_path, global_template, local_template,
 };
-use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
+use ra_document::parse_file;
 use ra_highlight::{
     Highlighter, breadcrumb, dim, error, format_body, header, indent_content, subheader, warning,
 };
@@ -1533,7 +1533,7 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
     };
 
     // Parse the file (using "inspect" as placeholder tree name)
-    let result = match parse_file(path, "inspect", DEFAULT_MIN_CHUNK_SIZE) {
+    let result = match parse_file(path, "inspect") {
         Ok(result) => result,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1553,29 +1553,24 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
         println!("{}", dim(&format!("tags: {}", doc.tags.join(", "))));
     }
 
+    // Extract chunks from the tree
+    let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+
     // Chunking info
-    let chunk_info = match result.chunk_level {
-        Some(level) => format!(
-            "h{} chunking ({}) -> {} chunks",
-            heading_level_to_num(level),
-            result.chunk_reason,
-            doc.chunks.len()
-        ),
-        None => format!(
-            "not chunked ({}) -> {} chunks",
-            result.chunk_reason,
-            doc.chunks.len()
-        ),
-    };
+    let chunk_info = format!(
+        "hierarchical chunking -> {} nodes, {} chunks",
+        doc.chunk_tree.node_count(),
+        chunks.len()
+    );
     println!("{}", dim(&chunk_info));
     println!();
 
     // Display each chunk in search result format
-    for chunk in &doc.chunks {
-        let chunk_label = if chunk.is_preamble {
-            format!("{} (preamble)", chunk.id)
+    for chunk in &chunks {
+        let chunk_label = if chunk.depth == 0 {
+            format!("{} (document)", chunk.id)
         } else {
-            chunk.id.clone()
+            format!("{} (depth {})", chunk.id, chunk.depth)
         };
         println!("--- {} ---", header(&chunk_label));
         println!("{}", breadcrumb(&chunk.breadcrumb));
@@ -1679,18 +1674,6 @@ fn cmd_inspect_ctx(file: &str) -> ExitCode {
     }
 
     ExitCode::SUCCESS
-}
-
-/// Converts HeadingLevel to a number for display.
-fn heading_level_to_num(level: HeadingLevel) -> u8 {
-    match level {
-        HeadingLevel::H1 => 1,
-        HeadingLevel::H2 => 2,
-        HeadingLevel::H3 => 3,
-        HeadingLevel::H4 => 4,
-        HeadingLevel::H5 => 5,
-        HeadingLevel::H6 => 6,
-    }
 }
 
 /// Creates a preview of chunk content, truncating if necessary.

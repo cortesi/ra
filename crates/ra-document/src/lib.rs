@@ -1,9 +1,9 @@
 //! Document parsing and chunking for ra.
 //!
-//! This crate handles parsing markdown and plain text files into chunks suitable for indexing.
-//! It supports:
+//! This crate handles parsing markdown and plain text files into hierarchical chunk trees
+//! suitable for indexing. It supports:
 //! - YAML frontmatter extraction (title, tags)
-//! - Adaptive chunking at heading boundaries
+//! - Hierarchical chunking based on heading structure
 //! - GitHub-compatible slug generation for chunk IDs
 //! - Breadcrumb generation for hierarchy display
 
@@ -20,12 +20,17 @@ pub mod tree;
 
 use std::path::PathBuf;
 
-pub use chunker::{ChunkData, Heading, chunk_markdown, determine_chunk_level, extract_headings};
+pub use build::{HeadingInfo, build_chunk_tree, extract_headings};
+pub use chunker::{
+    ChunkData, Heading, chunk_markdown, determine_chunk_level,
+    extract_headings as extract_headings_old,
+};
 pub use error::DocumentError;
 pub use frontmatter::{Frontmatter, parse_frontmatter};
-pub use parse::{DEFAULT_MIN_CHUNK_SIZE, ParseResult, parse_file, parse_markdown, parse_text};
+pub use parse::{ParseResult, parse_file, parse_markdown, parse_text};
 pub use pulldown_cmark::HeadingLevel;
 pub use slug::Slugifier;
+pub use tree::{ChunkTree, TreeChunk};
 
 /// A parsed document ready for indexing.
 #[derive(Debug, Clone)]
@@ -38,26 +43,8 @@ pub struct Document {
     pub title: String,
     /// Tags from frontmatter.
     pub tags: Vec<String>,
-    /// Chunks extracted from the document.
-    pub chunks: Vec<Chunk>,
-}
-
-/// A chunk of content from a document.
-///
-/// Documents are split at heading boundaries using adaptive chunking.
-/// Each chunk has a unique ID formed from the tree name, file path, and heading slug.
-#[derive(Debug, Clone)]
-pub struct Chunk {
-    /// Unique chunk identifier: `{tree}:{path}#{slug}` or `{tree}:{path}` for text files.
-    pub id: String,
-    /// Chunk title (from heading, frontmatter title for preamble, or filename).
-    pub title: String,
-    /// The chunk content (markdown or plain text).
-    pub body: String,
-    /// Whether this is the preamble (content before first heading at chunk level).
-    pub is_preamble: bool,
-    /// Breadcrumb showing hierarchy path (e.g., "> Doc › Section › Subsection").
-    pub breadcrumb: String,
+    /// The hierarchical chunk tree for this document.
+    pub chunk_tree: ChunkTree,
 }
 
 #[cfg(test)]
@@ -66,42 +53,57 @@ mod tests {
 
     #[test]
     fn test_document_creation() {
+        let path = PathBuf::from("guide.md");
+        let chunk_tree = build_chunk_tree("Some content", "docs", &path, "Getting Started");
         let doc = Document {
-            path: PathBuf::from("guide.md"),
+            path,
             tree: "docs".into(),
             title: "Getting Started".into(),
             tags: vec!["intro".into(), "setup".into()],
-            chunks: vec![],
+            chunk_tree,
         };
         assert_eq!(doc.title, "Getting Started");
         assert_eq!(doc.tags.len(), 2);
     }
 
     #[test]
-    fn test_chunk_creation() {
-        let chunk = Chunk {
+    fn test_tree_chunk_creation() {
+        let chunk = TreeChunk {
             id: "docs:guide.md#installation".into(),
+            doc_id: "docs:guide.md".into(),
+            parent_id: Some("docs:guide.md".into()),
             title: "Installation".into(),
-            body: "## Prerequisites\n\nYou need Rust installed.".into(),
-            is_preamble: false,
+            body: "You need Rust installed.".into(),
             breadcrumb: "> Getting Started › Installation".into(),
+            depth: 1,
+            position: 1,
+            byte_start: 0,
+            byte_end: 100,
+            sibling_count: 1,
         };
-        assert!(!chunk.is_preamble);
         assert!(chunk.id.contains('#'));
         assert!(chunk.breadcrumb.contains('›'));
+        assert_eq!(chunk.depth, 1);
     }
 
     #[test]
-    fn test_preamble_chunk() {
-        let chunk = Chunk {
-            id: "docs:guide.md#preamble".into(),
+    fn test_document_chunk() {
+        let chunk = TreeChunk {
+            id: "docs:guide.md".into(),
+            doc_id: "docs:guide.md".into(),
+            parent_id: None,
             title: "Getting Started".into(),
             body: "This guide helps you get started.".into(),
-            is_preamble: true,
             breadcrumb: "> Getting Started".into(),
+            depth: 0,
+            position: 0,
+            byte_start: 0,
+            byte_end: 50,
+            sibling_count: 1,
         };
-        assert!(chunk.is_preamble);
-        assert!(chunk.id.ends_with("#preamble"));
+        assert!(!chunk.id.contains('#'));
         assert_eq!(chunk.breadcrumb, "> Getting Started");
+        assert_eq!(chunk.depth, 0);
+        assert!(chunk.parent_id.is_none());
     }
 }

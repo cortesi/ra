@@ -1,7 +1,7 @@
 //! High-level document parsing API.
 //!
 //! Provides functions to parse markdown and text files into `Document` structs
-//! with proper chunk IDs, titles, and breadcrumbs.
+//! with hierarchical chunk trees.
 
 use std::{
     fs,
@@ -11,22 +11,17 @@ use std::{
 use pulldown_cmark::HeadingLevel;
 
 use crate::{
-    Chunk, ChunkData, Document, DocumentError, Frontmatter, chunk_markdown, determine_chunk_level,
-    extract_headings, parse_frontmatter,
+    Document, DocumentError, Frontmatter, build_chunk_tree, extract_headings_old, node::Node,
+    parse_frontmatter, tree::ChunkTree,
 };
-
-/// Default minimum chunk size in characters.
-pub const DEFAULT_MIN_CHUNK_SIZE: usize = 2000;
 
 /// Result of parsing a document, including metadata about the parsing process.
 #[derive(Debug, Clone)]
 pub struct ParseResult {
     /// The parsed document.
     pub document: Document,
-    /// The heading level used for chunking, if any.
-    pub chunk_level: Option<HeadingLevel>,
-    /// Why the chunk level was chosen (for debugging/inspection).
-    pub chunk_reason: String,
+    /// Whether the document has any chunks (nodes with body text).
+    pub has_chunks: bool,
 }
 
 /// Parses a markdown string into a document.
@@ -35,94 +30,69 @@ pub struct ParseResult {
 /// * `content` - The markdown content to parse
 /// * `path` - Relative path within the tree (used for chunk IDs)
 /// * `tree` - Name of the tree this document belongs to
-/// * `min_chunk_size` - Minimum document size before chunking is applied
-pub fn parse_markdown(
-    content: &str,
-    path: &Path,
-    tree: &str,
-    min_chunk_size: usize,
-) -> ParseResult {
+pub fn parse_markdown(content: &str, path: &Path, tree: &str) -> ParseResult {
     // Parse frontmatter
-    let (frontmatter, body) = parse_frontmatter(content);
+    let (frontmatter, _body) = parse_frontmatter(content);
     let frontmatter = frontmatter.unwrap_or_default();
 
     // Determine document title
-    let title = determine_title(&frontmatter, body, path);
+    let title = determine_title(&frontmatter, content, path);
 
-    // Determine chunk level and reason
-    let (chunk_level, chunk_reason) = determine_chunk_level_with_reason(body, min_chunk_size);
-
-    // Chunk the document
-    let chunk_data = chunk_markdown(body, &title, min_chunk_size);
-
-    // Convert ChunkData to Chunk with proper IDs
-    let path_str = path.to_string_lossy();
-    let chunks = chunk_data
-        .into_iter()
-        .map(|cd| chunk_data_to_chunk(cd, tree, &path_str))
-        .collect();
+    // Build the hierarchical chunk tree
+    // Note: We use the full content (including frontmatter) as the spec says
+    // frontmatter bytes are included in the document node's body
+    let chunk_tree = build_chunk_tree(content, tree, path, &title);
+    let has_chunks = chunk_tree.chunk_count() > 0;
 
     let document = Document {
         path: path.to_path_buf(),
         tree: tree.to_string(),
         title,
         tags: frontmatter.tags,
-        chunks,
+        chunk_tree,
     };
 
     ParseResult {
         document,
-        chunk_level,
-        chunk_reason,
+        has_chunks,
     }
 }
 
 /// Parses a plain text file into a document.
 ///
-/// Text files are never chunked - they become a single chunk with no fragment ID.
+/// Text files produce a single document node with the entire file as body.
+/// The title is derived from the filename.
 pub fn parse_text(content: &str, path: &Path, tree: &str) -> ParseResult {
     let title = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".to_string());
 
-    let path_str = path.to_string_lossy();
-    let chunk_id = format!("{tree}:{path_str}");
-    let breadcrumb = format!("> {title}");
-
-    let chunk = Chunk {
-        id: chunk_id,
-        title: title.clone(),
-        body: content.to_string(),
-        is_preamble: true,
-        breadcrumb,
-    };
+    // Create a document node for the entire file
+    let root = Node::document(tree, path, title.clone(), content.len());
+    let chunk_tree = ChunkTree::new(root, content.to_string());
+    let has_chunks = chunk_tree.chunk_count() > 0;
 
     let document = Document {
         path: path.to_path_buf(),
         tree: tree.to_string(),
         title,
         tags: vec![],
-        chunks: vec![chunk],
+        chunk_tree,
     };
 
     ParseResult {
         document,
-        chunk_level: None,
-        chunk_reason: "text files are not chunked".to_string(),
+        has_chunks,
     }
 }
 
 /// Parses a file from disk, detecting type by extension.
 ///
 /// Supported extensions:
-/// - `.md`, `.markdown` - parsed as markdown with chunking
-/// - `.txt` - parsed as plain text (no chunking)
-pub fn parse_file(
-    path: &Path,
-    tree: &str,
-    min_chunk_size: usize,
-) -> Result<ParseResult, DocumentError> {
+/// - `.md`, `.markdown` - parsed as markdown with hierarchical chunking
+/// - `.txt` - parsed as plain text (single document node)
+pub fn parse_file(path: &Path, tree: &str) -> Result<ParseResult, DocumentError> {
     let content = fs::read_to_string(path).map_err(|source| DocumentError::ReadFile {
         path: path.to_path_buf(),
         source,
@@ -131,12 +101,7 @@ pub fn parse_file(
     let relative_path = path.file_name().map(PathBuf::from).unwrap_or_default();
 
     match path.extension().and_then(|e| e.to_str()) {
-        Some("md" | "markdown") => Ok(parse_markdown(
-            &content,
-            &relative_path,
-            tree,
-            min_chunk_size,
-        )),
+        Some("md" | "markdown") => Ok(parse_markdown(&content, &relative_path, tree)),
         Some("txt") => Ok(parse_text(&content, &relative_path, tree)),
         _ => Err(DocumentError::UnsupportedFileType {
             path: path.to_path_buf(),
@@ -151,8 +116,8 @@ fn determine_title(frontmatter: &Frontmatter, content: &str, path: &Path) -> Str
         return title.clone();
     }
 
-    // 2. Try first h1 heading
-    let headings = extract_headings(content);
+    // 2. Try first h1 heading (using the old chunker's extract_headings)
+    let headings = extract_headings_old(content);
     if let Some(h1) = headings.iter().find(|h| h.level == HeadingLevel::H1) {
         return h1.text.clone();
     }
@@ -161,66 +126,6 @@ fn determine_title(frontmatter: &Frontmatter, content: &str, path: &Path) -> Str
     path.file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled".to_string())
-}
-
-/// Determines chunk level with a human-readable reason.
-fn determine_chunk_level_with_reason(
-    content: &str,
-    min_chunk_size: usize,
-) -> (Option<HeadingLevel>, String) {
-    if content.len() < min_chunk_size {
-        return (
-            None,
-            format!(
-                "document too small ({} chars < {} min)",
-                content.len(),
-                min_chunk_size
-            ),
-        );
-    }
-
-    let level = determine_chunk_level(content, min_chunk_size);
-
-    match level {
-        Some(HeadingLevel::H1) => (
-            Some(HeadingLevel::H1),
-            "multiple h1 headings found".to_string(),
-        ),
-        Some(HeadingLevel::H2) => (
-            Some(HeadingLevel::H2),
-            "multiple h2 headings found".to_string(),
-        ),
-        Some(HeadingLevel::H3) => (
-            Some(HeadingLevel::H3),
-            "multiple h3 headings found".to_string(),
-        ),
-        Some(HeadingLevel::H4) => (
-            Some(HeadingLevel::H4),
-            "multiple h4 headings found".to_string(),
-        ),
-        Some(HeadingLevel::H5) => (
-            Some(HeadingLevel::H5),
-            "multiple h5 headings found".to_string(),
-        ),
-        Some(HeadingLevel::H6) => (
-            Some(HeadingLevel::H6),
-            "multiple h6 headings found".to_string(),
-        ),
-        None => (None, "no heading level has 2+ headings".to_string()),
-    }
-}
-
-/// Converts internal ChunkData to public Chunk with proper ID.
-fn chunk_data_to_chunk(data: ChunkData, tree: &str, path: &str) -> Chunk {
-    let id = format!("{tree}:{path}#{}", data.slug);
-
-    Chunk {
-        id,
-        title: data.title,
-        body: data.body,
-        is_preamble: data.is_preamble,
-        breadcrumb: data.breadcrumb,
-    }
 }
 
 #[cfg(test)]
@@ -242,27 +147,34 @@ Welcome to the guide.
 
 Let's begin."#;
 
-        let result = parse_markdown(content, Path::new("guide.md"), "docs", 0);
+        let result = parse_markdown(content, Path::new("guide.md"), "docs");
 
         assert_eq!(result.document.title, "My Guide");
         assert_eq!(result.document.tags, vec!["rust", "tutorial"]);
         assert_eq!(result.document.tree, "docs");
-        assert_eq!(result.chunk_level, Some(HeadingLevel::H1));
-        assert_eq!(result.document.chunks.len(), 2);
+        assert!(result.has_chunks);
 
-        // Check chunk IDs
-        assert_eq!(result.document.chunks[0].id, "docs:guide.md#introduction");
-        assert_eq!(
-            result.document.chunks[1].id,
-            "docs:guide.md#getting-started"
-        );
+        // Extract chunks from the tree
+        let chunks = result
+            .document
+            .chunk_tree
+            .extract_chunks(&result.document.title);
+
+        // Should have preamble (frontmatter included) + 2 headings
+        // Note: frontmatter is included in preamble per spec
+        assert!(chunks.len() >= 2);
+
+        // Check that heading chunks exist
+        let ids: Vec<&str> = chunks.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.iter().any(|id| id.contains("#introduction")));
+        assert!(ids.iter().any(|id| id.contains("#getting-started")));
     }
 
     #[test]
     fn test_parse_markdown_title_from_h1() {
         let content = "# My Document\n\nSome content.\n\n# Another Section\n\nMore content.";
 
-        let result = parse_markdown(content, Path::new("doc.md"), "notes", 0);
+        let result = parse_markdown(content, Path::new("doc.md"), "notes");
 
         assert_eq!(result.document.title, "My Document");
     }
@@ -271,32 +183,29 @@ Let's begin."#;
     fn test_parse_markdown_title_from_filename() {
         let content = "Just some content without any headings.";
 
-        let result = parse_markdown(content, Path::new("readme.md"), "docs", 0);
+        let result = parse_markdown(content, Path::new("readme.md"), "docs");
 
         assert_eq!(result.document.title, "readme");
-    }
-
-    #[test]
-    fn test_parse_markdown_small_document() {
-        let content = "# First\n\n# Second";
-
-        let result = parse_markdown(content, Path::new("small.md"), "docs", 10000);
-
-        assert_eq!(result.chunk_level, None);
-        assert!(result.chunk_reason.contains("too small"));
-        assert_eq!(result.document.chunks.len(), 1);
-        assert!(result.document.chunks[0].is_preamble);
     }
 
     #[test]
     fn test_parse_markdown_preamble_chunk() {
         let content = "Intro text.\n\n# Section 1\n\nContent.\n\n# Section 2\n\nMore.";
 
-        let result = parse_markdown(content, Path::new("doc.md"), "docs", 0);
+        let result = parse_markdown(content, Path::new("doc.md"), "docs");
 
-        assert_eq!(result.document.chunks.len(), 3);
-        assert!(result.document.chunks[0].is_preamble);
-        assert_eq!(result.document.chunks[0].id, "docs:doc.md#preamble");
+        let chunks = result
+            .document
+            .chunk_tree
+            .extract_chunks(&result.document.title);
+
+        // Should have preamble (document node) + 2 sections
+        assert_eq!(chunks.len(), 3);
+
+        // First chunk should be the document node (preamble)
+        assert_eq!(chunks[0].id, "docs:doc.md");
+        assert_eq!(chunks[0].depth, 0);
+        assert!(chunks[0].body.contains("Intro text"));
     }
 
     #[test]
@@ -306,31 +215,49 @@ Let's begin."#;
         let result = parse_text(content, Path::new("notes.txt"), "docs");
 
         assert_eq!(result.document.title, "notes");
-        assert_eq!(result.chunk_level, None);
-        assert_eq!(result.document.chunks.len(), 1);
-        assert_eq!(result.document.chunks[0].id, "docs:notes.txt");
-        assert!(!result.document.chunks[0].id.contains('#'));
+        assert!(result.has_chunks);
+
+        let chunks = result
+            .document
+            .chunk_tree
+            .extract_chunks(&result.document.title);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].id, "docs:notes.txt");
+        assert!(!chunks[0].id.contains('#'));
+        assert_eq!(chunks[0].depth, 0);
     }
 
     #[test]
     fn test_chunk_ids_format() {
         let content = "# Intro\n\nText.\n\n# Setup\n\nMore text.";
 
-        let result = parse_markdown(content, Path::new("guide.md"), "my-tree", 0);
+        let result = parse_markdown(content, Path::new("guide.md"), "my-tree");
 
-        for chunk in &result.document.chunks {
+        let chunks = result
+            .document
+            .chunk_tree
+            .extract_chunks(&result.document.title);
+
+        // Heading chunks should have fragment IDs
+        for chunk in chunks.iter().filter(|c| c.depth > 0) {
             assert!(chunk.id.starts_with("my-tree:guide.md#"));
         }
     }
 
     #[test]
     fn test_breadcrumbs_included() {
-        let content = "# Parent\n\n## Child 1\n\nContent.\n\n## Child 2\n\nMore.";
+        let content =
+            "# Parent\n\nParent content.\n\n## Child 1\n\nContent.\n\n## Child 2\n\nMore.";
 
-        let result = parse_markdown(content, Path::new("doc.md"), "docs", 0);
+        let result = parse_markdown(content, Path::new("doc.md"), "docs");
 
-        // Chunks should have breadcrumbs
-        for chunk in &result.document.chunks {
+        let chunks = result
+            .document
+            .chunk_tree
+            .extract_chunks(&result.document.title);
+
+        // All chunks should have breadcrumbs starting with >
+        for chunk in &chunks {
             assert!(chunk.breadcrumb.starts_with("> "));
         }
     }
@@ -357,5 +284,146 @@ Let's begin."#;
         // Filename is fallback
         let title = determine_title(&fm_no_title, "Just content", Path::new("myfile.md"));
         assert_eq!(title, "myfile");
+    }
+
+    #[test]
+    fn test_empty_document() {
+        let content = "";
+
+        let result = parse_markdown(content, Path::new("empty.md"), "docs");
+
+        // Empty document has no chunks
+        assert!(!result.has_chunks);
+        assert_eq!(result.document.chunk_tree.chunk_count(), 0);
+    }
+
+    #[test]
+    fn test_whitespace_only_document() {
+        let content = "   \n\t\n  ";
+
+        let result = parse_markdown(content, Path::new("whitespace.md"), "docs");
+
+        // Whitespace-only document has no chunks
+        assert!(!result.has_chunks);
+        assert_eq!(result.document.chunk_tree.chunk_count(), 0);
+    }
+
+    #[test]
+    fn test_only_headings_no_content() {
+        // Document with only headings at same level (each has empty span)
+        let content = "# H1\n# H2\n# H3";
+
+        let result = parse_markdown(content, Path::new("headings.md"), "docs");
+
+        // No chunks because all headings have empty spans
+        assert!(!result.has_chunks);
+        assert_eq!(result.document.chunk_tree.chunk_count(), 0);
+    }
+
+    #[test]
+    fn test_empty_text_file() {
+        let content = "";
+
+        let result = parse_text(content, Path::new("empty.txt"), "docs");
+
+        assert!(!result.has_chunks);
+        assert_eq!(result.document.chunk_tree.chunk_count(), 0);
+    }
+
+    #[test]
+    fn test_hierarchical_structure() {
+        let content = r#"Preamble.
+
+# Section 1
+
+Section 1 intro.
+
+## Subsection 1.1
+
+Content 1.1.
+
+## Subsection 1.2
+
+Content 1.2.
+
+# Section 2
+
+Section 2 content.
+"#;
+
+        let result = parse_markdown(content, Path::new("doc.md"), "docs");
+
+        // Tree structure:
+        // Doc (preamble)
+        //   ├── Section 1
+        //   │   ├── Subsection 1.1
+        //   │   └── Subsection 1.2
+        //   └── Section 2
+
+        let tree = &result.document.chunk_tree;
+        assert_eq!(tree.node_count(), 5);
+
+        // Check hierarchy via parent_id
+        // Note: slugs are "subsection-11" because periods are removed from "Subsection 1.1"
+        let s1 = tree.get_node("docs:doc.md#section-1").unwrap();
+        assert_eq!(s1.parent_id, Some("docs:doc.md".to_string()));
+
+        let s11 = tree.get_node("docs:doc.md#subsection-11").unwrap();
+        assert_eq!(s11.parent_id, Some("docs:doc.md#section-1".to_string()));
+
+        let s12 = tree.get_node("docs:doc.md#subsection-12").unwrap();
+        assert_eq!(s12.parent_id, Some("docs:doc.md#section-1".to_string()));
+
+        let s2 = tree.get_node("docs:doc.md#section-2").unwrap();
+        assert_eq!(s2.parent_id, Some("docs:doc.md".to_string()));
+    }
+
+    #[test]
+    fn test_parse_real_docs_chunking() {
+        // Test parsing the actual chunking.md spec file
+        let content = include_str!("../../../docs/chunking.md");
+        let result = parse_markdown(content, Path::new("chunking.md"), "docs");
+
+        assert!(result.has_chunks);
+        assert_eq!(result.document.title, "Chunking Specification");
+
+        // Should have hierarchical structure with multiple sections
+        let chunks = result
+            .document
+            .chunk_tree
+            .extract_chunks(&result.document.title);
+        assert!(chunks.len() >= 5); // Should have at least 5 chunks
+
+        // Check that some expected sections exist
+        let titles: Vec<&str> = chunks.iter().map(|c| c.title.as_str()).collect();
+        assert!(titles.contains(&"Goals"));
+        assert!(titles.contains(&"Terminology"));
+    }
+
+    #[test]
+    fn test_parse_real_docs_search() {
+        // Test parsing the actual search.md file
+        let content = include_str!("../../../docs/search.md");
+        let result = parse_markdown(content, Path::new("search.md"), "docs");
+
+        assert!(result.has_chunks);
+        assert_eq!(result.document.title, "Search and Chunking");
+
+        // Should have chunks
+        let tree = &result.document.chunk_tree;
+        assert!(tree.chunk_count() > 0);
+    }
+
+    #[test]
+    fn test_parse_real_docs_spec() {
+        // Test parsing the actual spec.md file
+        let content = include_str!("../../../docs/spec.md");
+        let result = parse_markdown(content, Path::new("spec.md"), "docs");
+
+        assert!(result.has_chunks);
+
+        // Should have hierarchical structure
+        let tree = &result.document.chunk_tree;
+        assert!(tree.node_count() >= 1);
     }
 }

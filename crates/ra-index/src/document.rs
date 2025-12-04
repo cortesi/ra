@@ -5,7 +5,7 @@
 
 use std::{path::Path, time::SystemTime};
 
-use ra_document::{Chunk, Document};
+use ra_document::{Document, TreeChunk};
 
 /// A chunk ready for indexing, combining chunk data with document metadata.
 ///
@@ -35,13 +35,13 @@ pub struct ChunkDocument {
 }
 
 impl ChunkDocument {
-    /// Creates a `ChunkDocument` from a chunk and its parent document metadata.
+    /// Creates a `ChunkDocument` from a `TreeChunk` and document metadata.
     ///
     /// # Arguments
-    /// * `chunk` - The chunk to index
-    /// * `document` - The parent document containing metadata
+    /// * `chunk` - The tree chunk containing body, title, breadcrumb, etc.
+    /// * `document` - The parent document containing metadata (tags, path, tree)
     /// * `mtime` - File modification time
-    pub fn from_chunk(chunk: &Chunk, document: &Document, mtime: SystemTime) -> Self {
+    pub fn from_tree_chunk(chunk: &TreeChunk, document: &Document, mtime: SystemTime) -> Self {
         let path_str = document.path.to_string_lossy().to_string();
         let path_components = extract_path_components(&document.path);
 
@@ -60,14 +60,17 @@ impl ChunkDocument {
 
     /// Creates all `ChunkDocument`s from a document.
     ///
+    /// Extracts chunks from the document's chunk tree and converts them
+    /// to indexable `ChunkDocument`s.
+    ///
     /// # Arguments
     /// * `document` - The document to index
     /// * `mtime` - File modification time
     pub fn from_document(document: &Document, mtime: SystemTime) -> Vec<Self> {
-        document
-            .chunks
+        let chunks = document.chunk_tree.extract_chunks(&document.title);
+        chunks
             .iter()
-            .map(|chunk| Self::from_chunk(chunk, document, mtime))
+            .map(|chunk| Self::from_tree_chunk(chunk, document, mtime))
             .collect()
     }
 }
@@ -100,45 +103,42 @@ fn extract_path_components(path: &Path) -> Vec<String> {
 mod test {
     use std::path::PathBuf;
 
+    use ra_document::build_chunk_tree;
+
     use super::*;
 
     fn make_test_document() -> Document {
+        let path = PathBuf::from("docs/api/handlers.md");
+        let content = r#"Introduction to API handlers.
+
+# Error Handling
+
+How to handle errors in API handlers."#;
+        let chunk_tree = build_chunk_tree(content, "local", &path, "API Handlers");
+
         Document {
-            path: PathBuf::from("docs/api/handlers.md"),
+            path,
             tree: "local".to_string(),
             title: "API Handlers".to_string(),
             tags: vec!["api".to_string(), "rust".to_string()],
-            chunks: vec![
-                Chunk {
-                    id: "local:docs/api/handlers.md#preamble".to_string(),
-                    title: "API Handlers".to_string(),
-                    body: "Introduction to API handlers.".to_string(),
-                    is_preamble: true,
-                    breadcrumb: "API Handlers".to_string(),
-                },
-                Chunk {
-                    id: "local:docs/api/handlers.md#error-handling".to_string(),
-                    title: "Error Handling".to_string(),
-                    body: "How to handle errors in API handlers.".to_string(),
-                    is_preamble: false,
-                    breadcrumb: "API Handlers › Error Handling".to_string(),
-                },
-            ],
+            chunk_tree,
         }
     }
 
     #[test]
-    fn from_chunk_preserves_data() {
+    fn from_tree_chunk_preserves_data() {
         let doc = make_test_document();
         let mtime = SystemTime::UNIX_EPOCH;
-        let chunk_doc = ChunkDocument::from_chunk(&doc.chunks[0], &doc, mtime);
+        let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+        let chunk_doc = ChunkDocument::from_tree_chunk(&chunks[0], &doc, mtime);
 
-        assert_eq!(chunk_doc.id, "local:docs/api/handlers.md#preamble");
+        // First chunk is the document node (preamble)
+        assert_eq!(chunk_doc.id, "local:docs/api/handlers.md");
         assert_eq!(chunk_doc.title, "API Handlers");
         assert_eq!(chunk_doc.tags, vec!["api", "rust"]);
         assert_eq!(chunk_doc.path, "docs/api/handlers.md");
         assert_eq!(chunk_doc.tree, "local");
-        assert_eq!(chunk_doc.body, "Introduction to API handlers.");
+        assert!(chunk_doc.body.contains("Introduction"));
         assert_eq!(chunk_doc.mtime, SystemTime::UNIX_EPOCH);
     }
 
@@ -149,7 +149,9 @@ mod test {
         let chunk_docs = ChunkDocument::from_document(&doc, mtime);
 
         assert_eq!(chunk_docs.len(), 2);
-        assert_eq!(chunk_docs[0].id, "local:docs/api/handlers.md#preamble");
+        // Document node (preamble)
+        assert_eq!(chunk_docs[0].id, "local:docs/api/handlers.md");
+        // Heading node
         assert_eq!(
             chunk_docs[1].id,
             "local:docs/api/handlers.md#error-handling"

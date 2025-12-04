@@ -258,11 +258,10 @@ impl<'a> Indexer<'a> {
 
         // Determine file type and parse
         let ext = file.abs_path.extension().and_then(|e| e.to_str());
-        let min_chunk_size = self.config.settings.max_chunk_size / 25; // Rough heuristic
 
         let result = match ext {
             Some("md" | "markdown") => {
-                ra_document::parse_markdown(&content, &file.rel_path, &file.tree, min_chunk_size)
+                ra_document::parse_markdown(&content, &file.rel_path, &file.tree)
             }
             Some("txt") => ra_document::parse_text(&content, &file.rel_path, &file.tree),
             Some(ext) => {

@@ -215,4 +215,49 @@ mod tests {
         assert_eq!(slugifier.slugify("Preamble"), "preamble-1");
         assert_eq!(slugifier.slugify("Preamble"), "preamble-2");
     }
+
+    #[test]
+    fn test_emoji_only_heading() {
+        let mut slugifier = Slugifier::new();
+        // Emoji are non-ASCII, so they get removed, leaving "heading" fallback
+        assert_eq!(slugifier.slugify("🚀 🎉 ✨"), "heading");
+    }
+
+    #[test]
+    fn test_emoji_with_text() {
+        let mut slugifier = Slugifier::new();
+        // Emoji removed, text preserved
+        assert_eq!(slugifier.slugify("🚀 Getting Started"), "getting-started");
+    }
+
+    #[test]
+    fn test_inline_code() {
+        let mut slugifier = Slugifier::new();
+        // Backticks are punctuation and get removed
+        assert_eq!(slugifier.slugify("Using `Result<T>`"), "using-resultt");
+    }
+
+    #[test]
+    fn test_inline_code_only() {
+        let mut slugifier = Slugifier::new();
+        // Code with only symbols/punctuation
+        assert_eq!(slugifier.slugify("`<T>`"), "t");
+    }
+
+    #[test]
+    fn test_special_characters() {
+        let mut slugifier = Slugifier::new();
+        assert_eq!(slugifier.slugify("C++ Programming"), "c-programming");
+        assert_eq!(slugifier.slugify("F# Language"), "f-language");
+        assert_eq!(slugifier.slugify(".NET Framework"), "net-framework");
+    }
+
+    #[test]
+    fn test_duplicate_emoji_headings() {
+        let mut slugifier = Slugifier::new();
+        // Multiple emoji-only headings all become "heading", "heading-1", etc.
+        assert_eq!(slugifier.slugify("🎉"), "heading");
+        assert_eq!(slugifier.slugify("✨"), "heading-1");
+        assert_eq!(slugifier.slugify("🚀"), "heading-2");
+    }
 }
