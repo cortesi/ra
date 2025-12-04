@@ -142,62 +142,20 @@ mod status {
     }
 
     #[test]
-    fn succeeds_with_config() {
+    fn succeeds_with_empty_config() {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "").unwrap();
 
+        // Empty config but valid TOML - succeeds but warns about no trees
         ra_with_home(dir.path())
             .current_dir(dir.path())
             .arg("status")
             .assert()
-            .success();
+            .failure(); // Fails due to warnings (no trees defined)
     }
 
     #[test]
-    fn succeeds_with_trees() {
-        let dir = temp_dir();
-        fs::create_dir(dir.path().join("docs")).unwrap();
-        fs::write(
-            dir.path().join(".ra.toml"),
-            "[tree.docs]\npath = \"./docs\"\n",
-        )
-        .unwrap();
-
-        ra_with_home(dir.path())
-            .current_dir(dir.path())
-            .arg("status")
-            .assert()
-            .success();
-    }
-}
-
-mod check {
-    use super::*;
-
-    #[test]
-    fn succeeds_without_config() {
-        let dir = temp_dir();
-        ra_with_home(dir.path())
-            .current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .success();
-    }
-
-    #[test]
-    fn warns_on_empty_trees() {
-        let dir = temp_dir();
-        fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
-
-        ra_with_home(dir.path())
-            .current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .failure();
-    }
-
-    #[test]
-    fn succeeds_with_valid_config() {
+    fn succeeds_with_valid_trees() {
         let dir = temp_dir();
         let docs = dir.path().join("docs");
         fs::create_dir(&docs).unwrap();
@@ -214,9 +172,21 @@ include = ["**/*.md"]
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .arg("check")
+            .arg("status")
             .assert()
             .success();
+    }
+
+    #[test]
+    fn warns_on_empty_trees() {
+        let dir = temp_dir();
+        fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
+
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("status")
+            .assert()
+            .failure();
     }
 
     #[test]
@@ -237,23 +207,7 @@ include = ["**/*.rs"]
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .arg("check")
-            .assert()
-            .failure();
-    }
-
-    #[test]
-    fn warns_on_undefined_tree() {
-        // Note: with the new format, undefined trees in patterns are no longer possible
-        // since patterns are now part of the tree definition itself.
-        // This test now just verifies that an empty config with no trees warns.
-        let dir = temp_dir();
-
-        fs::write(dir.path().join(".ra.toml"), "# config with no trees\n").unwrap();
-
-        ra_with_home(dir.path())
-            .current_dir(dir.path())
-            .arg("check")
+            .arg("status")
             .assert()
             .failure();
     }
@@ -265,7 +219,7 @@ include = ["**/*.rs"]
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .arg("check")
+            .arg("status")
             .assert()
             .failure()
             .stderr(predicate::str::contains("error"));

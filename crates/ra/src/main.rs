@@ -12,10 +12,12 @@ use std::{
 use clap::{Parser, Subcommand};
 use ra_config::{
     CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, discover_config_files,
-    global_config_path, global_template, local_template,
+    format_path_for_display, global_config_path, global_template, local_template,
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
-use ra_highlight::{Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader};
+use ra_highlight::{
+    Highlighter, breadcrumb, dim, error, format_body, header, indent_content, subheader, warning,
+};
 use ra_index::{
     ContextAnalyzer, IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher,
     SilentReporter, detect_index_status, index_directory, is_binary_file, open_searcher,
@@ -108,13 +110,10 @@ enum Commands {
         force: bool,
     },
 
-    /// Validate configuration and diagnose issues
-    Check,
-
     /// Force rebuild of search index
     Update,
 
-    /// Show configuration files and trees
+    /// Show status and validate configuration
     Status,
 
     /// Show effective configuration settings
@@ -195,9 +194,6 @@ fn main() -> ExitCode {
         }
         Commands::Init { global, force } => {
             return cmd_init(global, force);
-        }
-        Commands::Check => {
-            return cmd_check();
         }
         Commands::Update => {
             return cmd_update();
@@ -960,11 +956,16 @@ fn update_gitignore(config_path: &Path) -> io::Result<()> {
 }
 
 /// Implements the `ra status` command.
+///
+/// Shows configuration files, trees, index status, and validates the configuration.
 fn cmd_status() -> ExitCode {
     let cwd = match env::current_dir() {
         Ok(cwd) => cwd,
         Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
+            eprintln!(
+                "{} could not determine current directory: {e}",
+                error("error:")
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -972,19 +973,20 @@ fn cmd_status() -> ExitCode {
     // Discover config files
     let config_files = discover_config_files(&cwd);
 
-    println!("{}", header("Configuration"));
-    println!();
-
     if config_files.is_empty() {
         println!("{}", dim("No configuration files found."));
         println!();
-        println!("Run 'ra init' to create a configuration file.");
+        println!(
+            "Run {} to create a configuration file.",
+            subheader("ra init")
+        );
         return ExitCode::SUCCESS;
     }
 
-    println!("{}", subheader("Config files (highest precedence first):"));
+    println!("{}", subheader("Config files:"));
     for path in &config_files {
-        println!("  {}", path.display());
+        let display_path = format_path_for_display(path, Some(&cwd));
+        println!("   {display_path}");
     }
     println!();
 
@@ -992,41 +994,89 @@ fn cmd_status() -> ExitCode {
     let config = match Config::load(&cwd) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
+            eprintln!("{} {e}", error("error:"));
             return ExitCode::FAILURE;
         }
     };
 
-    // Show trees
+    // Show trees with status
     println!("{}", subheader("Trees:"));
     if config.trees.is_empty() {
-        println!("  {}", dim("(none defined)"));
+        println!("   {}", dim("(none defined)"));
     } else {
         for tree in &config.trees {
             let scope = if tree.is_global { "global" } else { "local" };
-            println!(
-                "  {} {} -> {}",
-                tree.name,
-                dim(&format!("({scope})")),
-                tree.path.display()
-            );
+            // Format path: relative to config_root for local trees, ~ for global
+            let base = if tree.is_global {
+                None
+            } else {
+                config.config_root.as_deref()
+            };
+            let display_path = format_path_for_display(&tree.path, base);
+            if tree.path.exists() {
+                println!(
+                    "   {} {} {}",
+                    tree.name,
+                    dim(&format!("({scope})")),
+                    dim(&format!("-> {display_path}"))
+                );
+            } else {
+                println!(
+                    "   {} {} {} {}",
+                    tree.name,
+                    dim(&format!("({scope})")),
+                    dim(&format!("-> {display_path}")),
+                    warning("[missing]")
+                );
+            }
         }
     }
     println!();
 
     // Show include/exclude patterns per tree
-    println!("{}", subheader("Include patterns:"));
-    for tree in &config.trees {
-        println!("  {}:", dim(&tree.name));
-        for pattern in &tree.include {
-            println!("    + {pattern}");
+    if !config.trees.is_empty() {
+        println!("{}", subheader("Patterns:"));
+        for tree in &config.trees {
+            println!("   {}:", tree.name);
+            for pattern in &tree.include {
+                println!("      + {pattern}");
+            }
+            for pattern in &tree.exclude {
+                println!("      - {pattern}");
+            }
         }
-        for pattern in &tree.exclude {
-            println!("    - {} {}", dim("(exclude)"), pattern);
-        }
+        println!();
     }
 
-    ExitCode::SUCCESS
+    // Show index status
+    let index_status = detect_index_status(&config);
+    let index_path = index_directory(&config);
+    print!("{}\n   {}", subheader("Index:"), index_status.description());
+    if let Some(path) = &index_path {
+        println!(" {}", dim(&format!("({})", path.display())));
+    } else {
+        println!();
+    }
+    println!();
+
+    // Validate configuration and report warnings
+    let warnings = config.validate();
+
+    if warnings.is_empty() {
+        println!("No issues found.");
+        return ExitCode::SUCCESS;
+    }
+
+    println!("{}", subheader(&format!("Warnings ({}):", warnings.len())));
+    for w in &warnings {
+        println!("   {}", warning(&format_warning(w)));
+    }
+    println!();
+
+    // Print hints for common issues
+    print_hints(&warnings);
+
+    ExitCode::FAILURE
 }
 
 /// Implements the `ra config` command.
@@ -1271,111 +1321,17 @@ fn cmd_ls_chunks(long: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Exit codes for `ra check`.
-mod exit_codes {
-    use std::process::ExitCode;
-
-    /// Configuration is valid with no warnings.
-    pub const OK: ExitCode = ExitCode::SUCCESS;
-    /// Configuration has warnings but is usable.
-    pub const WARNINGS: ExitCode = ExitCode::FAILURE;
-    /// Configuration has errors and cannot be used.
-    pub const ERROR: ExitCode = ExitCode::FAILURE;
-}
-
-/// Implements the `ra check` command.
-fn cmd_check() -> ExitCode {
-    let cwd = match env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return exit_codes::ERROR;
-        }
-    };
-
-    // Discover config files
-    let config_files = discover_config_files(&cwd);
-
-    println!("Checking configuration...");
-    println!();
-
-    if config_files.is_empty() {
-        println!("No configuration files found.");
-        println!();
-        println!("Run 'ra init' to create a configuration file.");
-        return exit_codes::OK;
-    }
-
-    println!("Config files:");
-    for path in &config_files {
-        println!("  {}", path.display());
-    }
-    println!();
-
-    // Load configuration
-    let config = match Config::load(&cwd) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return exit_codes::ERROR;
-        }
-    };
-
-    // Validate configuration
-    let warnings = config.validate();
-
-    // Report tree status
-    println!("Trees:");
-    if config.trees.is_empty() {
-        println!("  (none defined)");
-    } else {
-        for tree in &config.trees {
-            let status = if tree.path.exists() { "ok" } else { "missing" };
-            println!("  {} [{}] -> {}", tree.name, status, tree.path.display());
-        }
-    }
-    println!();
-
-    // Report index status
-    let index_status = detect_index_status(&config);
-    let index_path = index_directory(&config);
-    print!("Index: {}", index_status.description());
-    if let Some(path) = &index_path {
-        println!(" ({})", path.display());
-    } else {
-        println!();
-    }
-    println!();
-
-    // Report warnings
-    if warnings.is_empty() {
-        println!("No issues found.");
-        return exit_codes::OK;
-    }
-
-    println!("Warnings ({}):", warnings.len());
-    for warning in &warnings {
-        println!("  - {}", format_warning(warning));
-    }
-    println!();
-
-    // Provide hints for common issues
-    print_hints(&warnings);
-
-    exit_codes::WARNINGS
-}
-
 /// Formats a warning with helpful context.
-fn format_warning(warning: &ConfigWarning) -> String {
-    warning.to_string()
+fn format_warning(w: &ConfigWarning) -> String {
+    w.to_string()
 }
 
 /// Prints hints for resolving common warnings.
 fn print_hints(warnings: &[ConfigWarning]) {
     let mut hints = Vec::new();
 
-    for warning in warnings {
-        match warning {
+    for w in warnings {
+        match w {
             ConfigWarning::NoTreesDefined => {
                 hints.push("Add a [tree.<name>] section to define knowledge trees.");
             }
@@ -1396,9 +1352,9 @@ fn print_hints(warnings: &[ConfigWarning]) {
     hints.dedup();
 
     if !hints.is_empty() {
-        println!("Hints:");
+        println!("{}", subheader("Hints:"));
         for hint in hints {
-            println!("  - {hint}");
+            println!("   {}", dim(hint));
         }
     }
 }
