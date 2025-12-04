@@ -3,6 +3,7 @@
 use std::{
     env, fs,
     io::{self, Write},
+    ops::Range,
     path::Path,
     process::ExitCode,
 };
@@ -46,6 +47,10 @@ enum Commands {
         /// Output titles and snippets only
         #[arg(long)]
         list: bool,
+
+        /// Output only lines containing matches
+        #[arg(long)]
+        matches: bool,
 
         /// Output in JSON format
         #[arg(long)]
@@ -131,9 +136,10 @@ fn main() -> ExitCode {
             queries,
             limit,
             list,
+            matches,
             json,
         } => {
-            return cmd_search(&queries, limit, list, json);
+            return cmd_search(&queries, limit, list, matches, json);
         }
         Commands::Context { files, limit } => {
             println!("context: {:?} (limit={})", files, limit);
@@ -327,8 +333,95 @@ fn format_result_list(result: &SearchResult) -> String {
     output
 }
 
+/// Formats a search result showing only lines that contain matches.
+fn format_result_matches(result: &SearchResult) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("─── {} ───\n", header(&result.id)));
+    output.push_str(&format!("{}\n\n", breadcrumb(&result.breadcrumb)));
+
+    if result.match_ranges.is_empty() {
+        output.push_str(&dim("(no matches)\n"));
+    } else {
+        // Find which lines contain matches and output only those
+        let matching_lines = extract_matching_lines(&result.body, &result.match_ranges);
+        for line in matching_lines {
+            output.push_str(&line);
+            output.push('\n');
+        }
+    }
+
+    output.push('\n');
+    output
+}
+
+/// Extracts lines from text that contain at least one match range, with highlighting.
+fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> Vec<String> {
+    use std::{collections::BTreeSet, iter};
+
+    // Build a set of line numbers that contain matches
+    let mut matching_line_nums: BTreeSet<usize> = BTreeSet::new();
+
+    // Calculate line boundaries
+    let line_starts: Vec<usize> = iter::once(0)
+        .chain(body.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+
+    // For each match range, find which line(s) it overlaps
+    for range in match_ranges {
+        for (line_num, &start) in line_starts.iter().enumerate() {
+            let end = line_starts.get(line_num + 1).copied().unwrap_or(body.len());
+            // Check if this range overlaps with this line
+            if range.start < end && range.end > start {
+                matching_line_nums.insert(line_num);
+            }
+        }
+    }
+
+    // Extract and highlight those lines
+    let mut result = Vec::new();
+    for line_num in matching_line_nums {
+        let line_start = line_starts[line_num];
+        let line_end = line_starts.get(line_num + 1).copied().unwrap_or(body.len());
+
+        // Get the line content (without trailing newline)
+        let line_content = body[line_start..line_end].trim_end_matches('\n');
+
+        // Adjust match ranges to be relative to this line and filter to those in this line
+        let line_ranges: Vec<Range<usize>> = match_ranges
+            .iter()
+            .filter_map(|r| {
+                if r.start < line_end && r.end > line_start {
+                    // Clamp range to line boundaries and make relative
+                    let start = r.start.max(line_start) - line_start;
+                    let end = r.end.min(line_end) - line_start;
+                    // Don't exceed the trimmed content length
+                    let trimmed_len = line_content.len();
+                    if start < trimmed_len {
+                        Some(start..end.min(trimmed_len))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Highlight the line
+        let highlighted = if line_ranges.is_empty() {
+            line_content.to_string()
+        } else {
+            highlight_matches(line_content, &line_ranges)
+        };
+
+        result.push(highlighted);
+    }
+
+    result
+}
+
 /// Implements the `ra search` command.
-fn cmd_search(queries: &[String], limit: usize, list: bool, json: bool) -> ExitCode {
+fn cmd_search(queries: &[String], limit: usize, list: bool, matches: bool, json: bool) -> ExitCode {
     let cwd = match env::current_dir() {
         Ok(cwd) => cwd,
         Err(e) => {
@@ -358,19 +451,19 @@ fn cmd_search(queries: &[String], limit: usize, list: bool, json: bool) -> ExitC
         Err(code) => return code,
     };
 
-    // Execute searches for each query
-    let mut all_results: Vec<(String, Vec<SearchResult>)> = Vec::new();
+    // Execute search - use search_multi for multiple queries to deduplicate and merge highlights
+    let query_refs: Vec<&str> = queries.iter().map(|s| s.as_str()).collect();
+    let results = match searcher.search_multi(&query_refs, limit) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: search failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
-    for query in queries {
-        let results = match searcher.search(query, limit) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("error: search failed: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
-        all_results.push((query.clone(), results));
-    }
+    // Wrap in a single-element vec for compatibility with output logic
+    let combined_query = queries.join(" ");
+    let all_results: Vec<(String, Vec<SearchResult>)> = vec![(combined_query, results)];
 
     // Output results
     if json {
@@ -417,6 +510,17 @@ fn cmd_search(queries: &[String], limit: usize, list: bool, json: bool) -> ExitC
                 }
             }
             println!();
+        }
+    } else if matches {
+        // Matches-only mode: show only lines containing matches
+        for (_query, results) in &all_results {
+            if results.is_empty() {
+                println!("{}", dim("No results found."));
+            } else {
+                for result in results {
+                    print!("{}", format_result_matches(result));
+                }
+            }
         }
     } else {
         // Full content mode

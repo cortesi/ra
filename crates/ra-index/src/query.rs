@@ -149,24 +149,6 @@ impl QueryBuilder {
         Some(Box::new(BooleanQuery::new(clauses)))
     }
 
-    /// Builds a query for multiple topics (array of query strings).
-    ///
-    /// Each topic is searched independently and results are combined with OR logic.
-    /// This allows searching for documents that match any of the given topics.
-    pub fn build_multi(&mut self, inputs: &[&str]) -> Option<Box<dyn Query>> {
-        let clauses: Vec<(Occur, Box<dyn Query>)> = inputs
-            .iter()
-            .filter_map(|input| self.build(input))
-            .map(|q| (Occur::Should, q))
-            .collect();
-
-        if clauses.is_empty() {
-            return None;
-        }
-
-        Some(Box::new(BooleanQuery::new(clauses)))
-    }
-
     /// Builds a query for a single token (term or phrase).
     fn build_token_query(&mut self, token: QueryToken) -> Option<Box<dyn Query>> {
         match token {
@@ -433,22 +415,6 @@ mod test {
         let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
         let query = builder.build("rust \"error handling\" async");
         assert!(query.is_some());
-    }
-
-    #[test]
-    fn query_builder_multi_topic() {
-        let schema = IndexSchema::new();
-        let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
-        let query = builder.build_multi(&["rust async", "error handling"]);
-        assert!(query.is_some());
-    }
-
-    #[test]
-    fn query_builder_multi_topic_empty() {
-        let schema = IndexSchema::new();
-        let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
-        assert!(builder.build_multi(&[]).is_none());
-        assert!(builder.build_multi(&["", "   "]).is_none());
     }
 
     #[test]

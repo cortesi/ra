@@ -4,7 +4,9 @@
 //! Supports field boosting, local tree boosting, and snippet generation.
 
 use std::{
+    cmp::Ordering,
     collections::HashMap,
+    mem,
     ops::Range,
     path::{Path, PathBuf},
 };
@@ -27,6 +29,36 @@ use crate::{
 
 /// Default maximum number of characters in a snippet.
 const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
+
+/// Merges two sets of byte ranges, combining overlapping or adjacent ranges.
+///
+/// The result is sorted by start position with no overlaps.
+fn merge_ranges(mut a: Vec<Range<usize>>, b: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    a.extend(b);
+    if a.is_empty() {
+        return a;
+    }
+
+    // Sort by start position
+    a.sort_by_key(|r| r.start);
+
+    let mut merged = Vec::with_capacity(a.len());
+    let mut current = a[0].clone();
+
+    for range in a.into_iter().skip(1) {
+        if range.start <= current.end {
+            // Overlapping or adjacent - extend current range
+            current.end = current.end.max(range.end);
+        } else {
+            // Gap - push current and start new
+            merged.push(current);
+            current = range;
+        }
+    }
+    merged.push(current);
+
+    merged
+}
 
 /// A search result from the index.
 #[derive(Debug, Clone)]
@@ -158,7 +190,9 @@ impl Searcher {
 
     /// Searches the index for documents matching multiple topics.
     ///
-    /// Each topic is searched independently and results are combined.
+    /// Each topic is searched independently and results are combined with deduplication.
+    /// When a document matches multiple topics, the match ranges from all topics are merged
+    /// and the highest score is kept.
     ///
     /// # Arguments
     /// * `topics` - Array of query strings
@@ -168,12 +202,50 @@ impl Searcher {
         topics: &[&str],
         limit: usize,
     ) -> Result<Vec<SearchResult>, IndexError> {
-        let query = match self.query_builder.build_multi(topics) {
-            Some(q) => q,
-            None => return Ok(Vec::new()),
-        };
+        if topics.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        self.execute_query(&*query, limit, true)
+        // Search each topic separately to get per-topic highlights
+        let mut results_by_id: HashMap<String, SearchResult> = HashMap::new();
+
+        for topic in topics {
+            let topic_results = self.search(topic, limit)?;
+
+            for result in topic_results {
+                results_by_id
+                    .entry(result.id.clone())
+                    .and_modify(|existing| {
+                        // Keep the higher score
+                        if result.score > existing.score {
+                            existing.score = result.score;
+                        }
+                        // Merge match ranges
+                        existing.match_ranges = merge_ranges(
+                            mem::take(&mut existing.match_ranges),
+                            result.match_ranges.clone(),
+                        );
+                        // Merge snippets if both present
+                        if let (Some(existing_snippet), Some(new_snippet)) =
+                            (&existing.snippet, &result.snippet)
+                        {
+                            existing.snippet = Some(format!("{existing_snippet} … {new_snippet}"));
+                        } else if existing.snippet.is_none() {
+                            existing.snippet = result.snippet.clone();
+                        }
+                    })
+                    .or_insert(result);
+            }
+        }
+
+        // Collect and sort by score (highest first)
+        let mut results: Vec<SearchResult> = results_by_id.into_values().collect();
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+
+        // Apply limit
+        results.truncate(limit);
+
+        Ok(results)
     }
 
     /// Searches without generating snippets (faster).
@@ -658,5 +730,110 @@ mod test {
 
         assert!(!results.is_empty());
         assert!(results[0].body.contains("systems programming"));
+    }
+
+    #[test]
+    fn search_multi_deduplicates_results() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        // Both "rust" and "programming" match the intro doc
+        let results = searcher.search_multi(&["rust", "programming"], 10).unwrap();
+
+        // Count how many times each ID appears
+        let mut id_counts: HashMap<String, usize> = HashMap::new();
+        for result in &results {
+            *id_counts.entry(result.id.clone()).or_insert(0) += 1;
+        }
+
+        // Each ID should appear only once
+        for (id, count) in id_counts {
+            assert_eq!(count, 1, "ID {id} appeared {count} times, expected 1");
+        }
+    }
+
+    #[test]
+    fn search_multi_merges_match_ranges() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        // "rust" and "safety" both appear in the intro doc
+        let results = searcher.search_multi(&["rust", "safety"], 10).unwrap();
+
+        // Find the intro doc
+        let intro = results.iter().find(|r| r.id.contains("rust.md")).unwrap();
+
+        // Should have match ranges from both terms
+        assert!(
+            !intro.match_ranges.is_empty(),
+            "Expected merged match ranges"
+        );
+
+        // The body contains both "Rust" and "safety", so we should have at least 2 distinct matches
+        // (possibly merged if adjacent)
+        let total_matched_chars: usize = intro.match_ranges.iter().map(|r| r.end - r.start).sum();
+        assert!(
+            total_matched_chars >= 8,
+            "Expected at least 8 chars matched (rust + safety)"
+        );
+    }
+
+    #[test]
+    fn search_multi_keeps_highest_score() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        // Search for same document with two different terms
+        let results = searcher.search_multi(&["rust", "systems"], 10).unwrap();
+
+        // Find the intro doc
+        let intro = results.iter().find(|r| r.id.contains("rust.md")).unwrap();
+
+        // Score should be positive (the max of both searches)
+        assert!(intro.score > 0.0);
+    }
+
+    #[test]
+    fn merge_ranges_combines_overlapping() {
+        let a = vec![0..5, 10..15];
+        let b = vec![3..8, 20..25];
+        let merged = super::merge_ranges(a, b);
+
+        assert_eq!(merged, vec![0..8, 10..15, 20..25]);
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn merge_ranges_combines_adjacent() {
+        let a = vec![0..5];
+        let b = vec![5..10];
+        let merged = super::merge_ranges(a, b);
+
+        assert_eq!(merged, vec![0..10]);
+    }
+
+    #[test]
+    fn merge_ranges_handles_empty() {
+        let a: Vec<Range<usize>> = vec![];
+        let b: Vec<Range<usize>> = vec![];
+        let merged = super::merge_ranges(a, b);
+
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn merge_ranges_preserves_non_overlapping() {
+        let a = vec![0..5];
+        let b = vec![10..15];
+        let merged = super::merge_ranges(a, b);
+
+        assert_eq!(merged, vec![0..5, 10..15]);
     }
 }
