@@ -60,6 +60,8 @@ pub struct RawSettings {
 pub struct RawSearchSettings {
     /// Stemming language.
     pub stemmer: Option<String>,
+    /// Fuzzy matching Levenshtein distance (0 = disabled).
+    pub fuzzy_distance: Option<u8>,
 }
 
 /// Raw context settings.

@@ -112,11 +112,13 @@ impl Searcher {
     /// * `language` - Stemmer language (e.g., "english")
     /// * `trees` - Tree configurations for determining global vs local boost
     /// * `local_boost` - Multiplier for local (non-global) tree results
+    /// * `fuzzy_distance` - Levenshtein distance for fuzzy matching (0 = disabled)
     pub fn open(
         path: &Path,
         language: &str,
         trees: &[ra_config::Tree],
         local_boost: f32,
+        fuzzy_distance: u8,
     ) -> Result<Self, IndexError> {
         if !path.exists() {
             return Err(IndexError::OpenIndex {
@@ -138,7 +140,7 @@ impl Searcher {
         let analyzer = build_analyzer_from_name(language)?;
         index.tokenizers().register(RA_TOKENIZER, analyzer);
 
-        let query_builder = QueryBuilder::with_language(schema.clone(), language)?;
+        let query_builder = QueryBuilder::new(schema.clone(), language, fuzzy_distance)?;
 
         // Build tree global/local map
         let tree_is_global: HashMap<String, bool> = trees
@@ -164,6 +166,7 @@ impl Searcher {
             &config.search.stemmer,
             &config.trees,
             config.settings.local_boost,
+            config.search.fuzzy_distance,
         )
     }
 
@@ -631,7 +634,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         let results = searcher.search("rust", 10).unwrap();
 
@@ -644,7 +647,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         let results = searcher.search("rust", 2).unwrap();
 
@@ -656,7 +659,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         let results = searcher.search("python", 10).unwrap();
 
@@ -668,7 +671,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         let results = searcher.search("", 10).unwrap();
 
@@ -682,7 +685,7 @@ mod test {
 
         let local_boost = 2.0;
         let mut searcher =
-            Searcher::open(temp.path(), "english", &make_trees(), local_boost).unwrap();
+            Searcher::open(temp.path(), "english", &make_trees(), local_boost, 0).unwrap();
 
         // Search for "error" which only matches the global tree document
         let results = searcher.search("error", 10).unwrap();
@@ -704,7 +707,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         let results = searcher.search("async", 10).unwrap();
 
@@ -724,7 +727,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         let results = searcher.search("safety", 10).unwrap();
 
@@ -743,7 +746,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         let results = searcher.search_no_snippets("safety", 10).unwrap();
 
@@ -756,7 +759,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         // "async" matches one doc, "error" matches another
         let results = searcher.search_multi(&["async", "error"], 10).unwrap();
@@ -770,7 +773,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         assert_eq!(searcher.num_docs().unwrap(), 3);
     }
@@ -780,7 +783,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         let nonexistent = temp.path().join("nonexistent");
 
-        let result = Searcher::open(&nonexistent, "english", &[], 1.5);
+        let result = Searcher::open(&nonexistent, "english", &[], 1.5, 0);
 
         assert!(result.is_err());
     }
@@ -790,7 +793,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         // Exact phrase should match
         let results = searcher.search("\"systems programming\"", 10).unwrap();
@@ -804,7 +807,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         // Both "rust" and "programming" match the intro doc
         let results = searcher.search_multi(&["rust", "programming"], 10).unwrap();
@@ -826,7 +829,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         // "rust" and "safety" both appear in the intro doc
         let results = searcher.search_multi(&["rust", "safety"], 10).unwrap();
@@ -854,7 +857,7 @@ mod test {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
 
-        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
 
         // Search for same document with two different terms
         let results = searcher.search_multi(&["rust", "systems"], 10).unwrap();
@@ -902,5 +905,84 @@ mod test {
         let merged = super::merge_ranges(a, b);
 
         assert_eq!(merged, vec![0..5, 10..15]);
+    }
+
+    #[test]
+    fn fuzzy_search_matches_similar_terms() {
+        let temp = TempDir::new().unwrap();
+
+        // Create index with "werewolves" in body
+        let docs = vec![ChunkDocument {
+            id: "local:docs/monsters.md#intro".to_string(),
+            title: "Monster Guide".to_string(),
+            tags: vec!["fantasy".to_string()],
+            path: "docs/monsters.md".to_string(),
+            path_components: vec!["docs".to_string(), "monsters".to_string()],
+            tree: "local".to_string(),
+            body: "This guide covers werewolves and vampires.".to_string(),
+            breadcrumb: "Bestiary › Monster Guide".to_string(),
+            mtime: SystemTime::UNIX_EPOCH,
+        }];
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        // Search with fuzzy_distance = 0 (exact match) - should NOT find "werewolf"
+        // because the indexed term is "werewolv" (stemmed from "werewolves")
+        // and "werewolf" doesn't stem the same way
+        let mut searcher_exact =
+            Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let results_exact = searcher_exact.search("werewolf", 10).unwrap();
+        assert!(
+            results_exact.is_empty(),
+            "Exact search should not match werewolf -> werewolves"
+        );
+
+        // Search with fuzzy_distance = 2 - SHOULD find it
+        // "werewolf" (no stem change) vs "werewolv" (stemmed) differ by ~2 chars
+        let mut searcher_fuzzy =
+            Searcher::open(temp.path(), "english", &make_trees(), 1.5, 2).unwrap();
+        let results_fuzzy = searcher_fuzzy.search("werewolf", 10).unwrap();
+        assert!(
+            !results_fuzzy.is_empty(),
+            "Fuzzy search with distance 2 should match werewolf -> werewolves"
+        );
+        assert!(results_fuzzy[0].body.contains("werewolves"));
+    }
+
+    #[test]
+    fn fuzzy_search_disabled_with_zero_distance() {
+        let temp = TempDir::new().unwrap();
+
+        let docs = vec![ChunkDocument {
+            id: "local:docs/test.md".to_string(),
+            title: "Test".to_string(),
+            tags: vec![],
+            path: "docs/test.md".to_string(),
+            path_components: vec!["docs".to_string(), "test".to_string()],
+            tree: "local".to_string(),
+            body: "The quick brown fox jumps over the lazy dog.".to_string(),
+            breadcrumb: "Test".to_string(),
+            mtime: SystemTime::UNIX_EPOCH,
+        }];
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        // With distance 0, "foz" should not match "fox"
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 0).unwrap();
+        let results = searcher.search("foz", 10).unwrap();
+        assert!(results.is_empty(), "Distance 0 should not match foz -> fox");
+
+        // With distance 1, "foz" should match "fox"
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 1).unwrap();
+        let results = searcher.search("foz", 10).unwrap();
+        assert!(!results.is_empty(), "Distance 1 should match foz -> fox");
     }
 }

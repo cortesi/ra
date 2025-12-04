@@ -198,12 +198,15 @@ impl Default for Settings {
 pub struct SearchSettings {
     /// Stemming language.
     pub stemmer: String,
+    /// Fuzzy matching Levenshtein distance (0 = disabled).
+    pub fuzzy_distance: u8,
 }
 
 impl Default for SearchSettings {
     fn default() -> Self {
         Self {
             stemmer: String::from("english"),
+            fuzzy_distance: 1,
         }
     }
 }

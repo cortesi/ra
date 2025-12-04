@@ -103,6 +103,9 @@ fn apply_raw_search(result: &mut SearchSettings, raw: &RawSearchSettings) {
     if let Some(ref v) = raw.stemmer {
         result.stemmer = v.clone();
     }
+    if let Some(v) = raw.fuzzy_distance {
+        result.fuzzy_distance = v;
+    }
 }
 
 /// Merges context settings.

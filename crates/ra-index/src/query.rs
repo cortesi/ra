@@ -20,7 +20,7 @@
 
 use tantivy::{
     Term,
-    query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery},
+    query::{BooleanQuery, BoostQuery, FuzzyTermQuery, Occur, PhraseQuery, Query, TermQuery},
     schema::{Field, IndexRecordOption},
     tokenizer::{TextAnalyzer, TokenStream},
 };
@@ -116,13 +116,23 @@ pub struct QueryBuilder {
     schema: IndexSchema,
     /// Text analyzer for tokenizing query input.
     analyzer: TextAnalyzer,
+    /// Fuzzy matching Levenshtein distance (0 = disabled).
+    fuzzy_distance: u8,
 }
 
 impl QueryBuilder {
     /// Creates a new query builder with the given schema and stemmer language.
-    pub(crate) fn with_language(schema: IndexSchema, language: &str) -> Result<Self, IndexError> {
+    pub(crate) fn new(
+        schema: IndexSchema,
+        language: &str,
+        fuzzy_distance: u8,
+    ) -> Result<Self, IndexError> {
         let analyzer = build_analyzer_from_name(language)?;
-        Ok(Self { schema, analyzer })
+        Ok(Self {
+            schema,
+            analyzer,
+            fuzzy_distance,
+        })
     }
 
     /// Builds a query from an input string.
@@ -229,7 +239,7 @@ impl QueryBuilder {
     /// Builds a multi-field term query with boosts.
     ///
     /// Searches the term across title, tags, path, path_components, and body fields,
-    /// each with their configured boost weight.
+    /// each with their configured boost weight. Uses fuzzy matching if configured.
     fn build_multi_field_term_query(&self, term_text: &str) -> Option<Box<dyn Query>> {
         let fields_with_boosts: [(Field, f32); 5] = [
             (self.schema.title, boost::TITLE),
@@ -243,9 +253,12 @@ impl QueryBuilder {
             .into_iter()
             .map(|(field, boost_value)| {
                 let term = Term::from_field_text(field, term_text);
-                let term_query = TermQuery::new(term, IndexRecordOption::WithFreqs);
-                let boosted: Box<dyn Query> =
-                    Box::new(BoostQuery::new(Box::new(term_query), boost_value));
+                let query: Box<dyn Query> = if self.fuzzy_distance > 0 {
+                    Box::new(FuzzyTermQuery::new(term, self.fuzzy_distance, true))
+                } else {
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs))
+                };
+                let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, boost_value));
                 (Occur::Should, boosted)
             })
             .collect();
@@ -380,7 +393,7 @@ mod test {
     #[test]
     fn query_builder_empty_input() {
         let schema = IndexSchema::new();
-        let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
+        let mut builder = QueryBuilder::new(schema, "english", 0).unwrap();
         assert!(builder.build("").is_none());
         assert!(builder.build("   ").is_none());
     }
@@ -388,7 +401,7 @@ mod test {
     #[test]
     fn query_builder_single_term() {
         let schema = IndexSchema::new();
-        let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
+        let mut builder = QueryBuilder::new(schema, "english", 0).unwrap();
         let query = builder.build("rust");
         assert!(query.is_some());
     }
@@ -396,7 +409,7 @@ mod test {
     #[test]
     fn query_builder_multiple_terms() {
         let schema = IndexSchema::new();
-        let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
+        let mut builder = QueryBuilder::new(schema, "english", 0).unwrap();
         let query = builder.build("rust async");
         assert!(query.is_some());
     }
@@ -404,7 +417,7 @@ mod test {
     #[test]
     fn query_builder_phrase() {
         let schema = IndexSchema::new();
-        let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
+        let mut builder = QueryBuilder::new(schema, "english", 0).unwrap();
         let query = builder.build("\"error handling\"");
         assert!(query.is_some());
     }
@@ -412,7 +425,7 @@ mod test {
     #[test]
     fn query_builder_mixed() {
         let schema = IndexSchema::new();
-        let mut builder = QueryBuilder::with_language(schema, "english").unwrap();
+        let mut builder = QueryBuilder::new(schema, "english", 0).unwrap();
         let query = builder.build("rust \"error handling\" async");
         assert!(query.is_some());
     }
@@ -420,14 +433,14 @@ mod test {
     #[test]
     fn query_builder_with_language() {
         let schema = IndexSchema::new();
-        let builder = QueryBuilder::with_language(schema, "french");
+        let builder = QueryBuilder::new(schema, "french", 0);
         assert!(builder.is_ok());
     }
 
     #[test]
     fn query_builder_invalid_language() {
         let schema = IndexSchema::new();
-        let result = QueryBuilder::with_language(schema, "invalid");
+        let result = QueryBuilder::new(schema, "invalid", 0);
         assert!(result.is_err());
     }
 }

@@ -83,6 +83,7 @@ mod test {
         let config2 = Config {
             search: SearchSettings {
                 stemmer: "french".to_string(),
+                ..Default::default()
             },
             ..Default::default()
         };
