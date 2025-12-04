@@ -34,13 +34,14 @@ indexing and search.
 
 ## Parameters
 
-The following parameters control merging behaviour at search time:
+The following parameters control search and merging behaviour:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `aggregation_threshold` | 0.5 | Fraction of a parent's children that must match before sibling aggregation is triggered. |
-| `min_aggregation_matches` | 2 | Minimum number of matching siblings required for aggregation, regardless of threshold. |
-| `score_cap_multiplier` | 2.0 | When aggregating, cap the parent's score at this multiple of the highest child score. |
+| `candidate_limit` | 100 | Maximum candidates to retrieve from the search index before cutoff and aggregation. |
+| `cutoff_ratio` | 0.5 | Score ratio threshold for elbow detection; cut results when next score is less than this fraction of current. |
+| `max_results` | 20 | Maximum results to return if no elbow is detected. |
+| `aggregation_threshold` | 0.5 | Fraction of a parent's children that must match to trigger aggregation to the parent. |
 
 
 ## Chunk Tree Construction
@@ -60,7 +61,10 @@ hierarchical chunk tree.
 2. **Create nodes**
    - Create a **document node** (the root):
      - `depth = 0`
-     - `title = document title` (from frontmatter, first h1, or filename)
+     - `title = document title`, determined by the first available source:
+       1. YAML frontmatter `title` field (if present)
+       2. First h1 heading in the document (if present)
+       3. Filename without extension
      - `slug = None`
      - `span = [0, len(content))`
    - For each heading, create a heading node with:
@@ -70,13 +74,15 @@ hierarchical chunk tree.
      - a span assigned in the next step.
 
 3. **Assign heading spans**
-   - For each heading node, its span runs from the byte after the heading line
-     ends to the byte before the next heading of **equal or lower** depth (or
-     end of document).
+   - For each heading node, its span starts at the first byte after the heading
+     line's terminating newline (i.e., the first character of the following
+     line) and ends at the byte before the next heading of **equal or lower**
+     depth (or end of document).
    - Heading lines themselves are deliberately excluded from spans; their
      content is captured in the node's `title` field.
    - Headings whose computed span would be empty (no content between this
-     heading and the next) are discarded.
+     heading and the next) are discarded. This includes consecutive headings
+     with no intervening content.
 
 4. **Establish hierarchy**
    - Nodes form a tree:
@@ -123,17 +129,31 @@ separately.
      body is the entire file content.
    - The chunk uses the filename (without extension) as its title.
 
+6. **Empty documents**
+   - Files that are empty or contain only whitespace are ignored and produce no
+     chunks.
+
+7. **Documents with only headings**
+   - If a document contains only headings with no body text between them, all
+     headings are discarded (empty spans). The document produces no chunks.
+   - Heading titles are still searchable via the `title` field of any chunks
+     that do have body text.
+
 
 ## Metadata and Identifiers
 
 Every node in the chunk tree has the following structural metadata:
 
-- `id`: Unique chunk identifier, constructed from tree, path, and optional slug.
+- `id`: Globally unique chunk identifier, constructed from tree, path, and
+  optional slug.
   - Document node: `{tree}:{path}` (slug is `None`)
   - Heading nodes: `{tree}:{path}#{slug}`
+  - Examples: `docs:guides/auth.md`, `docs:guides/auth.md#oauth-setup`
 - `doc_id`: Document identifier, the same for all nodes in a file.
   - `doc_id = "{tree}:{path}"`
-- `parent_id`: Parent node's ID (`None` for the document node).
+- `parent_id`: The parent node's fully qualified `id` (`None` for the document
+  node). Since IDs are globally unique, `parent_id` unambiguously identifies
+  the parent across all documents and trees.
 - `depth`: Hierarchy depth.
   - `0` for document node,
   - `1` for h1, `2` for h2, … `6` for h6.
@@ -143,6 +163,11 @@ Every node in the chunk tree has the following structural metadata:
 - `slug`: Optional; used in fragment identifiers for heading nodes.
 - `byte_start` / `byte_end`: The node's span in bytes into the original
   document. Body text is derived by reading this span and excluding child spans.
+- `sibling_count`: Number of siblings (including this node) under the same
+  parent. Since nodes without body text and without children are discarded,
+  every sibling either has body text (is a chunk) or has descendants that do.
+  This count is used as the denominator for aggregation threshold calculation.
+  For document nodes (depth 0), `sibling_count = 1`.
 
 ### Slug Generation
 
@@ -176,7 +201,10 @@ hierarchy:
 > Document Title › Parent Section › Chunk Title
 ```
 
-Rules:
+The exact breadcrumb format is defined in the breadcrumb generation code and
+may be adjusted independently of this specification.
+
+**Rules**:
 
 - The breadcrumb always begins with the document title.
 - Intermediate ancestors are included in order from shallowest to deepest.
@@ -196,58 +224,165 @@ The chunk tree is a conceptual structure; the search index operates on
 
 - Every node with a non-empty body becomes one indexed chunk with:
   - `id`, `doc_id`, `title`, `body`, `breadcrumb`, `depth`, `position`,
-    `byte_start`, `byte_end`, and path/tree metadata.
+    `byte_start`, `byte_end`, `sibling_count`, and path/tree metadata.
 - Leaves are always chunks; non-leaf parents are also chunks if they have
   direct body text (e.g. a document with preamble content, or an h1 followed
   by introductory paragraphs before an h2).
 
 
-## Hierarchical Merging (Search-Time)
+## Search and Result Processing
+
+Search operates in three phases: candidate retrieval, relevance cutoff, and
+hierarchical aggregation.
 
 ### Motivation
 
-The chunk tree stores content exactly once, at the most granular level
-(leaves). However, search results need to be returned at the appropriate level
-of granularity for the query. When a user searches for "authentication", they
-may want:
+The chunk tree stores content exactly once, at the most granular level. However,
+search results need to be returned at the appropriate level of granularity for
+the query. When a user searches for "authentication", they may want:
 
 - A specific paragraph mentioning it (a leaf match),
 - An entire section about authentication (aggregated siblings),
 - A document titled "Authentication Guide" (a parent match).
 
 Rather than duplicating content at every hierarchy level—which would bloat the
-index and create scoring ambiguity—we store leaves and reconstruct parent
-context at search time through hierarchical merging.
+index and distort BM25's IDF calculations—we store chunks once and aggregate
+results at search time.
 
-### Merge Rules
+### Phase 1: Candidate Retrieval
 
-When multiple chunks from the same document match a query, the merge layer
-promotes results to a common ancestor. Rules are applied bottom-up after
-initial scoring, in the following priority order:
+Retrieve up to `candidate_limit` results from the search index (tantivy),
+ranked by BM25 score. This limit should be generous (default 100) to ensure
+the subsequent phases have enough candidates to work with.
 
-1. **Parent match priority**: If a parent node matches the query in its own
-   right (via title or body text), return the parent rather than individual
-   children. The parent's score is the maximum of its own match score and the
-   combined child score (see rule 3).
+### Phase 2: Elbow Cutoff
 
-2. **Sibling aggregation**: If the fraction of matching siblings under a parent
-   exceeds `aggregation_threshold` **and** the number of matches is at least
-   `min_aggregation_matches`, replace them with a single result for the parent
-   node.
+BM25 scores are relative within a query and follow a long-tail distribution.
+Rather than using arbitrary score thresholds, we detect the natural "elbow"
+where relevant results end and noise begins.
 
-3. **Score combination**: When aggregating children into a parent (via rule 1
-   or 2), the combined score is the sum of child scores, capped at
-   `score_cap_multiplier` times the highest individual child score.
+**Algorithm**:
 
-4. **Depth limit**: Aggregation stops at depth 1 (h1 sections). Document-level
-   results (depth 0) are only returned when:
-   - The document node itself matches (has matching preamble content or title),
-     or
-   - All top-level children (depth 1) would be aggregated.
+1. If fewer than 2 candidates, return all.
+2. Compute the score ratio between each adjacent pair:
+   `ratio[i] = score[i+1] / score[i]`
+3. Find the first index where `ratio[i] < cutoff_ratio`.
+4. Return candidates up to and including that index.
 
-5. **Standalone leaves**: If a leaf matches but its parent does not (and
-   sibling aggregation threshold is not met), the leaf is returned as a
-   standalone result regardless of size.
+**Edge cases**:
 
-This design keeps content non-duplicated across chunks while preserving the
-full hierarchy needed for effective search and flexible result presentation.
+- All ratios >= `cutoff_ratio`: no elbow detected; return up to `max_results`
+  candidates.
+- First ratio < `cutoff_ratio`: return only the first result (single strong
+  match).
+- Zero scores: treat as a cutoff point.
+- Equal adjacent scores: ratio = 1.0, no cutoff triggered.
+
+**Example**:
+
+```
+Scores:  [8.0, 7.5, 7.0, 3.2, 3.0, 2.8, 0.9]
+Ratios:  [0.94, 0.93, 0.46, 0.94, 0.93, 0.32]
+                       ^^^^
+                       first ratio < 0.5, cut here
+
+Result: first 3 candidates (scores 8.0, 7.5, 7.0)
+```
+
+### Phase 3: Hierarchical Aggregation
+
+After cutoff, aggregate sibling matches under their nearest common parent when
+appropriate. The algorithm works bottom-up, processing the deepest matches
+first and progressively aggregating toward shallower ancestors.
+
+**Algorithm**:
+
+```
+function aggregate(matches):
+    # Process depths from deepest to shallowest (stop at depth 1)
+    for current_depth from max_depth down to 2:
+        # Select only matches at this depth
+        at_depth = [m for m in matches if m.depth == current_depth]
+        others = [m for m in matches if m.depth != current_depth]
+
+        # Group matches at this depth by their parent
+        groups = group_by(at_depth, m => m.parent_id)
+
+        aggregated = []
+        for (parent_id, siblings) in groups:
+            # All siblings share the same sibling_count
+            match_fraction = len(siblings) / siblings[0].sibling_count
+
+            if match_fraction >= aggregation_threshold:
+                # Look up parent to get its parent_id for further aggregation
+                parent = get_node(parent_id)
+                # Aggregate: represent siblings as parent
+                aggregated.append(AggregatedResult {
+                    id: parent_id,
+                    score: max(s.score for s in siblings),
+                    depth: siblings[0].depth - 1,
+                    parent_id: parent.parent_id,
+                    sibling_count: parent.sibling_count,
+                    constituents: siblings,
+                })
+            else:
+                # Keep as individual results
+                aggregated.extend(siblings)
+
+        # Merge aggregated results back for next iteration
+        matches = others + aggregated
+
+    return matches
+```
+
+**Node lookup**: The `get_node(id)` function retrieves a node's metadata by ID.
+If the node is a chunk (has body text), it can be fetched directly from the
+index. If the node is structural-only (no body text, not indexed), parse the
+source file to reconstruct the tree and locate the node. Since document
+structure is deterministic, parsed trees can be cached.
+
+**Key points**:
+
+- Each iteration processes only matches at the current depth, leaving shallower
+  matches untouched until their depth is reached.
+- When siblings aggregate into a parent, the parent (now at a shallower depth)
+  may itself be aggregated with its own siblings in a subsequent iteration.
+- Matches at different depths under the same parent are handled naturally: the
+  deeper ones aggregate first, then the results join shallower matches.
+
+**Score calculation**: When aggregating siblings into a parent, the parent's
+score is the **maximum** of the sibling scores. If the parent also matched
+directly (i.e., it has its own indexed body text that matched the query), take
+the maximum of the parent's direct score and the aggregated children's scores.
+This reflects that the parent is as relevant as the best match anywhere within
+it.
+
+**Depth limit**: Aggregation stops at depth 1 (h1 sections). Document-level
+aggregation (depth 0) only occurs if all depth-1 children would themselves be
+aggregated.
+
+**Output**: A flat list of results, each either:
+
+- An original leaf/chunk match, or
+- An aggregated parent with a `constituents` list (for UI expansion).
+
+Results are sorted by score descending.
+
+### Complete Search Flow
+
+```
+1. tantivy_search(query, limit=candidate_limit)
+   → ranked candidates with BM25 scores
+
+2. elbow_cutoff(candidates, cutoff_ratio)
+   → relevant matches only
+
+3. aggregate(matches, aggregation_threshold)
+   → final results (individual chunks + aggregated parents)
+
+4. sort by score descending
+   → return to caller
+```
+
+This design keeps content non-duplicated in the index while providing
+appropriately granular results through post-search aggregation.
