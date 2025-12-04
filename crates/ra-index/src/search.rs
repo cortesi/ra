@@ -418,6 +418,36 @@ impl Searcher {
         }
     }
 
+    /// Lists all chunks in the index.
+    ///
+    /// Returns all indexed chunks, ordered by ID. This is useful for
+    /// displaying the full contents of the index.
+    pub fn list_all(&self) -> Result<Vec<SearchResult>, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let searcher = reader.searcher();
+
+        let all_docs = searcher
+            .search(&AllQuery, &TopDocs::with_limit(100_000))
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let mut results: Vec<SearchResult> = all_docs
+            .into_iter()
+            .filter_map(|(score, doc_address)| {
+                let doc: TantivyDocument = searcher.doc(doc_address).ok()?;
+                Some(self.doc_to_result(&doc, score, &None, &None))
+            })
+            .collect();
+
+        // Sort by ID for consistent ordering
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+
+        Ok(results)
+    }
+
     /// Retrieves all chunks from a document by path.
     ///
     /// Uses a prefix query on the ID field since IDs have format `tree:path#slug`.

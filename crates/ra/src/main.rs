@@ -1,6 +1,7 @@
 //! Command-line interface for the `ra` research assistant tool.
 
 use std::{
+    collections::HashMap,
     env, fs,
     io::{self, Write},
     ops::Range,
@@ -14,9 +15,7 @@ use ra_config::{
     global_template, local_template,
 };
 use ra_document::{DEFAULT_MIN_CHUNK_SIZE, HeadingLevel, parse_file};
-use ra_highlight::{
-    Highlighter, breadcrumb, dim, format_body, header, indent_content, rule, subheader,
-};
+use ra_highlight::{Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader};
 use ra_index::{
     IndexStats, IndexStatus, Indexer, ProgressReporter, SearchResult, Searcher, SilentReporter,
     detect_index_status, index_directory, open_searcher,
@@ -107,8 +106,22 @@ enum Commands {
     /// Force rebuild of search index
     Update,
 
-    /// Show configuration, trees, and index statistics
+    /// Show configuration files and trees
     Status,
+
+    /// Show effective configuration settings
+    Config,
+
+    /// List trees, documents, or chunks
+    Ls {
+        /// Show detailed information.
+        #[arg(short = 'l', long)]
+        long: bool,
+
+        /// What to list.
+        #[command(subcommand)]
+        what: LsWhat,
+    },
 
     /// Generate AGENTS.md, CLAUDE.md, GEMINI.md
     Agents {
@@ -128,6 +141,17 @@ enum Commands {
         #[arg(long)]
         all: bool,
     },
+}
+
+#[derive(Clone, Copy, Subcommand)]
+/// What to list with `ra ls`.
+enum LsWhat {
+    /// List all configured trees
+    Trees,
+    /// List all indexed documents
+    Docs,
+    /// List all indexed chunks
+    Chunks,
 }
 
 fn main() -> ExitCode {
@@ -167,6 +191,12 @@ fn main() -> ExitCode {
         }
         Commands::Status => {
             return cmd_status();
+        }
+        Commands::Config => {
+            return cmd_config();
+        }
+        Commands::Ls { long, what } => {
+            return cmd_ls(what, long);
         }
         Commands::Agents {
             stdout,
@@ -821,14 +851,248 @@ fn cmd_status() -> ExitCode {
             println!("    - {} {}", dim("(exclude)"), pattern);
         }
     }
-    println!();
 
-    // Show effective settings in TOML format with syntax highlighting
-    println!("{}", subheader("Effective settings:"));
-    println!("{}", rule(40));
+    ExitCode::SUCCESS
+}
+
+/// Implements the `ra config` command.
+fn cmd_config() -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Load merged config
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Output effective settings in TOML format with syntax highlighting
     let highlighter = Highlighter::new();
     print!("{}", highlighter.highlight_toml(&config.settings_to_toml()));
-    println!("{}", rule(40));
+
+    ExitCode::SUCCESS
+}
+
+/// Implements the `ra ls` command.
+fn cmd_ls(what: LsWhat, long: bool) -> ExitCode {
+    match what {
+        LsWhat::Trees => cmd_ls_trees(long),
+        LsWhat::Docs => cmd_ls_docs(long),
+        LsWhat::Chunks => cmd_ls_chunks(long),
+    }
+}
+
+/// Lists all configured trees.
+fn cmd_ls_trees(long: bool) -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if config.trees.is_empty() {
+        println!("{}", dim("No trees configured."));
+        return ExitCode::SUCCESS;
+    }
+
+    for tree in &config.trees {
+        let scope = if tree.is_global { "global" } else { "local" };
+        println!(
+            "{} {} {}",
+            header(&tree.name),
+            dim(&format!("({scope})")),
+            dim(&format!("→ {}", tree.path.display()))
+        );
+
+        if long {
+            // Show include patterns
+            for pattern in &tree.include {
+                println!("  {} {}", dim("+"), pattern);
+            }
+            // Show exclude patterns
+            for pattern in &tree.exclude {
+                println!("  {} {}", dim("-"), pattern);
+            }
+            println!();
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Document info collected for listing.
+struct DocInfo {
+    /// Tree name.
+    tree: String,
+    /// File path.
+    path: String,
+    /// Document title.
+    title: String,
+    /// Number of chunks in this document.
+    chunk_count: usize,
+    /// Total body size across all chunks.
+    total_size: usize,
+}
+
+/// Lists all indexed documents.
+fn cmd_ls_docs(long: bool) -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if config.trees.is_empty() {
+        eprintln!("error: no trees defined in configuration");
+        return ExitCode::FAILURE;
+    }
+
+    // Ensure index is fresh
+    let searcher = match ensure_index_fresh(&config) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    // Get all chunks and extract unique documents
+    let chunks = match searcher.list_all() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: failed to list chunks: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Collect unique documents with stats
+    let mut docs: Vec<DocInfo> = Vec::new();
+    let mut doc_map: HashMap<String, usize> = HashMap::new();
+
+    for chunk in &chunks {
+        let doc_key = format!("{}:{}", chunk.tree, chunk.path);
+        if let Some(&idx) = doc_map.get(&doc_key) {
+            docs[idx].chunk_count += 1;
+            docs[idx].total_size += chunk.body.len();
+        } else {
+            doc_map.insert(doc_key, docs.len());
+            docs.push(DocInfo {
+                tree: chunk.tree.clone(),
+                path: chunk.path.clone(),
+                title: chunk.title.clone(),
+                chunk_count: 1,
+                total_size: chunk.body.len(),
+            });
+        }
+    }
+
+    if docs.is_empty() {
+        println!("{}", dim("No documents indexed."));
+        return ExitCode::SUCCESS;
+    }
+
+    for doc in &docs {
+        println!(
+            "{} {} {}",
+            header(&format!("{}:{}", doc.tree, doc.path)),
+            dim("—"),
+            breadcrumb(&doc.title)
+        );
+        if long {
+            println!(
+                "  {}",
+                dim(&format!(
+                    "{} chunks, {} chars",
+                    doc.chunk_count, doc.total_size
+                ))
+            );
+            println!();
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Lists all indexed chunks.
+fn cmd_ls_chunks(long: bool) -> ExitCode {
+    let cwd = match env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: could not determine current directory: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let config = match Config::load(&cwd) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("error: failed to load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if config.trees.is_empty() {
+        eprintln!("error: no trees defined in configuration");
+        return ExitCode::FAILURE;
+    }
+
+    // Ensure index is fresh
+    let searcher = match ensure_index_fresh(&config) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    // Get all chunks
+    let chunks = match searcher.list_all() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: failed to list chunks: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if chunks.is_empty() {
+        println!("{}", dim("No chunks indexed."));
+        return ExitCode::SUCCESS;
+    }
+
+    for chunk in &chunks {
+        println!(
+            "{} {} {}",
+            header(&chunk.id),
+            dim("—"),
+            breadcrumb(&chunk.breadcrumb)
+        );
+        if long {
+            println!("  {}", dim(&format!("{} chars", chunk.body.len())));
+            println!();
+        }
+    }
 
     ExitCode::SUCCESS
 }
