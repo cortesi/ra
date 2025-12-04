@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ra_config::{Config, ConfigError};
+use ra_config::{Config, ConfigError, discover_config_files};
 
 /// Test helper to create a temporary directory structure for tests.
 struct TestEnv {
@@ -44,12 +44,23 @@ impl TestEnv {
         fs::write(&path, content).unwrap();
         path
     }
+
+    /// Loads configuration discovered from the given working directory, ignoring
+    /// any configs outside this test environment (e.g., the user's home).
+    fn load(&self, cwd: &Path) -> Result<Config, ConfigError> {
+        let files: Vec<_> = discover_config_files(cwd)
+            .into_iter()
+            .filter(|p| p.starts_with(self.path()))
+            .collect();
+
+        Config::load_from_files(&files)
+    }
 }
 
 #[test]
 fn test_load_no_config_returns_default() {
     let env = TestEnv::new();
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
 
     assert!(config.trees.is_empty());
     assert!(config.config_root.is_none());
@@ -77,7 +88,7 @@ default_limit = 10
         ),
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
 
     assert_eq!(config.trees.len(), 1);
     assert_eq!(config.trees[0].name, "docs");
@@ -128,7 +139,7 @@ default_limit = 20
     );
 
     // Load from the deepest directory
-    let config = Config::load(&subdir).unwrap();
+    let config = env.load(&subdir).unwrap();
 
     // Should have both trees
     assert_eq!(config.trees.len(), 2);
@@ -175,7 +186,7 @@ path = "{}"
         ),
     );
 
-    let config = Config::load(&child_dir).unwrap();
+    let config = env.load(&child_dir).unwrap();
 
     // Only one "docs" tree, pointing to child's definition
     assert_eq!(config.trees.len(), 1);
@@ -200,7 +211,7 @@ include = ["**/*.md", "**/*.txt"]
         ),
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
 
     assert_eq!(config.trees.len(), 1);
     assert_eq!(config.trees[0].include, vec!["**/*.md", "**/*.txt"]);
@@ -225,7 +236,7 @@ exclude = ["**/drafts/**", "**/private/**"]
         ),
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
 
     assert_eq!(
         config.trees[0].exclude,
@@ -249,7 +260,7 @@ path = "./docs"
 "#,
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
 
     assert_eq!(config.trees.len(), 1);
     assert_eq!(config.trees[0].name, "docs");
@@ -269,7 +280,7 @@ path = "./nonexistent"
 "#,
     );
 
-    let result = Config::load(env.path());
+    let result = env.load(env.path());
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -289,7 +300,7 @@ invalid toml
 "#,
     );
 
-    let result = Config::load(env.path());
+    let result = env.load(env.path());
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), ConfigError::ParseToml { .. }));
 }
@@ -307,7 +318,7 @@ path = "./docs.txt"
 "#,
     );
 
-    let result = Config::load(env.path());
+    let result = env.load(env.path());
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -350,7 +361,7 @@ sample_size = 100000
         ),
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
 
     // Verify all settings
     assert_eq!(config.settings.default_limit, 15);
@@ -389,7 +400,7 @@ include = ["**/*.md", "**/*.rst"]
         ),
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
     let patterns = config.compile_patterns().unwrap();
 
     assert!(patterns.matches("docs", Path::new("readme.md")));
@@ -415,7 +426,7 @@ exclude = ["**/drafts/**"]
         ),
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
     let patterns = config.compile_patterns().unwrap();
 
     assert!(patterns.matches("docs", Path::new("readme.md")));
@@ -440,7 +451,7 @@ path = "{}"
         ),
     );
 
-    let config = Config::load(env.path()).unwrap();
+    let config = env.load(env.path()).unwrap();
     let patterns = config.compile_patterns().unwrap();
 
     // Default patterns should apply: **/*.md, **/*.txt
@@ -554,7 +565,7 @@ path = "{}"
 "#,
     );
 
-    let config = Config::load(&project).unwrap();
+    let config = env.load(&project).unwrap();
 
     // *.rs should be overridden by child
     assert_eq!(

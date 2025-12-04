@@ -892,19 +892,26 @@ fn cmd_init(global: bool, force: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Write the config file (commented out as an example)
+    // Write the config file (commented-out example)
     let template = if use_global {
         global_template()
     } else {
         local_template()
     };
 
-    if let Err(e) = fs::write(&config_path, template) {
+    if let Err(e) = fs::write(&config_path, &template) {
         eprintln!("error: failed to write {}: {e}", config_path.display());
         return ExitCode::FAILURE;
     }
 
     println!("Created {}", config_path.display());
+
+    // Show the written config with indentation and syntax highlighting for clarity
+    let highlighter = Highlighter::new();
+    println!();
+    println!("{}", subheader("Configuration written:"));
+    let highlighted = highlighter.highlight_toml(&template);
+    println!("{}", indent_content(&highlighted));
 
     // For local configs, try to add .ra/ to .gitignore
     if !use_global && let Err(e) = update_gitignore(&config_path) {

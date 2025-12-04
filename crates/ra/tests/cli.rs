@@ -6,7 +6,7 @@
 // Integration tests live outside cfg(test) by design
 #![allow(clippy::tests_outside_test_module)]
 
-use std::fs;
+use std::{fs, path::Path};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -22,6 +22,13 @@ fn ra() -> Command {
     Command::cargo_bin("ra").unwrap()
 }
 
+/// Helper to run `ra` with HOME isolated to the provided directory.
+fn ra_with_home(home: &Path) -> Command {
+    let mut cmd = ra();
+    cmd.env("HOME", home);
+    cmd
+}
+
 mod init {
     use super::*;
 
@@ -29,7 +36,11 @@ mod init {
     fn creates_config_file() {
         let dir = temp_dir();
 
-        ra().current_dir(dir.path()).arg("init").assert().success();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("init")
+            .assert()
+            .success();
 
         let config_path = dir.path().join(".ra.toml");
         assert!(config_path.exists());
@@ -43,7 +54,11 @@ mod init {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "existing").unwrap();
 
-        ra().current_dir(dir.path()).arg("init").assert().failure();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("init")
+            .assert()
+            .failure();
     }
 
     #[test]
@@ -51,7 +66,8 @@ mod init {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "old content").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["init", "--force"])
             .assert()
             .success();
@@ -65,7 +81,11 @@ mod init {
         let dir = temp_dir();
         fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
 
-        ra().current_dir(dir.path()).arg("init").assert().success();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("init")
+            .assert()
+            .success();
 
         let gitignore = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert!(gitignore.contains(".ra/"));
@@ -76,10 +96,35 @@ mod init {
         let dir = temp_dir();
         fs::write(dir.path().join(".gitignore"), "*.log\n.ra/\n").unwrap();
 
-        ra().current_dir(dir.path()).arg("init").assert().success();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("init")
+            .assert()
+            .success();
 
         let gitignore = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert_eq!(gitignore.matches(".ra/").count(), 1);
+    }
+
+    #[test]
+    fn prints_config_preview() {
+        let dir = temp_dir();
+
+        let assert = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("init")
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+        assert!(
+            stdout.contains("Configuration written:"),
+            "output did not include preview header: {stdout}"
+        );
+        assert!(
+            stdout.contains("tree.docs"),
+            "output did not include template content: {stdout}"
+        );
     }
 }
 
@@ -89,7 +134,8 @@ mod status {
     #[test]
     fn succeeds_without_config() {
         let dir = temp_dir();
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("status")
             .assert()
             .success();
@@ -100,7 +146,8 @@ mod status {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("status")
             .assert()
             .success();
@@ -116,7 +163,8 @@ mod status {
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("status")
             .assert()
             .success();
@@ -129,7 +177,11 @@ mod check {
     #[test]
     fn succeeds_without_config() {
         let dir = temp_dir();
-        ra().current_dir(dir.path()).arg("check").assert().success();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("check")
+            .assert()
+            .success();
     }
 
     #[test]
@@ -137,7 +189,11 @@ mod check {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
 
-        ra().current_dir(dir.path()).arg("check").assert().failure();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("check")
+            .assert()
+            .failure();
     }
 
     #[test]
@@ -156,7 +212,11 @@ include = ["**/*.md"]
         )
         .unwrap();
 
-        ra().current_dir(dir.path()).arg("check").assert().success();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("check")
+            .assert()
+            .success();
     }
 
     #[test]
@@ -175,7 +235,11 @@ include = ["**/*.rs"]
         )
         .unwrap();
 
-        ra().current_dir(dir.path()).arg("check").assert().failure();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("check")
+            .assert()
+            .failure();
     }
 
     #[test]
@@ -187,7 +251,11 @@ include = ["**/*.rs"]
 
         fs::write(dir.path().join(".ra.toml"), "# config with no trees\n").unwrap();
 
-        ra().current_dir(dir.path()).arg("check").assert().failure();
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("check")
+            .assert()
+            .failure();
     }
 
     #[test]
@@ -195,7 +263,8 @@ include = ["**/*.rs"]
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "[tree\ninvalid").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("check")
             .assert()
             .failure()
@@ -211,7 +280,8 @@ mod inspect {
         let dir = temp_dir();
         fs::write(dir.path().join("test.md"), "# Hello\n\nWorld").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["inspect", "test.md"])
             .assert()
             .success();
@@ -222,7 +292,8 @@ mod inspect {
         let dir = temp_dir();
         fs::write(dir.path().join("notes.txt"), "Plain text").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["inspect", "notes.txt"])
             .assert()
             .success();
@@ -232,7 +303,8 @@ mod inspect {
     fn fails_on_nonexistent_file() {
         let dir = temp_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["inspect", "missing.md"])
             .assert()
             .failure();
@@ -243,7 +315,8 @@ mod inspect {
         let dir = temp_dir();
         fs::write(dir.path().join("data.json"), "{}").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["inspect", "data.json"])
             .assert()
             .failure();
@@ -260,7 +333,8 @@ mod inspect {
         );
         fs::write(dir.path().join("large.md"), content).unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["inspect", "large.md"])
             .assert()
             .success();
@@ -275,7 +349,8 @@ mod update {
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .failure()
@@ -298,7 +373,8 @@ include = ["**/*.md"]
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success()
@@ -320,7 +396,8 @@ path = "./docs"
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success();
@@ -347,7 +424,8 @@ include = ["**/*.md", "**/*.txt"]
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success()
@@ -373,7 +451,8 @@ path = "./docs"
         .unwrap();
 
         // Should succeed overall but report the error
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success()
@@ -396,7 +475,8 @@ path = "./docs"
         .unwrap();
 
         // First index
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success();
@@ -405,7 +485,8 @@ path = "./docs"
         fs::write(docs.join("test.md"), "# Updated content").unwrap();
 
         // Reindex should succeed
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success()
@@ -442,7 +523,8 @@ path = "./docs"
         .unwrap();
 
         // Index the content
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success();
@@ -455,7 +537,8 @@ path = "./docs"
         let dir = temp_dir();
         fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["search", "test"])
             .assert()
             .failure()
@@ -466,7 +549,8 @@ path = "./docs"
     fn finds_matching_documents() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["search", "rust"])
             .assert()
             .success()
@@ -477,7 +561,8 @@ path = "./docs"
     fn returns_no_results_message() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["search", "nonexistent"])
             .assert()
             .success()
@@ -488,7 +573,8 @@ path = "./docs"
     fn supports_multiple_queries() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["search", "rust", "python"])
             .assert()
             .success()
@@ -500,7 +586,8 @@ path = "./docs"
     fn list_mode_shows_titles() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["search", "--list", "rust"])
             .assert()
             .success()
@@ -512,7 +599,8 @@ path = "./docs"
     fn json_output_format() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["search", "--json", "rust"])
             .assert()
             .success()
@@ -544,13 +632,14 @@ path = "./docs"
         )
         .unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success();
 
         // With limit of 3, should only show 3 results in JSON
-        let output = ra()
+        let output = ra_with_home(dir.path())
             .current_dir(dir.path())
             .args(["search", "-n", "3", "--json", "test"])
             .assert()
@@ -583,7 +672,8 @@ path = "./docs"
         .unwrap();
 
         // Don't call update first - search should auto-index
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["search", "test"])
             .assert()
             .success()
@@ -626,7 +716,8 @@ path = "./docs"
         .unwrap();
 
         // Index the content
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success();
@@ -640,7 +731,8 @@ path = "./docs"
         fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
         fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "test.rs"])
             .assert()
             .failure()
@@ -651,7 +743,8 @@ path = "./docs"
     fn fails_on_nonexistent_file() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "nonexistent.rs"])
             .assert()
             .failure()
@@ -667,7 +760,8 @@ path = "./docs"
         fs::write(dir.path().join("code.rs"), "fn main() {}").unwrap();
 
         // Should warn about binary but still succeed if there's a text file
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "image.png", "code.rs"])
             .assert()
             .success()
@@ -681,7 +775,8 @@ path = "./docs"
         // Create only a binary file
         fs::write(dir.path().join("image.png"), [0x89, 0x50, 0x4E, 0x47]).unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "image.png"])
             .assert()
             .failure()
@@ -698,7 +793,8 @@ path = "./docs"
         fs::write(src.join("auth").join("login.rs"), "fn login() {}").unwrap();
 
         // Should find auth-related documentation
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "src/auth/login.rs"])
             .assert()
             .success();
@@ -710,7 +806,7 @@ path = "./docs"
         fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
 
         // With limit of 1, should only show 1 result in JSON
-        let output = ra()
+        let output = ra_with_home(dir.path())
             .current_dir(dir.path())
             .args(["context", "-n", "1", "--json", "test.rs"])
             .assert()
@@ -731,7 +827,8 @@ path = "./docs"
         let dir = setup_indexed_dir();
         fs::write(dir.path().join("test.rs"), "fn authenticate() {}").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "--list", "test.rs"])
             .assert()
             .success();
@@ -742,7 +839,8 @@ path = "./docs"
         let dir = setup_indexed_dir();
         fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "--json", "test.rs"])
             .assert()
             .success()
@@ -758,7 +856,8 @@ path = "./docs"
         fs::write(dir.path().join("handlers.rs"), "fn handle() {}").unwrap();
 
         // Should analyze both and combine signals
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["context", "auth.rs", "handlers.rs"])
             .assert()
             .success();
@@ -804,7 +903,8 @@ path = "./docs"
         .unwrap();
 
         // Index the content
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .arg("update")
             .assert()
             .success();
@@ -816,7 +916,8 @@ path = "./docs"
     fn fails_with_invalid_id_format() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["get", "invalid-no-colon"])
             .assert()
             .failure()
@@ -827,7 +928,8 @@ path = "./docs"
     fn fails_when_not_found() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["get", "docs:nonexistent.md#intro"])
             .assert()
             .failure()
@@ -839,7 +941,8 @@ path = "./docs"
         let dir = setup_indexed_dir();
 
         // The path is relative to the tree root (not including the tree's path)
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["get", "docs:guide.md#installation"])
             .assert()
             .success()
@@ -850,7 +953,7 @@ path = "./docs"
     fn full_document_returns_all_chunks() {
         let dir = setup_indexed_dir();
 
-        let output = ra()
+        let output = ra_with_home(dir.path())
             .current_dir(dir.path())
             .args(["get", "--full-document", "docs:guide.md#installation"])
             .assert()
@@ -867,7 +970,8 @@ path = "./docs"
     fn json_output_format() {
         let dir = setup_indexed_dir();
 
-        ra().current_dir(dir.path())
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
             .args(["get", "--json", "docs:guide.md#installation"])
             .assert()
             .success()
@@ -880,7 +984,7 @@ path = "./docs"
     fn path_without_slug_returns_document() {
         let dir = setup_indexed_dir();
 
-        let output = ra()
+        let output = ra_with_home(dir.path())
             .current_dir(dir.path())
             .args(["get", "docs:guide.md"])
             .assert()
