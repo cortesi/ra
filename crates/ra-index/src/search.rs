@@ -6,7 +6,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    mem,
+    fs, mem,
     ops::Range,
     path::{Path, PathBuf},
     str,
@@ -84,6 +84,13 @@ pub struct SearchParams {
     pub aggregation_threshold: f32,
     /// Whether to skip Phase 3 aggregation. Default: false.
     pub disable_aggregation: bool,
+    /// Limit results to these trees. If empty, search all trees.
+    ///
+    /// Note: BM25 scoring uses corpus-wide statistics (document frequency, average
+    /// document length) computed across all indexed documents, not just the filtered
+    /// trees. This means scores reflect term importance globally. For most use cases
+    /// this is acceptable since relative ranking within results remains meaningful.
+    pub trees: Vec<String>,
 }
 
 impl Default for SearchParams {
@@ -94,7 +101,16 @@ impl Default for SearchParams {
             max_results: DEFAULT_MAX_RESULTS,
             aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
             disable_aggregation: false,
+            trees: Vec::new(),
         }
+    }
+}
+
+impl SearchParams {
+    /// Sets the trees to filter results to.
+    pub fn with_trees(mut self, trees: Vec<String>) -> Self {
+        self.trees = trees;
+        self
     }
 }
 
@@ -191,6 +207,8 @@ pub struct Searcher {
     fuzzy_distance: u8,
     /// Map from tree name to whether it's global.
     tree_is_global: HashMap<String, bool>,
+    /// Map from tree name to root path.
+    tree_paths: HashMap<String, PathBuf>,
     /// Local tree boost multiplier.
     local_boost: f32,
 }
@@ -236,10 +254,14 @@ impl Searcher {
         // Build Levenshtein automaton builder for extracting matched terms
         let lev_builder = LevenshteinAutomatonBuilder::new(fuzzy_distance, true);
 
-        // Build tree global/local map
+        // Build tree global/local map and path map
         let tree_is_global: HashMap<String, bool> = trees
             .iter()
             .map(|t| (t.name.clone(), t.is_global))
+            .collect();
+        let tree_paths: HashMap<String, PathBuf> = trees
+            .iter()
+            .map(|t| (t.name.clone(), t.path.clone()))
             .collect();
 
         Ok(Self {
@@ -250,6 +272,7 @@ impl Searcher {
             lev_builder,
             fuzzy_distance,
             tree_is_global,
+            tree_paths,
             local_boost,
         })
     }
@@ -340,9 +363,14 @@ impl Searcher {
             }
         }
 
-        // Collect and sort by score (highest first)
+        // Collect and sort by score (highest first), then by ID for stability
         let mut results: Vec<SearchResult> = results_by_id.into_values().collect();
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         // Apply limit
         results.truncate(limit);
@@ -382,10 +410,13 @@ impl Searcher {
         query_str: &str,
         params: &SearchParams,
     ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
-        let query = match self.build_query(query_str)? {
+        let content_query = match self.build_query(query_str)? {
             Some(q) => q,
             None => return Ok(Vec::new()),
         };
+
+        // Apply tree filter if specified
+        let query = self.apply_tree_filter(content_query, &params.trees);
 
         // Tokenize query for highlighting
         let query_terms = self.tokenize_query(query_str);
@@ -488,6 +519,46 @@ impl Searcher {
                 Ok(result)
             }
             None => Ok(None),
+        }
+    }
+
+    /// Builds a tree filter query for the given tree names.
+    ///
+    /// Returns None if no trees are specified.
+    fn build_tree_filter(&self, trees: &[String]) -> Option<Box<dyn Query>> {
+        if trees.is_empty() {
+            return None;
+        }
+
+        if trees.len() == 1 {
+            let term = Term::from_field_text(self.schema.tree, &trees[0]);
+            return Some(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        // Multiple trees: OR them together
+        let clauses: Vec<(Occur, Box<dyn Query>)> = trees
+            .iter()
+            .map(|tree_name| {
+                let term = Term::from_field_text(self.schema.tree, tree_name);
+                let query: Box<dyn Query> =
+                    Box::new(TermQuery::new(term, IndexRecordOption::Basic));
+                (Occur::Should, query)
+            })
+            .collect();
+
+        Some(Box::new(BooleanQuery::new(clauses)))
+    }
+
+    /// Wraps a content query with a tree filter.
+    ///
+    /// If no tree filter is provided, returns the original query unchanged.
+    fn apply_tree_filter(&self, content_query: Box<dyn Query>, trees: &[String]) -> Box<dyn Query> {
+        match self.build_tree_filter(trees) {
+            Some(tree_filter) => {
+                let clauses = vec![(Occur::Must, content_query), (Occur::Must, tree_filter)];
+                Box::new(BooleanQuery::new(clauses))
+            }
+            None => content_query,
         }
     }
 
@@ -883,10 +954,12 @@ impl Searcher {
     /// # Arguments
     /// * `signals` - Context signals from analyzed files
     /// * `limit` - Maximum number of results to return
+    /// * `trees` - Limit results to these trees (empty = all trees)
     pub fn search_context(
         &mut self,
         signals: &[crate::ContextSignals],
         limit: usize,
+        trees: &[String],
     ) -> Result<Vec<SearchResult>, IndexError> {
         if signals.is_empty() {
             return Ok(Vec::new());
@@ -909,7 +982,57 @@ impl Searcher {
         // Build query from terms (space-separated terms are ANDed by search)
         // Use search_multi to get term highlighting for each term
         let term_refs: Vec<&str> = all_terms.iter().map(|s| s.as_str()).collect();
-        self.search_multi(&term_refs, limit)
+        let results = self.search_multi(&term_refs, limit)?;
+
+        // Filter by tree if specified
+        if trees.is_empty() {
+            Ok(results)
+        } else {
+            Ok(results
+                .into_iter()
+                .filter(|r| trees.contains(&r.tree))
+                .collect())
+        }
+    }
+
+    /// Reads the full content of a chunk by reading the source file span.
+    ///
+    /// For parent nodes, this includes all child content within the byte range.
+    /// Returns the content from `byte_start` to `byte_end` of the original file.
+    ///
+    /// # Arguments
+    /// * `tree` - The tree name
+    /// * `path` - The file path within the tree
+    /// * `byte_start` - Start byte offset
+    /// * `byte_end` - End byte offset
+    pub fn read_full_content(
+        &self,
+        tree: &str,
+        path: &str,
+        byte_start: u64,
+        byte_end: u64,
+    ) -> Result<String, IndexError> {
+        let tree_root = self
+            .tree_paths
+            .get(tree)
+            .ok_or_else(|| IndexError::Write(format!("unknown tree: {tree}")))?;
+
+        let file_path = tree_root.join(path);
+        let content = fs::read_to_string(&file_path).map_err(|e| {
+            IndexError::Write(format!("failed to read {}: {e}", file_path.display()))
+        })?;
+
+        let start = byte_start as usize;
+        let end = byte_end as usize;
+
+        if end > content.len() || start > end {
+            return Err(IndexError::Write(format!(
+                "invalid byte range [{start}, {end}) for file of {} bytes",
+                content.len()
+            )));
+        }
+
+        Ok(content[start..end].to_string())
     }
 }
 
@@ -1576,5 +1699,52 @@ mod test {
         assert_eq!(result.byte_start, 10);
         assert_eq!(result.byte_end, 50);
         assert_eq!(result.sibling_count, 3);
+    }
+
+    #[test]
+    fn search_aggregated_filters_by_tree() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        // Use params that won't filter via elbow detection
+        let base_params = SearchParams {
+            cutoff_ratio: 0.0, // Disable elbow cutoff
+            disable_aggregation: true,
+            ..Default::default()
+        };
+
+        // Search for "rust" without tree filter - should find all 3 docs
+        let results = searcher.search_aggregated("rust", &base_params).unwrap();
+        assert_eq!(results.len(), 3);
+
+        // Search with filter to "local" tree only - should find 2 docs
+        let params = base_params.clone().with_trees(vec!["local".to_string()]);
+        let results = searcher.search_aggregated("rust", &params).unwrap();
+        assert_eq!(results.len(), 2);
+        for result in &results {
+            assert_eq!(result.tree(), "local");
+        }
+
+        // Search with filter to "global" tree only - should find 1 doc
+        let params = base_params.clone().with_trees(vec!["global".to_string()]);
+        let results = searcher.search_aggregated("rust", &params).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tree(), "global");
+
+        // Search with filter to multiple trees
+        let params = base_params
+            .clone()
+            .with_trees(vec!["local".to_string(), "global".to_string()]);
+        let results = searcher.search_aggregated("rust", &params).unwrap();
+        assert_eq!(results.len(), 3);
+
+        // Search with filter to non-existent tree - should find nothing
+        let params = base_params
+            .clone()
+            .with_trees(vec!["nonexistent".to_string()]);
+        let results = searcher.search_aggregated("rust", &params).unwrap();
+        assert!(results.is_empty());
     }
 }

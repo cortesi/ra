@@ -152,6 +152,10 @@ EXAMPLES:
         /// Show verbose output (aggregation details, constituent matches)
         #[arg(short = 'v', long)]
         verbose: bool,
+
+        /// Limit results to specific trees (can be specified multiple times)
+        #[arg(short = 't', long = "tree")]
+        trees: Vec<String>,
     },
 
     /// Get relevant context for files being worked on
@@ -171,6 +175,10 @@ EXAMPLES:
         /// Output in JSON format
         #[arg(long)]
         json: bool,
+
+        /// Limit results to specific trees (can be specified multiple times)
+        #[arg(short = 't', long = "tree")]
+        trees: Vec<String>,
     },
 
     /// Retrieve a specific chunk or document by ID
@@ -302,6 +310,7 @@ fn main() -> ExitCode {
             cutoff_ratio,
             aggregation_threshold,
             verbose,
+            trees,
         } => {
             // If no limit specified, use a very high max_results so elbow detection
             // is the only cutoff. Otherwise use the specified limit.
@@ -312,6 +321,7 @@ fn main() -> ExitCode {
                 max_results,
                 aggregation_threshold,
                 disable_aggregation: no_aggregation,
+                trees,
             };
             return cmd_search(&queries, &params, list, matches, json, explain, verbose);
         }
@@ -320,8 +330,9 @@ fn main() -> ExitCode {
             limit,
             list,
             json,
+            trees,
         } => {
-            return cmd_context(&files, limit, list, json);
+            return cmd_context(&files, limit, list, json, &trees);
         }
         Commands::Get {
             id,
@@ -692,7 +703,15 @@ fn cmd_search(
     };
 
     // Output results
-    output_aggregated_results(&results, &combined_query, list, matches, json, verbose)
+    output_aggregated_results(
+        &results,
+        &combined_query,
+        list,
+        matches,
+        json,
+        verbose,
+        &searcher,
+    )
 }
 
 /// Outputs aggregated search results in various formats.
@@ -703,6 +722,7 @@ fn output_aggregated_results(
     matches: bool,
     json: bool,
     verbose: bool,
+    searcher: &Searcher,
 ) -> ExitCode {
     if json {
         let json_output = JsonSearchOutput {
@@ -746,8 +766,37 @@ fn output_aggregated_results(
         if results.is_empty() {
             println!("{}", dim("No results found."));
         } else {
+            let mut total_words = 0;
+            let mut total_chars = 0;
             for result in results {
-                print!("{}", format_aggregated_result_list(result, verbose));
+                // Read full content from source file
+                let full_body = searcher
+                    .read_full_content(
+                        result.tree(),
+                        result.path(),
+                        result.byte_start(),
+                        result.byte_end(),
+                    )
+                    .unwrap_or_else(|_| result.body().to_string());
+                if verbose {
+                    total_words += full_body.split_whitespace().count();
+                    total_chars += full_body.len();
+                }
+                print!(
+                    "{}",
+                    format_aggregated_result_list(result, verbose, &full_body)
+                );
+            }
+            if verbose {
+                println!(
+                    "{}",
+                    dim(&format!(
+                        "─── Total: {} results, {} words, {} chars ───",
+                        results.len(),
+                        total_words,
+                        total_chars
+                    ))
+                );
             }
         }
         println!();
@@ -765,9 +814,38 @@ fn output_aggregated_results(
         if results.is_empty() {
             println!("{}", dim("No results found."));
         } else {
+            let mut total_words = 0;
+            let mut total_chars = 0;
             for result in results {
-                print!("{}", format_aggregated_result_full(result, verbose));
+                // Read full content from source file
+                let full_body = searcher
+                    .read_full_content(
+                        result.tree(),
+                        result.path(),
+                        result.byte_start(),
+                        result.byte_end(),
+                    )
+                    .unwrap_or_else(|_| result.body().to_string());
+                if verbose {
+                    total_words += full_body.split_whitespace().count();
+                    total_chars += full_body.len();
+                }
+                print!(
+                    "{}",
+                    format_aggregated_result_full(result, verbose, &full_body)
+                );
                 println!();
+            }
+            if verbose {
+                println!(
+                    "{}",
+                    dim(&format!(
+                        "─── Total: {} results, {} words, {} chars ───",
+                        results.len(),
+                        total_words,
+                        total_chars
+                    ))
+                );
             }
         }
     }
@@ -776,7 +854,14 @@ fn output_aggregated_results(
 }
 
 /// Formats an aggregated search result for full content output.
-fn format_aggregated_result_full(result: &AggregatedSearchResult, verbose: bool) -> String {
+///
+/// The `full_body` parameter contains the complete content from byte_start to byte_end,
+/// including all child nodes' content for parent nodes.
+fn format_aggregated_result_full(
+    result: &AggregatedSearchResult,
+    verbose: bool,
+    full_body: &str,
+) -> String {
     let mut output = String::new();
 
     if verbose && result.is_aggregated() {
@@ -791,10 +876,20 @@ fn format_aggregated_result_full(result: &AggregatedSearchResult, verbose: bool)
     }
     output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
 
-    // Format body with content styling
-    // For aggregated results, we show the parent body, not all constituent bodies
-    let body = result.body();
-    let body_trimmed = body.trim();
+    // Show stats only in verbose mode
+    if verbose {
+        let word_count = full_body.split_whitespace().count();
+        let stats = format!(
+            "{} words, {} chars, score {:.2}",
+            word_count,
+            full_body.len(),
+            result.score()
+        );
+        output.push_str(&format!("{}\n", dim(&stats)));
+    }
+
+    // Format body with content styling - use full content including children
+    let body_trimmed = full_body.trim();
     if !body_trimmed.is_empty() {
         output.push('\n');
         output.push_str(&format_body(body_trimmed, &[]));
@@ -821,7 +916,13 @@ fn format_aggregated_result_full(result: &AggregatedSearchResult, verbose: bool)
 }
 
 /// Formats an aggregated search result for list mode output.
-fn format_aggregated_result_list(result: &AggregatedSearchResult, verbose: bool) -> String {
+///
+/// The `full_body` parameter is the full content including all children.
+fn format_aggregated_result_list(
+    result: &AggregatedSearchResult,
+    verbose: bool,
+    full_body: &str,
+) -> String {
     let mut output = String::new();
 
     if verbose && result.is_aggregated() {
@@ -836,10 +937,17 @@ fn format_aggregated_result_list(result: &AggregatedSearchResult, verbose: bool)
     }
     output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
 
-    // Show stats: content size, score
-    let content_size = result.body().len();
-    let stats = format!("{} chars, score {:.2}", content_size, result.score());
-    output.push_str(&format!("{}\n", dim(&stats)));
+    // Show stats only in verbose mode
+    if verbose {
+        let word_count = full_body.split_whitespace().count();
+        let stats = format!(
+            "{} words, {} chars, score {:.2}",
+            word_count,
+            full_body.len(),
+            result.score()
+        );
+        output.push_str(&format!("{}\n", dim(&stats)));
+    }
 
     // Show constituents for aggregated results (only in verbose mode)
     if verbose && let Some(constituents) = result.constituents() {
@@ -905,7 +1013,13 @@ fn format_aggregated_result_matches(result: &AggregatedSearchResult, verbose: bo
 }
 
 /// Implements the `ra context` command.
-fn cmd_context(files: &[String], limit: usize, list: bool, json: bool) -> ExitCode {
+fn cmd_context(
+    files: &[String],
+    limit: usize,
+    list: bool,
+    json: bool,
+    trees: &[String],
+) -> ExitCode {
     let cwd = match env::current_dir() {
         Ok(cwd) => cwd,
         Err(e) => {
@@ -983,7 +1097,7 @@ fn cmd_context(files: &[String], limit: usize, list: bool, json: bool) -> ExitCo
     };
 
     // Search for context
-    let results = match searcher.search_context(&signals, limit) {
+    let results = match searcher.search_context(&signals, limit, trees) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: context search failed: {e}");

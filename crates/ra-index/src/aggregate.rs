@@ -237,8 +237,13 @@ where
         .map(|(r, _)| r.into_result())
         .collect();
 
-    // Sort by score descending
-    results.sort_by(|a, b| b.score().partial_cmp(&a.score()).unwrap_or(Ordering::Equal));
+    // Sort by score descending, then by ID for stability
+    results.sort_by(|a, b| {
+        b.score()
+            .partial_cmp(&a.score())
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.id().cmp(b.id()))
+    });
 
     results
 }
