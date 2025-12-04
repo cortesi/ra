@@ -9,7 +9,7 @@ use std::{
     process::ExitCode,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, error::ErrorKind};
 use ra_config::{
     CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, discover_config_files,
     format_path_for_display, global_config_path, global_template, local_template,
@@ -32,6 +32,52 @@ struct Cli {
     #[command(subcommand)]
     /// Subcommand to execute.
     command: Commands,
+}
+
+/// Prints custom help with hierarchical subcommand display.
+fn print_hierarchical_help() {
+    use clap::CommandFactory;
+
+    let cmd = Cli::command();
+    let about = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
+
+    println!("{about}");
+    println!();
+    println!("Usage: ra <COMMAND>");
+    println!();
+    println!("Commands:");
+
+    // Collect commands and their subcommands
+    for sub in cmd.get_subcommands() {
+        let name = sub.get_name();
+        if name == "help" {
+            continue; // Print help last
+        }
+
+        let about = sub.get_about().map(|s| s.to_string()).unwrap_or_default();
+        println!("  {name:10} {about}");
+
+        // Print nested subcommands indented
+        for subsub in sub.get_subcommands() {
+            let subname = subsub.get_name();
+            if subname == "help" {
+                continue;
+            }
+            let subabout = subsub
+                .get_about()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            println!("    {subname:8} {subabout}");
+        }
+    }
+
+    println!(
+        "  {:<10} Print this message or the help of the given subcommand(s)",
+        "help"
+    );
+    println!();
+    println!("Options:");
+    println!("  -h, --help  Print help");
 }
 
 #[derive(Subcommand)]
@@ -162,7 +208,22 @@ enum LsWhat {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            // Check if this is a help request for the top-level command
+            if e.kind() == ErrorKind::DisplayHelp {
+                // Check if we're at the top level (no subcommand specified with --help)
+                let args: Vec<_> = env::args().collect();
+                if args.len() <= 2 {
+                    print_hierarchical_help();
+                    return ExitCode::SUCCESS;
+                }
+            }
+            // For all other cases (including subcommand help), let clap handle it
+            e.exit();
+        }
+    };
 
     match cli.command {
         Commands::Search {
