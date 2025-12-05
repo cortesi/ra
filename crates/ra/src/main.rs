@@ -1278,7 +1278,7 @@ fn format_aggregated_result_list(
     );
     output.push_str(&format!("{breadcrumb_line}\n"));
 
-    // Show stats only in verbose mode
+    // Show stats and match details in verbose mode
     if verbose > 0 {
         let word_count = full_body.split_whitespace().count();
         let stats = format!(
@@ -1288,6 +1288,7 @@ fn format_aggregated_result_list(
             result.score()
         );
         output.push_str(&format!("{}\n", dim(&stats)));
+        output.push_str(&format_match_details(result, verbose));
     }
 
     // List mode: no content - just header and title
