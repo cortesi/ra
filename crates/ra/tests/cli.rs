@@ -993,7 +993,12 @@ path = "./docs"
     #[test]
     fn respects_limit() {
         let dir = setup_indexed_dir();
-        fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
+        // Use terms that exist in the indexed docs (rust, programming, systems, safety)
+        fs::write(
+            dir.path().join("test.rs"),
+            "// Rust systems programming with safety guarantees",
+        )
+        .unwrap();
 
         // With limit of 1, should only show 1 result in JSON
         let output = ra_with_home(dir.path())
@@ -1015,7 +1020,8 @@ path = "./docs"
     #[test]
     fn list_mode_output() {
         let dir = setup_indexed_dir();
-        fs::write(dir.path().join("test.rs"), "fn authenticate() {}").unwrap();
+        // Use terms that exist in the indexed docs
+        fs::write(dir.path().join("test.rs"), "// Programming language").unwrap();
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
@@ -1027,7 +1033,8 @@ path = "./docs"
     #[test]
     fn json_output_format() {
         let dir = setup_indexed_dir();
-        fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
+        // Use terms that exist in the indexed docs
+        fs::write(dir.path().join("test.rs"), "// Rust programming language").unwrap();
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
@@ -1041,14 +1048,18 @@ path = "./docs"
     fn multiple_files_combined() {
         let dir = setup_indexed_dir();
 
-        // Create multiple source files
-        fs::write(dir.path().join("auth.rs"), "fn login() {}").unwrap();
-        fs::write(dir.path().join("handlers.rs"), "fn handle() {}").unwrap();
+        // Create multiple source files with terms that exist in the index
+        fs::write(dir.path().join("systems.rs"), "// Rust systems programming").unwrap();
+        fs::write(
+            dir.path().join("scripting.rs"),
+            "// Python scripting language",
+        )
+        .unwrap();
 
         // Should analyze both and combine signals
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "auth.rs", "handlers.rs"])
+            .args(["context", "systems.rs", "scripting.rs"])
             .assert()
             .success();
     }

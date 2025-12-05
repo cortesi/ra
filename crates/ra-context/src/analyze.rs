@@ -206,16 +206,16 @@ mod test {
     use crate::TermSource;
 
     /// Mock IDF provider for testing.
+    ///
+    /// Returns `Some(idf)` for terms that have been added, `None` otherwise.
     struct MockIdf {
         values: HashMap<String, f32>,
-        default: f32,
     }
 
     impl MockIdf {
         fn new() -> Self {
             Self {
                 values: HashMap::new(),
-                default: 2.0,
             }
         }
 
@@ -226,8 +226,8 @@ mod test {
     }
 
     impl IdfProvider for MockIdf {
-        fn idf(&self, term: &str) -> f32 {
-            self.values.get(term).copied().unwrap_or(self.default)
+        fn idf(&self, term: &str) -> Option<f32> {
+            self.values.get(term).copied()
         }
     }
 
@@ -332,7 +332,12 @@ mod test {
 
     #[test]
     fn analyze_builds_query() {
-        let idf = MockIdf::new();
+        // Provide IDF values for terms so they're not filtered out
+        let idf = MockIdf::new()
+            .with_term("auth", 2.0)
+            .with_term("login", 2.0)
+            .with_term("authentication", 2.0)
+            .with_term("logic", 2.0);
         let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
@@ -474,7 +479,11 @@ mod test {
 
     #[test]
     fn context_analysis_accessors() {
-        let idf = MockIdf::new();
+        // Provide IDF values for terms so they're not filtered out
+        let idf = MockIdf::new()
+            .with_term("test", 2.0)
+            .with_term("title", 2.0)
+            .with_term("content", 2.0);
         let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 

@@ -46,17 +46,18 @@ impl RankedTerm {
 /// This abstraction allows the ranking logic to work with different IDF sources,
 /// such as a live index or cached values.
 pub trait IdfProvider {
-    /// Returns the IDF value for a term.
+    /// Returns the IDF value for a term, or `None` if the term doesn't exist in the index.
     ///
-    /// Higher values indicate rarer terms. Terms not in the index should
-    /// return a high IDF value (maximally rare).
-    fn idf(&self, term: &str) -> f32;
+    /// Higher values indicate rarer terms. Returns `None` for terms that don't
+    /// appear in any document, which causes them to be filtered out during ranking.
+    fn idf(&self, term: &str) -> Option<f32>;
 }
 
 /// Ranks terms by their TF-IDF score.
 ///
 /// Terms are scored using `frequency * source_weight * idf` and sorted
-/// in descending order (highest scores first).
+/// in descending order (highest scores first). Terms that don't exist
+/// in the index (IDF returns `None`) are filtered out.
 ///
 /// # Arguments
 /// * `terms` - The weighted terms to rank
@@ -67,9 +68,10 @@ pub trait IdfProvider {
 pub fn rank_terms<P: IdfProvider>(terms: Vec<WeightedTerm>, idf_provider: &P) -> Vec<RankedTerm> {
     let mut ranked: Vec<RankedTerm> = terms
         .into_iter()
-        .map(|term| {
-            let idf = idf_provider.idf(&term.term);
-            RankedTerm::new(term, idf)
+        .filter_map(|term| {
+            // Only include terms that exist in the index
+            let idf = idf_provider.idf(&term.term)?;
+            Some(RankedTerm::new(term, idf))
         })
         .collect();
 
@@ -108,15 +110,12 @@ mod test {
     struct MockIdf {
         /// Map from term to IDF value.
         values: HashMap<String, f32>,
-        /// Default IDF for unknown terms.
-        default: f32,
     }
 
     impl MockIdf {
         fn new() -> Self {
             Self {
                 values: HashMap::new(),
-                default: 5.0, // High IDF for unknown terms
             }
         }
 
@@ -127,8 +126,8 @@ mod test {
     }
 
     impl IdfProvider for MockIdf {
-        fn idf(&self, term: &str) -> f32 {
-            self.values.get(term).copied().unwrap_or(self.default)
+        fn idf(&self, term: &str) -> Option<f32> {
+            self.values.get(term).copied()
         }
     }
 
@@ -236,27 +235,32 @@ mod test {
             WeightedTerm::new("e".to_string(), TermSource::Body),
         ];
 
-        let idf = MockIdf::new();
+        let idf = MockIdf::new()
+            .with_term("a", 1.0)
+            .with_term("b", 1.0)
+            .with_term("c", 1.0)
+            .with_term("d", 1.0)
+            .with_term("e", 1.0);
         let top = top_terms(terms, &idf, 3);
 
         assert_eq!(top.len(), 3);
     }
 
     #[test]
-    fn unknown_terms_get_high_idf() {
+    fn unknown_terms_are_filtered_out() {
         let terms = vec![
             WeightedTerm::new("known".to_string(), TermSource::Body),
             WeightedTerm::new("unknown".to_string(), TermSource::Body),
         ];
 
-        // "known" has low IDF (common), "unknown" uses default high IDF
+        // Only "known" is in the index
         let idf = MockIdf::new().with_term("known", 1.0);
 
         let ranked = rank_terms(terms, &idf);
 
-        // Unknown term should rank higher due to high default IDF
-        assert_eq!(ranked[0].term.term, "unknown");
-        assert!(ranked[0].idf > ranked[1].idf);
+        // Unknown term should be filtered out entirely
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].term.term, "known");
     }
 
     #[test]

@@ -23,8 +23,8 @@ use ra_highlight::{
 };
 use ra_index::{
     AggregatedSearchResult, IndexStats, IndexStatus, Indexer, ProgressReporter, QueryExpr,
-    SearchParams, SearchResult, Searcher, SilentReporter, detect_index_status, index_directory,
-    is_binary_file, open_searcher, parse_query,
+    SearchParams, SearchResult, Searcher, SilentReporter, TreeFilteredSearcher,
+    detect_index_status, index_directory, is_binary_file, open_searcher, parse_query,
 };
 use serde::Serialize;
 
@@ -1395,6 +1395,9 @@ fn cmd_context(
         max_phrases: 5,
     };
 
+    // Use tree-filtered searcher for IDF/phrase lookups when trees are specified
+    let filtered_searcher = TreeFilteredSearcher::new(&searcher, trees.to_vec());
+
     let mut analyses: Vec<(String, ContextAnalysis)> = Vec::new();
     for file_str in files {
         let path = Path::new(file_str);
@@ -1420,8 +1423,14 @@ fn cmd_context(
             }
         };
 
-        // Analyze using the new weighted API
-        let analysis = analyze_context(path, &content, &searcher, &searcher, &analysis_config);
+        // Analyze using the tree-filtered searcher for IDF and phrase validation
+        let analysis = analyze_context(
+            path,
+            &content,
+            &filtered_searcher,
+            &filtered_searcher,
+            &analysis_config,
+        );
 
         if !analysis.is_empty() {
             analyses.push((file_str.clone(), analysis));

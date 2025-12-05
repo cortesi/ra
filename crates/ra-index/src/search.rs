@@ -15,7 +15,7 @@ use std::{
 use levenshtein_automata::{Distance, LevenshteinAutomatonBuilder, SINK_STATE};
 use tantivy::{
     Index, TantivyDocument, Term,
-    collector::TopDocs,
+    collector::{Count, TopDocs},
     directory::MmapDirectory,
     query::{AllQuery, BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery},
     schema::{Field, IndexRecordOption, Value},
@@ -1307,19 +1307,31 @@ impl Searcher {
     ///
     /// Uses the formula: `ln((total_docs + 1) / (doc_freq + 1)) + 1.0`
     ///
-    /// Terms not found in the index receive a high IDF value (maximally rare),
-    /// computed as if `doc_freq = 0`.
+    /// Returns `None` if the term doesn't exist in the index (doc_freq == 0),
+    /// which allows callers to filter out terms that won't match anything.
     ///
     /// The term is tokenized and stemmed using the index's analyzer before lookup,
     /// so "running" will match documents containing "run", "runs", "running", etc.
-    pub fn term_idf(&self, term: &str) -> Result<f32, IndexError> {
+    pub fn term_idf(&self, term: &str) -> Result<Option<f32>, IndexError> {
+        self.term_idf_in_trees(term, &[])
+    }
+
+    /// Computes IDF for a term, optionally filtered to specific trees.
+    ///
+    /// When `trees` is empty, searches the entire index.
+    /// When `trees` contains tree names, only counts documents in those trees.
+    ///
+    /// Returns `None` if the term doesn't exist in the (filtered) index.
+    pub fn term_idf_in_trees(
+        &self,
+        term: &str,
+        trees: &[String],
+    ) -> Result<Option<f32>, IndexError> {
         let reader = self
             .index
             .reader()
             .map_err(|e| IndexError::Write(e.to_string()))?;
         let searcher = reader.searcher();
-
-        let total_docs = searcher.num_docs() as f32;
 
         // Tokenize and stem the term using the same analyzer as indexing
         let mut analyzer = self.analyzer.clone();
@@ -1331,22 +1343,44 @@ impl Searcher {
             term.to_string()
         };
 
-        // Look up document frequency for the stemmed term in the body field
-        let mut doc_freq: u64 = 0;
-        for segment_reader in searcher.segment_readers() {
-            if let Ok(inverted_index) = segment_reader.inverted_index(self.schema.body) {
-                // The term dictionary expects bytes, not a Term object
-                if let Ok(Some(term_info)) = inverted_index.terms().get(stemmed_term.as_bytes()) {
-                    doc_freq += term_info.doc_freq as u64;
-                }
-            }
+        // Build term query for the body field
+        let term_query: Box<dyn Query> = Box::new(TermQuery::new(
+            Term::from_field_text(self.schema.body, &stemmed_term),
+            IndexRecordOption::Basic,
+        ));
+
+        // Apply tree filter if specified
+        let query = self.apply_tree_filter(term_query, trees);
+
+        // Count matching documents
+        let doc_freq = searcher
+            .search(&query, &Count)
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        // Return None if term doesn't exist in the (filtered) index
+        if doc_freq == 0 {
+            return Ok(None);
         }
 
+        // Get total doc count (filtered by tree if specified)
+        let total_docs = if trees.is_empty() {
+            searcher.num_docs() as f32
+        } else {
+            // Count docs in the specified trees
+            let tree_filter = self.build_tree_filter(trees);
+            match tree_filter {
+                Some(filter) => searcher
+                    .search(&filter, &Count)
+                    .map_err(|e| IndexError::Write(e.to_string()))?
+                    as f32,
+                None => searcher.num_docs() as f32,
+            }
+        };
+
         // IDF formula: ln((N + 1) / (df + 1)) + 1.0
-        // This ensures IDF is always positive and terms not in the index get high IDF
         let idf = ((total_docs + 1.0) / (doc_freq as f32 + 1.0)).ln() + 1.0;
 
-        Ok(idf)
+        Ok(Some(idf))
     }
 
     /// Checks if a phrase exists in the index.
@@ -1361,17 +1395,25 @@ impl Searcher {
     /// # Returns
     /// `true` if the phrase exists in at least one document, `false` otherwise.
     pub fn phrase_exists(&self, phrase: &[&str]) -> Result<bool, IndexError> {
+        self.phrase_exists_in_trees(phrase, &[])
+    }
+
+    /// Checks if a phrase exists in the index, optionally filtered to specific trees.
+    ///
+    /// When `trees` is empty, searches the entire index.
+    /// When `trees` contains tree names, only searches documents in those trees.
+    pub fn phrase_exists_in_trees(
+        &self,
+        phrase: &[&str],
+        trees: &[String],
+    ) -> Result<bool, IndexError> {
         if phrase.is_empty() {
             return Ok(false);
         }
 
         if phrase.len() == 1 {
-            // Single word: check if it exists in the index
-            let idf = self.term_idf(phrase[0])?;
-            // If IDF is at its maximum (term not found), the term doesn't exist
-            let total_docs = self.num_docs()? as f32;
-            let max_idf = ((total_docs + 1.0) / 1.0).ln() + 1.0;
-            return Ok(idf < max_idf);
+            // Single word: check if it exists in the (filtered) index
+            return Ok(self.term_idf_in_trees(phrase[0], trees)?.is_some());
         }
 
         // Build a phrase query using Tantivy's PhraseQuery
@@ -1395,14 +1437,17 @@ impl Searcher {
         }
 
         // Create phrase query
-        let phrase_query = PhraseQuery::new(stemmed_terms);
+        let phrase_query: Box<dyn Query> = Box::new(PhraseQuery::new(stemmed_terms));
+
+        // Apply tree filter if specified
+        let query = self.apply_tree_filter(phrase_query, trees);
 
         // Check if any documents match
-        let top_docs = searcher
-            .search(&phrase_query, &TopDocs::with_limit(1))
+        let count = searcher
+            .search(&query, &Count)
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        Ok(!top_docs.is_empty())
+        Ok(count > 0)
     }
 
     /// Retrieves a chunk by its exact ID.
@@ -1626,9 +1671,9 @@ pub fn open_searcher(config: &ra_config::Config) -> Result<Searcher, IndexError>
 use ra_context::{phrase::PhraseValidator, rank::IdfProvider};
 
 impl IdfProvider for Searcher {
-    fn idf(&self, term: &str) -> f32 {
-        // Use the Searcher's term_idf method, defaulting to a high IDF on error
-        self.term_idf(term).unwrap_or(10.0)
+    fn idf(&self, term: &str) -> Option<f32> {
+        // Use the Searcher's term_idf method, returning None on error or if term not found
+        self.term_idf(term).ok().flatten()
     }
 }
 
@@ -1636,6 +1681,41 @@ impl PhraseValidator for Searcher {
     fn phrase_exists(&self, phrase: &[&str]) -> bool {
         // Use the Searcher's phrase_exists method, defaulting to false on error
         Self::phrase_exists(self, phrase).unwrap_or(false)
+    }
+}
+
+/// A wrapper around `Searcher` that filters IDF and phrase lookups to specific trees.
+///
+/// Use this when you need to compute term relevance only within certain document trees,
+/// such as when running context analysis with `--tree` filters.
+pub struct TreeFilteredSearcher<'a> {
+    searcher: &'a Searcher,
+    trees: Vec<String>,
+}
+
+impl<'a> TreeFilteredSearcher<'a> {
+    /// Creates a new tree-filtered searcher.
+    ///
+    /// If `trees` is empty, behaves identically to the underlying `Searcher`.
+    pub fn new(searcher: &'a Searcher, trees: Vec<String>) -> Self {
+        Self { searcher, trees }
+    }
+}
+
+impl IdfProvider for TreeFilteredSearcher<'_> {
+    fn idf(&self, term: &str) -> Option<f32> {
+        self.searcher
+            .term_idf_in_trees(term, &self.trees)
+            .ok()
+            .flatten()
+    }
+}
+
+impl PhraseValidator for TreeFilteredSearcher<'_> {
+    fn phrase_exists(&self, phrase: &[&str]) -> bool {
+        self.searcher
+            .phrase_exists_in_trees(phrase, &self.trees)
+            .unwrap_or(false)
     }
 }
 
@@ -2593,7 +2673,10 @@ mod test {
         // 3 docs, all mention "rust"
         let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
-        let idf = searcher.term_idf("rust").unwrap();
+        let idf = searcher
+            .term_idf("rust")
+            .unwrap()
+            .expect("term should exist");
 
         // IDF formula: ln((N + 1) / (df + 1)) + 1.0
         // With N=3, df=3: ln(4/4) + 1.0 = ln(1) + 1.0 = 0 + 1.0 = 1.0
@@ -2611,7 +2694,10 @@ mod test {
         // Only 1 doc mentions "async"
         let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
-        let idf = searcher.term_idf("async").unwrap();
+        let idf = searcher
+            .term_idf("async")
+            .unwrap()
+            .expect("term should exist");
 
         // IDF formula: ln((N + 1) / (df + 1)) + 1.0
         // With N=3, df=1: ln(4/2) + 1.0 = ln(2) + 1.0 ≈ 0.693 + 1.0 ≈ 1.693
@@ -2627,9 +2713,8 @@ mod test {
 
         let idf = searcher.term_idf("zzzznonexistent").unwrap();
 
-        // IDF formula: ln((N + 1) / (df + 1)) + 1.0
-        // With N=3, df=0: ln(4/1) + 1.0 = ln(4) + 1.0 ≈ 1.386 + 1.0 ≈ 2.386
-        assert!(idf > 2.0, "unknown term should have high IDF (got {idf})");
+        // Unknown terms should return None
+        assert!(idf.is_none(), "unknown term should return None");
     }
 
     #[test]
@@ -2640,8 +2725,14 @@ mod test {
         let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
 
         // "programming" appears in the index, "programs" should stem to the same root
-        let idf_programming = searcher.term_idf("programming").unwrap();
-        let idf_programs = searcher.term_idf("programs").unwrap();
+        let idf_programming = searcher
+            .term_idf("programming")
+            .unwrap()
+            .expect("term should exist");
+        let idf_programs = searcher
+            .term_idf("programs")
+            .unwrap()
+            .expect("term should exist");
 
         // Both should have similar IDF since they stem to the same term
         assert!(
