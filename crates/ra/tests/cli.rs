@@ -1052,6 +1052,127 @@ path = "./docs"
             .assert()
             .success();
     }
+
+    #[test]
+    fn explain_shows_terms_and_query() {
+        let dir = setup_indexed_dir();
+        fs::write(
+            dir.path().join("test.rs"),
+            "// Authentication handler\nfn login() {}",
+        )
+        .unwrap();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["context", "--explain", "test.rs"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let plain = strip_ansi(&stdout);
+
+        // Should show ranked terms section
+        assert!(
+            plain.contains("Ranked terms"),
+            "output should contain ranked terms section: {plain}"
+        );
+        // Should show generated query
+        assert!(
+            plain.contains("Generated query"),
+            "output should contain generated query section: {plain}"
+        );
+    }
+
+    #[test]
+    fn explain_json_format() {
+        let dir = setup_indexed_dir();
+        fs::write(
+            dir.path().join("test.md"),
+            "# Authentication\n\nHandling user logins.",
+        )
+        .unwrap();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["context", "--explain", "--json", "test.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        // Should have files array
+        assert!(
+            json["files"].is_array(),
+            "JSON should have files array: {json}"
+        );
+
+        let file = &json["files"][0];
+        // Should have file path
+        assert!(file["file"].is_string(), "file entry should have file path");
+        // Should have terms array
+        assert!(
+            file["terms"].is_array(),
+            "file entry should have terms array"
+        );
+        // Should have query
+        assert!(
+            file["query"].is_string() || file["query"].is_null(),
+            "file entry should have query field"
+        );
+
+        // Check that terms have expected fields
+        if let Some(terms) = file["terms"].as_array()
+            && !terms.is_empty()
+        {
+            let term = &terms[0];
+            assert!(term["term"].is_string(), "term should have term field");
+            assert!(term["source"].is_string(), "term should have source field");
+            assert!(term["weight"].is_number(), "term should have weight field");
+            assert!(term["score"].is_number(), "term should have score field");
+        }
+    }
+
+    #[test]
+    fn terms_flag_limits_query_terms() {
+        let dir = setup_indexed_dir();
+
+        // Create a file with many distinct terms
+        fs::write(
+            dir.path().join("many_terms.md"),
+            "# Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa\n\n\
+             Lambda Mu Nu Xi Omicron Pi Rho Sigma Tau Upsilon",
+        )
+        .unwrap();
+
+        // Use explain with low term limit to verify fewer terms in query
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args([
+                "context",
+                "--explain",
+                "--json",
+                "--terms",
+                "3",
+                "many_terms.md",
+            ])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        // Check the generated query doesn't have too many terms
+        if let Some(query) = json["files"][0]["query"].as_str() {
+            // Count boosted terms in the query (each term appears as term^score)
+            let boost_count = query.matches('^').count();
+            // Should have at most 3 boosted terms (may have fewer if terms merge)
+            assert!(
+                boost_count <= 3,
+                "Expected at most 3 terms in query, found {boost_count}: {query}"
+            );
+        }
+    }
 }
 
 mod get {

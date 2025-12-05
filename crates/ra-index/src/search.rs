@@ -553,6 +553,72 @@ impl Searcher {
         }
     }
 
+    /// Searches using a pre-built query expression.
+    ///
+    /// This is like `search_aggregated` but accepts a `QueryExpr` directly instead of
+    /// parsing a query string. This is useful when the query has been constructed
+    /// programmatically (e.g., from context analysis).
+    ///
+    /// # Arguments
+    /// * `expr` - The query expression to execute
+    /// * `params` - Search parameters controlling each phase
+    ///
+    /// # Returns
+    /// A vector of aggregated search results, ordered by relevance score.
+    pub fn search_aggregated_expr(
+        &mut self,
+        expr: &ra_query::QueryExpr,
+        params: &SearchParams,
+    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+        use crate::query::QueryError;
+
+        let content_query = match self.query_compiler.compile(expr).map_err(|e| {
+            let query_err: QueryError = e.into();
+            IndexError::Query(query_err)
+        })? {
+            Some(q) => q,
+            None => return Ok(Vec::new()),
+        };
+
+        // Apply tree filter if specified
+        let query = self.apply_tree_filter(content_query, &params.trees);
+
+        // Extract terms from the expression for highlighting
+        let query_terms = expr.extract_terms();
+
+        // Phase 1: Query the index
+        let raw_results = if params.verbosity > 0 {
+            self.execute_query_with_details(
+                &*query,
+                &expr.to_query_string(),
+                &query_terms,
+                params.candidate_limit,
+                params.verbosity >= 2,
+            )?
+        } else {
+            self.execute_query_with_highlights(&*query, &query_terms, params.candidate_limit)?
+        };
+
+        // Convert SearchResults to SearchCandidates
+        let candidates: Vec<SearchCandidate> = raw_results.into_iter().map(|r| r.into()).collect();
+
+        // Phase 2: Apply elbow cutoff
+        let filtered = elbow_cutoff(candidates, params.cutoff_ratio, params.max_results);
+
+        // Phase 3: Aggregate (if enabled)
+        if params.disable_aggregation {
+            Ok(filtered
+                .into_iter()
+                .map(AggregatedSearchResult::single)
+                .collect())
+        } else {
+            let results = aggregate(filtered, params.aggregation_threshold, |parent_id| {
+                self.lookup_parent(parent_id)
+            });
+            Ok(results)
+        }
+    }
+
     /// Looks up a parent node by ID for aggregation.
     fn lookup_parent(&self, parent_id: &str) -> Option<ParentInfo> {
         let reader = self.index.reader().ok()?;
@@ -1555,6 +1621,22 @@ pub fn open_searcher(config: &ra_config::Config) -> Result<Searcher, IndexError>
     })?;
 
     Searcher::open_with_config(&index_dir, config)
+}
+
+use ra_context::{phrase::PhraseValidator, rank::IdfProvider};
+
+impl IdfProvider for Searcher {
+    fn idf(&self, term: &str) -> f32 {
+        // Use the Searcher's term_idf method, defaulting to a high IDF on error
+        self.term_idf(term).unwrap_or(10.0)
+    }
+}
+
+impl PhraseValidator for Searcher {
+    fn phrase_exists(&self, phrase: &[&str]) -> bool {
+        // Use the Searcher's phrase_exists method, defaulting to false on error
+        Self::phrase_exists(self, phrase).unwrap_or(false)
+    }
 }
 
 #[cfg(test)]

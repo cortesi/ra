@@ -124,6 +124,32 @@ impl QueryExpr {
         self.fmt_query_string(false)
     }
 
+    /// Extracts all search terms from the expression.
+    ///
+    /// This recursively collects all terms and phrase words, which is useful
+    /// for highlighting matched terms in search results.
+    pub fn extract_terms(&self) -> Vec<String> {
+        let mut terms = Vec::new();
+        self.collect_terms(&mut terms);
+        terms
+    }
+
+    /// Helper to recursively collect terms.
+    fn collect_terms(&self, terms: &mut Vec<String>) {
+        match self {
+            Self::Term(s) => terms.push(s.clone()),
+            Self::Phrase(words) => terms.extend(words.iter().cloned()),
+            Self::Not(inner) => inner.collect_terms(terms),
+            Self::And(exprs) | Self::Or(exprs) => {
+                for expr in exprs {
+                    expr.collect_terms(terms);
+                }
+            }
+            Self::Field { expr, .. } => expr.collect_terms(terms),
+            Self::Boost { expr, .. } => expr.collect_terms(terms),
+        }
+    }
+
     /// Internal helper for query string formatting.
     fn fmt_query_string(&self, in_field: bool) -> String {
         match self {

@@ -10,17 +10,19 @@ use std::{
 };
 
 use clap::{Parser, Subcommand, error::ErrorKind};
+use comfy_table::{Cell, Table, presets::UTF8_FULL_CONDENSED};
 use ra_config::{
     CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, discover_config_files,
     format_path_for_display, global_config_path, global_template, local_template,
 };
+use ra_context::{AnalysisConfig, ContextAnalysis, analyze_context};
 use ra_document::parse_file;
 use ra_highlight::{
     Highlighter, breadcrumb, dim, error, format_body, header, indent_content, subheader, theme,
     warning,
 };
 use ra_index::{
-    AggregatedSearchResult, ContextAnalyzer, IndexStats, IndexStatus, Indexer, ProgressReporter,
+    AggregatedSearchResult, IndexStats, IndexStatus, Indexer, ProgressReporter, QueryExpr,
     SearchParams, SearchResult, Searcher, SilentReporter, detect_index_status, index_directory,
     is_binary_file, open_searcher, parse_query,
 };
@@ -169,6 +171,10 @@ EXAMPLES:
         #[arg(short = 'n', long, default_value = "10")]
         limit: usize,
 
+        /// Maximum terms to include in the query
+        #[arg(long, default_value = "15")]
+        terms: usize,
+
         /// Output titles and snippets only
         #[arg(long)]
         list: bool,
@@ -176,6 +182,10 @@ EXAMPLES:
         /// Output in JSON format
         #[arg(long)]
         json: bool,
+
+        /// Show term analysis and generated query without searching
+        #[arg(long)]
+        explain: bool,
 
         /// Limit results to specific trees (can be specified multiple times)
         #[arg(short = 't', long = "tree")]
@@ -330,11 +340,13 @@ fn main() -> ExitCode {
         Commands::Context {
             files,
             limit,
+            terms,
             list,
             json,
+            explain,
             trees,
         } => {
-            return cmd_context(&files, limit, list, json, &trees);
+            return cmd_context(&files, limit, terms, list, json, explain, &trees);
         }
         Commands::Get {
             id,
@@ -794,33 +806,6 @@ fn aggregated_match_ranges(result: &AggregatedSearchResult, full_body: &str) -> 
             merge_ranges(ranges)
         }
     }
-}
-
-/// Formats a search result for list mode output.
-fn format_result_list(result: &SearchResult) -> String {
-    let mut output = String::new();
-    output.push_str(&format!(
-        "─── {} ───\n",
-        highlight_id_with_path(&result.id, &result.path_match_ranges)
-    ));
-    let breadcrumb_line = highlight_breadcrumb_title(
-        &result.breadcrumb,
-        &result.title,
-        &result.title_match_ranges,
-    );
-    output.push_str(&format!("{breadcrumb_line}\n"));
-
-    // Show stats: match count, content size, score
-    let match_count = result.match_ranges.len();
-    let content_size = result.body.len();
-    let stats = format!(
-        "{} matches, {} chars, score {:.2}",
-        match_count, content_size, result.score
-    );
-    output.push_str(&format!("{}\n", dim(&stats)));
-
-    output.push('\n');
-    output
 }
 
 /// Extracts lines from text that contain at least one match range, with highlighting.
@@ -1367,8 +1352,10 @@ fn format_aggregated_result_matches(
 fn cmd_context(
     files: &[String],
     limit: usize,
+    max_terms: usize,
     list: bool,
     json: bool,
+    explain: bool,
     trees: &[String],
 ) -> ExitCode {
     let cwd = match env::current_dir() {
@@ -1394,20 +1381,21 @@ fn cmd_context(
         return ExitCode::FAILURE;
     }
 
-    // Compile context patterns
-    let patterns = match CompiledContextPatterns::compile(&config.context) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("error: failed to compile context patterns: {e}");
-            return ExitCode::FAILURE;
-        }
+    // Ensure index is fresh (needed for both explain and search modes)
+    let searcher = match ensure_index_fresh(&config) {
+        Ok(s) => s,
+        Err(code) => return code,
     };
 
-    // Create analyzer
-    let analyzer = ContextAnalyzer::new(&config.context, patterns);
+    // Analyze each file using the new weighted analysis
+    let analysis_config = AnalysisConfig {
+        max_terms,
+        min_term_length: 3,
+        max_phrase_candidates: 20,
+        max_phrases: 5,
+    };
 
-    // Analyze each file
-    let mut signals = Vec::new();
+    let mut analyses: Vec<(String, ContextAnalysis)> = Vec::new();
     for file_str in files {
         let path = Path::new(file_str);
 
@@ -1423,32 +1411,53 @@ fn cmd_context(
             continue;
         }
 
-        // Analyze the file
-        match analyzer.analyze_file(path) {
-            Ok(signal) => {
-                if !signal.is_empty() {
-                    signals.push(signal);
-                }
-            }
+        // Read file content
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
             Err(e) => {
-                eprintln!("warning: failed to analyze {file_str}: {e}");
+                eprintln!("warning: failed to read {file_str}: {e}");
+                continue;
             }
+        };
+
+        // Analyze using the new weighted API
+        let analysis = analyze_context(path, &content, &searcher, &searcher, &analysis_config);
+
+        if !analysis.is_empty() {
+            analyses.push((file_str.clone(), analysis));
         }
     }
 
-    if signals.is_empty() {
+    if analyses.is_empty() {
         eprintln!("error: no analyzable files provided");
         return ExitCode::FAILURE;
     }
 
-    // Ensure index is fresh
-    let mut searcher = match ensure_index_fresh(&config) {
-        Ok(s) => s,
-        Err(code) => return code,
+    // Handle --explain mode
+    if explain {
+        return output_context_explain(&analyses, json);
+    }
+
+    // Build a combined query expression from all file analyses
+    let combined_expr = build_combined_context_expr(&analyses);
+    let Some(expr) = combined_expr else {
+        println!("{}", dim("No context terms extracted."));
+        return ExitCode::SUCCESS;
     };
 
-    // Search for context
-    let results = match searcher.search_context(&signals, limit, trees) {
+    // Execute the search using the query expression directly
+    let mut searcher = searcher;
+    let params = SearchParams {
+        candidate_limit: 100,
+        cutoff_ratio: 0.5,
+        max_results: limit,
+        aggregation_threshold: 0.5,
+        disable_aggregation: false,
+        trees: trees.to_vec(),
+        verbosity: 0,
+    };
+
+    let results = match searcher.search_aggregated_expr(&expr, &params) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: context search failed: {e}");
@@ -1456,62 +1465,64 @@ fn cmd_context(
         }
     };
 
-    // Build combined query description for JSON output
-    let query_description = files.join(" ");
+    // Output results (use query string representation for display)
+    let query_display = expr.to_query_string();
+    output_aggregated_results(&results, &query_display, list, false, json, 0, &searcher)
+}
 
-    // Output results
+/// Builds a combined query expression from multiple file analyses.
+fn build_combined_context_expr(analyses: &[(String, ContextAnalysis)]) -> Option<QueryExpr> {
+    let exprs: Vec<QueryExpr> = analyses
+        .iter()
+        .filter_map(|(_, analysis)| analysis.query_expr().cloned())
+        .collect();
+
+    if exprs.is_empty() {
+        return None;
+    }
+
+    if exprs.len() == 1 {
+        return exprs.into_iter().next();
+    }
+
+    // Combine multiple queries with OR
+    Some(QueryExpr::or(exprs))
+}
+
+/// Outputs explain mode information for context analysis.
+fn output_context_explain(analyses: &[(String, ContextAnalysis)], json: bool) -> ExitCode {
     if json {
-        let json_output = JsonSearchOutput {
-            queries: vec![JsonQueryResults {
-                query: query_description,
-                total_matches: results.len(),
-                results: results
-                    .iter()
-                    .map(|r| JsonSearchResult {
-                        id: r.id.clone(),
-                        tree: r.tree.clone(),
-                        path: r.path.clone(),
-                        title: r.title.clone(),
-                        breadcrumb: r.breadcrumb.clone(),
-                        score: r.score,
-                        snippet: r.snippet.clone(),
-                        body: Some(r.body.clone()),
-                        content: if list {
-                            None
-                        } else {
-                            Some(format!("> {}\n\n{}", r.breadcrumb, r.body))
-                        },
-                        match_ranges: Some(
-                            r.match_ranges
-                                .iter()
-                                .map(|range| JsonMatchRange {
-                                    offset: range.start,
-                                    length: range.end - range.start,
-                                })
-                                .collect(),
-                        ),
-                        title_match_ranges: Some(
-                            r.title_match_ranges
-                                .iter()
-                                .map(|range| JsonMatchRange {
-                                    offset: range.start,
-                                    length: range.end - range.start,
-                                })
-                                .collect(),
-                        ),
-                        path_match_ranges: Some(
-                            r.path_match_ranges
-                                .iter()
-                                .map(|range| JsonMatchRange {
-                                    offset: range.start,
-                                    length: range.end - range.start,
-                                })
-                                .collect(),
-                        ),
-                    })
-                    .collect(),
-            }],
+        // JSON output for explain mode
+        let json_output = JsonContextExplain {
+            files: analyses
+                .iter()
+                .map(|(file, analysis)| JsonFileAnalysis {
+                    file: file.clone(),
+                    terms: analysis
+                        .ranked_terms
+                        .iter()
+                        .map(|rt| JsonTermAnalysis {
+                            term: rt.term.term.clone(),
+                            source: rt.term.source.to_string(),
+                            weight: rt.term.weight,
+                            frequency: rt.term.frequency,
+                            idf: rt.idf,
+                            score: rt.score,
+                        })
+                        .collect(),
+                    phrases: analysis
+                        .phrases
+                        .iter()
+                        .map(|p| JsonPhraseAnalysis {
+                            phrase: p.as_string(),
+                            score: p.score,
+                        })
+                        .collect(),
+                    query: analysis.query_string().map(|s| s.to_string()),
+                })
+                .collect(),
         };
+
         match serde_json::to_string_pretty(&json_output) {
             Ok(json_str) => println!("{json_str}"),
             Err(e) => {
@@ -1519,27 +1530,111 @@ fn cmd_context(
                 return ExitCode::FAILURE;
             }
         }
-    } else if list {
-        if results.is_empty() {
-            println!("{}", dim("No relevant context found."));
-        } else {
-            for result in &results {
-                print!("{}", format_result_list(result));
-            }
-        }
     } else {
-        // Full content mode
-        if results.is_empty() {
-            println!("{}", dim("No relevant context found."));
-        } else {
-            for result in &results {
-                print!("{}", format_result_full(result));
+        // Human-readable explain output
+        for (file, analysis) in analyses {
+            println!("{}", subheader(&format!("File: {file}")));
+            println!();
+
+            // Show ranked terms
+            println!("{}", subheader("Ranked terms:"));
+            if analysis.ranked_terms.is_empty() {
+                println!("  {}", dim("(none)"));
+            } else {
+                let mut table = Table::new();
+                table.load_preset(UTF8_FULL_CONDENSED);
+                table.set_header(vec!["Term", "Source", "Weight", "Freq", "IDF", "Score"]);
+
+                for rt in &analysis.ranked_terms {
+                    table.add_row(vec![
+                        Cell::new(&rt.term.term),
+                        Cell::new(rt.term.source.to_string()),
+                        Cell::new(format!("{:.1}", rt.term.weight)),
+                        Cell::new(rt.term.frequency.to_string()),
+                        Cell::new(format!("{:.2}", rt.idf)),
+                        Cell::new(format!("{:.2}", rt.score)),
+                    ]);
+                }
+
+                println!("{table}");
+            }
+            println!();
+
+            // Show phrases
+            if !analysis.phrases.is_empty() {
+                println!("{}", subheader("Phrases:"));
+                for phrase in &analysis.phrases {
+                    println!(
+                        "  \"{}\" {}",
+                        phrase.as_string(),
+                        dim(&format!("(score: {:.2})", phrase.score))
+                    );
+                }
                 println!();
             }
+
+            // Show generated query as AST tree
+            println!("{}", subheader("Generated query:"));
+            if let Some(expr) = analysis.query_expr() {
+                // Use the Display impl which shows a multi-line tree structure
+                let tree = expr.to_string();
+                for line in tree.lines() {
+                    println!("  {line}");
+                }
+            } else {
+                println!("  {}", dim("(no query generated)"));
+            }
+            println!();
         }
     }
 
     ExitCode::SUCCESS
+}
+
+/// JSON output for context explain mode.
+#[derive(Serialize)]
+struct JsonContextExplain {
+    /// Analysis results for each file.
+    files: Vec<JsonFileAnalysis>,
+}
+
+/// JSON output for a single file's context analysis.
+#[derive(Serialize)]
+struct JsonFileAnalysis {
+    /// File path.
+    file: String,
+    /// Ranked terms with scores.
+    terms: Vec<JsonTermAnalysis>,
+    /// Validated phrases.
+    phrases: Vec<JsonPhraseAnalysis>,
+    /// Generated query string.
+    query: Option<String>,
+}
+
+/// JSON output for a single term's analysis.
+#[derive(Serialize)]
+struct JsonTermAnalysis {
+    /// The term text.
+    term: String,
+    /// Source location (PathFilename, MarkdownH1, Body, etc.).
+    source: String,
+    /// Base weight from source.
+    weight: f32,
+    /// Frequency in the document.
+    frequency: u32,
+    /// IDF value from the index.
+    idf: f32,
+    /// Final TF-IDF score.
+    score: f32,
+}
+
+/// JSON output for a phrase analysis.
+#[derive(Serialize)]
+struct JsonPhraseAnalysis {
+    /// The phrase text.
+    phrase: String,
+    /// Combined score.
+    score: f32,
 }
 
 /// Parses a chunk ID into (tree, path, optional slug).

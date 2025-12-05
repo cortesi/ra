@@ -8,6 +8,7 @@ workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+comfy-table = "7.2.1"
 ra-config = { path = "../ra-config" }
 ra-context = { path = "../ra-context" }
 ra-document = { path = "../ra-document" }
