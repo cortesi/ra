@@ -70,12 +70,11 @@ Breadcrumbs make parent context searchable without inflating parent bodies.
 
 ### Chunk Identifiers and Slugs
 
-Chunk IDs stay stable: `{tree}:{path}#{slug}`. Slug generation is unchanged:
-lowercase, keep alphanumerics/hyphens/underscores, convert spaces to hyphens,
-collapse repeats, and deduplicate sequential duplicates with numeric suffixes.
-Special cases:
-- Preamble: `#preamble`
-- Plain text files (no headings): no fragment (`tree:path`)
+Chunk IDs use the format `{tree}:{path}#{slug}` for heading nodes and
+`{tree}:{path}` for document nodes. Plain text files (no headings) use the
+document format with no fragment.
+
+See [slugs.md](slugs.md) for the slug generation algorithm.
 
 
 ## Text Analysis
@@ -131,106 +130,9 @@ allowing searches for "api" to match files in the api directory.
 
 ## Query Processing
 
-### Query Syntax
-
-ra supports a rich query syntax with boolean operators, grouping, negation, and
-field-specific searches.
-
-#### Basic Operators
-
-| Syntax | Meaning | Example |
-|--------|---------|---------|
-| `term` | Term must appear | `rust` |
-| `term1 term2` | Both terms must appear (implicit AND) | `rust async` |
-| `"phrase"` | Exact phrase match | `"error handling"` |
-| `-term` | Term must NOT appear | `-deprecated` |
-| `term1 OR term2` | Either term (case-insensitive) | `rust OR golang` |
-| `(expr)` | Grouping | `(rust OR golang) async` |
-
-#### Field-Specific Queries
-
-| Syntax | Meaning | Example |
-|--------|---------|---------|
-| `title:term` | Search only in titles | `title:guide` |
-| `body:term` | Search only in body text | `body:configuration` |
-| `tags:term` | Search only in tags | `tags:tutorial` |
-| `path:term` | Search only in file paths | `path:api` |
-| `tree:name` | Filter to specific tree | `tree:docs` |
-
-Field queries support all operators:
-- `title:"getting started"` — phrase in title
-- `title:(rust OR golang)` — either term in title
-- `-title:deprecated` — title must NOT contain term
-
-#### Operator Precedence
-
-From highest to lowest:
-1. Quoted phrases: `"..."`
-2. Field prefixes: `field:`
-3. Negation: `-`
-4. Grouping: `(...)`
-5. OR (explicit keyword)
-6. AND (implicit, between adjacent terms)
-
-#### Examples
-
-```
-rust async                      # rust AND async
-"error handling"                # exact phrase
-rust -deprecated                # rust but NOT deprecated
-rust OR golang                  # either language
-(rust async) OR (go goroutine)  # grouped alternatives
-title:guide rust                # "guide" in title AND "rust" anywhere
-tree:docs authentication        # search only in "docs" tree
-title:(api OR sdk) -internal    # api or sdk in title, excluding internal
-```
-
-#### Shell Escaping
-
-When using ra from the command line, be aware of shell interpretation:
-
-```bash
-# Quotes need escaping or outer quotes
-ra search '"error handling"'           # single quotes protect double quotes
-ra search "\"error handling\""         # escaped double quotes
-
-# Parentheses need quoting
-ra search '(rust OR golang) async'     # single quotes protect parens
-ra search "(rust OR golang) async"     # double quotes also work
-
-# OR is safe (no shell meaning)
-ra search rust OR golang               # works without quotes
-
-# Negation is safe (not at line start)
-ra search rust -deprecated             # works without quotes
-```
-
-#### Debugging Queries
-
-Use `--explain` to see how ra parses your query:
-
-```bash
-$ ra search --explain 'title:guide (rust OR golang)'
-Query AST: And([Field { name: "title", expr: Term("guide") }, Or([Term("rust"), Term("golang")])])
-```
-
-#### Error Messages
-
-ra provides helpful error messages for invalid queries:
-
-```
-$ ra search 'title:'
-Error: expected term, phrase, or group after 'title:'
-
-$ ra search '(rust async'
-Error: expected closing parenthesis
-
-$ ra search '"unclosed phrase'
-Error: unclosed quote starting at position 0
-
-$ ra search 'foo:bar'
-Error: unknown field 'foo'. Valid fields: title, body, tags, path, tree
-```
+ra supports a rich query syntax with boolean operators, phrases, negation,
+field-specific searches, and boosting. See [query.md](query.md) for the
+complete query syntax reference.
 
 ### Query Construction
 

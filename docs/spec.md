@@ -97,8 +97,7 @@ showing its hierarchy path (e.g., `> Parent Heading › Child Heading`).
 
 Each chunk has a unique identifier: `{tree}:{relative_path}#{heading_slug}`
 
-Slugs are GitHub-compatible (lowercase, punctuation removed, spaces become
-hyphens). Content before the first heading uses `#preamble`.
+See [slugs.md](slugs.md) for the slug generation algorithm.
 
 Use `ra inspect doc <file>` to see exactly how ra parses and chunks a document.
 
