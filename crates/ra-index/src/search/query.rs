@@ -1,12 +1,16 @@
 //! Query construction helpers for Searcher.
 
-use tantivy::Term;
-use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
-use tantivy::schema::IndexRecordOption;
+use tantivy::{
+    Term,
+    query::{BooleanQuery, Occur, Query, TermQuery},
+    schema::IndexRecordOption,
+};
 
 use super::Searcher;
-use crate::IndexError;
-use crate::query::{QueryError, parse};
+use crate::{
+    IndexError,
+    query::{QueryError, parse},
+};
 
 impl Searcher {
     /// Parses and compiles a query string into a Tantivy query.

@@ -1,7 +1,6 @@
 //! Data structures returned by search.
 
-use std::collections::HashMap;
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 /// Details about how a term matched in a specific field.
 #[derive(Debug, Clone, Default)]

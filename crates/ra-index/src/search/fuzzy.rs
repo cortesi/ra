@@ -1,11 +1,12 @@
 //! Fuzzy term lookup helpers and Levenshtein automaton wrapper.
 
-use std::collections::{HashMap, HashSet};
-use std::str;
+use std::{
+    collections::{HashMap, HashSet},
+    str,
+};
 
 use levenshtein_automata::{Distance, SINK_STATE};
-use tantivy::Searcher as TvSearcher;
-use tantivy::schema::Field;
+use tantivy::{Searcher as TvSearcher, schema::Field};
 use tantivy_fst::Automaton;
 
 use super::Searcher;

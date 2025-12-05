@@ -1,7 +1,9 @@
 //! Parameter types for search execution.
 
-use crate::aggregate::DEFAULT_AGGREGATION_THRESHOLD;
-use crate::elbow::{DEFAULT_CUTOFF_RATIO, DEFAULT_MAX_RESULTS};
+use crate::{
+    aggregate::DEFAULT_AGGREGATION_THRESHOLD,
+    elbow::{DEFAULT_CUTOFF_RATIO, DEFAULT_MAX_RESULTS},
+};
 
 /// Default number of candidates to retrieve from the index in Phase 1.
 pub const DEFAULT_CANDIDATE_LIMIT: usize = 100;

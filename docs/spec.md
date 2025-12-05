@@ -1,60 +1,54 @@
-# ra: Research Assistant
+# ra Specification
 
-A knowledge management system for autonomous coding and writing agents.
-
-## Overview
-
-ra provides structured access to curated knowledge bases for AI agents. Users
-maintain collections of markdown documents—project-specific and global—that
-provide context for agent tasks. Because the full corpus may exceed practical
-context limits, ra indexes these documents and exposes search tools that agents
-use to retrieve relevant context on demand.
-
-### Use Cases
-
-- Project documentation and coding style guides for development agents
-- Background research and world-building notes for writing agents
-- Business context and historical data for report-generation agents
-
-### Design Principles
-
-- **Composable**: Hierarchical configuration overlays global and local knowledge
-- **Lean**: Chunk-level retrieval keeps context focused
-- **Simple**: Markdown in, markdown out—no proprietary formats
-- **Fast**: Tantivy-powered full-text search with incremental indexing
-- **Runtime over compile-time**: Agents search for what they need when they need
-  it, rather than anticipating needs at configuration time
-- **Minimal agent API**: Agents provide keywords; ra handles query construction,
-  field boosting, tree selection, and ranking internally
+This document is the authoritative reference for ra's features. Sections marked **[Planned]**
+describe features not yet implemented.
 
 
 ## Configuration
 
-Configuration uses TOML files named `.ra.toml`. ra resolves configuration by
-walking up the directory tree from CWD, collecting and merging any `.ra.toml`
-files found, with `~/.ra.toml` as the global config with lowest precedence.
-Files closer to CWD take precedence.
+ra uses TOML files named `.ra.toml`. Configuration is resolved by walking up the directory
+tree from the current working directory, collecting and merging any `.ra.toml` files found.
+`~/.ra.toml` is loaded last with lowest precedence. Files closer to the working directory
+take precedence.
 
-### Key Concepts
+### Trees
 
-**Trees** are named collections of documents. Each tree specifies a path and
-optional include/exclude glob patterns. Trees defined in `~/.ra.toml` are
-global; others are local. Local trees receive a relevance boost in search
-results.
+Trees are named collections of documents. Each tree specifies a root path and optional
+include/exclude patterns:
 
-**Context patterns** map file globs to search terms, helping ra find relevant
-documentation when analyzing source files (e.g., `*.rs` → `["rust"]`).
+```toml
+[tree.docs]
+path = "./docs"
+include = ["**/*.md", "**/*.txt"]  # default if omitted
+exclude = ["**/drafts/**"]
+```
+
+Trees defined in `~/.ra.toml` are global. Trees defined elsewhere are local. Local trees
+receive a relevance boost in search results (configurable via `settings.local_boost`).
+
+### Context Patterns
+
+Context patterns associate file globs with search terms, providing hints when analyzing
+source files:
+
+```toml
+[context.patterns]
+"*.rs" = ["rust"]
+"src/api/**" = ["http", "api"]
+```
+
+These patterns are surfaced by `ra inspect ctx` and available to custom tooling. They are
+not yet incorporated into the generated queries from `ra context`.
 
 ### Merge Semantics
 
-- Child configurations override parent values for scalar settings
-- Tree definitions are merged by name; child completely replaces parent if same
-  name
-- Context patterns are merged; child patterns take precedence for identical
-  globs
+- Scalar settings: closer files override more distant files.
+- Trees: merged by name; a tree definition completely replaces any same-named tree from a
+  more distant config.
+- Context patterns: merged by glob key; closer definitions take precedence.
 
-See `ra config` for the effective merged configuration and `ra init --help` for
-creating starter configurations.
+Use `ra config` to see the effective merged configuration. Use `ra init` to generate a
+starter configuration file.
 
 
 ## Document Format
@@ -63,108 +57,229 @@ ra indexes markdown (`.md`) and plain text (`.txt`) files.
 
 ### Frontmatter
 
-YAML frontmatter is parsed when present in markdown files:
+YAML frontmatter in markdown files is parsed when present:
 
 ```markdown
 ---
-title: Rust Error Handling Patterns
+title: Rust Error Handling
 tags: [rust, errors, patterns]
 ---
-
-# Content starts here
 ```
 
-- `title`: Indexed with elevated weight; used in search results
-- `tags`: Indexed with elevated weight; supports Obsidian-style tags
+- `title`: Indexed with elevated weight; used as the document title in results.
+- `tags`: Indexed with elevated weight; supports Obsidian-style tags.
 
-If no frontmatter title exists, the first heading is used as the document
-title.
+If no frontmatter title exists, the first h1 heading is used. If there's no h1, the filename
+(without extension) becomes the title.
 
 ### Chunking
 
-ra uses adaptive chunking that automatically finds the right split level for
-each document:
+ra builds a hierarchical chunk tree from each document:
 
-1. If document is smaller than `min_chunk_size`, keep it whole
-2. Find the first heading level (h1, h2, h3, etc.) with 2+ headings
-3. Chunk at that level
-4. If no level qualifies, keep the document whole
+- The document itself is the root node at depth 0.
+- Each markdown heading (h1–h6) creates a child node at its corresponding depth.
+- Heading spans run from the byte after the heading line to the byte before the next heading
+  of equal or lower depth (or end of file).
+- Headings with empty spans (no content before the next heading) are discarded.
+- All surviving nodes are indexed, including those with empty bodies, so titles remain
+  searchable.
 
-Each chunk inherits the document's frontmatter and includes a breadcrumb line
-showing its hierarchy path (e.g., `> Parent Heading › Child Heading`).
+Plain text files produce a single document chunk with the entire file as its body.
 
-### Chunk Identity
+ra does not split large sections. Document structure should provide sufficient granularity.
+See [chunking.md](chunking.md) for the complete specification.
 
-Each chunk has a unique identifier: `{tree}:{relative_path}#{heading_slug}`
+### Chunk Identifiers
 
-See [slugs.md](slugs.md) for the slug generation algorithm.
+Each chunk has a unique identifier:
 
-Use `ra inspect doc <file>` to see exactly how ra parses and chunks a document.
+- Document chunks: `{tree}:{relative_path}`
+- Heading chunks: `{tree}:{relative_path}#{slug}`
+
+Slugs are generated from heading text using a GitHub-compatible algorithm. See
+[slugs.md](slugs.md) for details.
 
 
 ## Indexing
 
-The search index lives in `.ra/index/` as a sibling to the nearest `.ra.toml`.
+The search index is stored in `.ra/index/` as a sibling to the nearest `.ra.toml`. If only
+the global config exists, the index is stored in `~/.ra/index/`.
+
 ra uses Tantivy for full-text search with:
 
 - Field boosting (title > tags > path > body)
-- Stemming (configurable language)
+- Configurable stemming (18 languages supported)
+- Fuzzy matching with configurable Levenshtein distance
 - Incremental updates based on file modification times
-- Automatic reindexing when configuration changes
+- Automatic full rebuild when indexing-relevant configuration changes
 
-Use `ra status` to check index state and `ra update` to force a rebuild.
+### Index Schema
+
+| Field | Searchable | Stored | Boost |
+|-------|------------|--------|-------|
+| id | Exact match | Yes | — |
+| title | Full-text | Yes | 3.0× |
+| tags | Full-text | Yes | 2.5× |
+| path | Full-text | Yes | 2.0× |
+| path_components | Full-text | No | 2.0× |
+| tree | Exact match | Yes | — |
+| body | Full-text | Yes | 1.0× |
+| breadcrumb | No | Yes | — |
+| mtime | Filter/sort | No | — |
 
 
 ## Search
 
-Agents provide simple search terms. ra handles the complexity internally.
+Search operates in three phases:
 
-| Input | Interpretation |
-|-------|----------------|
-| `error handling` | Keywords, AND'd together |
-| `"error handling"` | Exact phrase match |
-| `"error handling" "logging"` | Multi-topic: both phrases searched |
+1. **Candidate retrieval**: Query the Tantivy index for up to `candidate_limit` results
+   ranked by BM25.
 
-Multi-topic research allows gathering context across several domains in a single
-call, supporting the "research phase" pattern where an agent gathers broad
-context before making decisions.
+2. **Elbow cutoff**: Detect the natural boundary where relevance drops. Cut results when
+   the score ratio between adjacent results falls below `cutoff_ratio`.
 
-Results are ranked by BM25 with field boosting and tree locality adjustments.
-Local trees receive a configurable boost over global trees.
+3. **Hierarchical aggregation**: When multiple sibling chunks match and their count meets
+   `aggregation_threshold`, merge them into their parent chunk. This cascades up the
+   hierarchy.
+
+After aggregation, any result whose ancestor also appears in results is filtered out.
+
+### Query Syntax
+
+ra supports a rich query language:
+
+| Syntax | Meaning |
+|--------|---------|
+| `term` | Must contain term |
+| `term1 term2` | Must contain both (AND) |
+| `"phrase"` | Exact phrase |
+| `-term` | Must NOT contain |
+| `a OR b` | Either term |
+| `(...)` | Grouping |
+| `field:term` | Search specific field |
+| `term^N` | Boost importance |
+
+See [query.md](query.md) for the complete query language reference.
+
+### Multi-Topic Search
+
+`ra search` joins multiple CLI arguments with OR, wrapping each in parentheses. This makes
+it easy to search for multiple topics simultaneously.
+
+The library also exposes `Searcher::search_multi` for programmatic multi-topic searches with
+merged highlights and deduplication.
 
 
 ## Context Analysis
 
-The `ra context` command analyzes input files and returns relevant documentation.
-It combines multiple signals:
+The `ra context` command analyzes source files and generates search queries automatically.
 
-1. **Path analysis**: Extract path components as search terms
-2. **Pattern matching**: Match against configured `[context.patterns]` globs
-3. **Content analysis**: Extract significant terms via TF-IDF (MoreLikeThis)
+### Signal Sources
 
-This supports the workflow where an agent runs `ra context` on files it's about
-to modify, getting relevant project conventions and patterns before writing
-code.
+1. **Path analysis**: Directory names and filename components are extracted as weighted
+   terms.
 
+2. **Content analysis**: For markdown files, terms from headings receive higher weight than
+   body text. All terms are scored using TF-IDF with IDF values from the index.
 
-## Token Limiting
+3. **Tree-aware IDF**: When `--tree` is specified, IDF computation considers only the
+   selected trees.
 
-**Status: Not yet implemented**
+Terms that don't appear in the index are filtered out. The top N terms by score are combined
+into a boosted OR query.
 
-The `--max-tokens` flag will limit results to fit within a token budget. ra will
-use `tiktoken-rs` with the `cl100k_base` encoding for approximate token
-counting.
-
-Different models use different tokenizers, so counts are approximate.
-cl100k_base (GPT-4's tokenizer) typically produces counts within 10-20% of other
-modern tokenizers.
+Context patterns from configuration are surfaced by `ra inspect ctx` but are not yet
+incorporated into generated queries.
 
 
-## MCP Server
+## CLI Commands
 
-**Status: Not yet implemented**
+### `ra search [QUERIES]`
 
-ra will expose an MCP server for agent integration using the `rmcp` crate.
+Search the knowledge base. Multiple arguments are joined with OR.
+
+Options:
+- `-n, --limit N`: Maximum results
+- `--list`: Show titles and snippets only
+- `--matches`: Show matching lines only
+- `--json`: JSON output
+- `--explain`: Show parsed query AST
+- `--candidate-limit N`: Phase 1 limit (default: 100)
+- `--cutoff-ratio N`: Phase 2 threshold (default: 0.5)
+- `--aggregation-threshold N`: Phase 3 threshold (default: 0.5)
+- `--no-aggregation`: Disable hierarchical aggregation
+- `-v, --verbose`: Increase output verbosity
+
+### `ra context [FILES]`
+
+Find relevant documentation for source files.
+
+Options:
+- `-n, --limit N`: Maximum results
+- `--terms N`: Maximum terms in generated query (default: 15)
+- `-t, --tree NAME`: Limit to specific tree(s)
+- `--list`: Show titles only
+- `--json`: JSON output
+- `--explain`: Show extracted terms and generated query
+- `-v, --verbose`: Increase output verbosity
+
+### `ra get [ID]`
+
+Retrieve a specific chunk or document by identifier.
+
+Options:
+- `--full-document`: Return the entire document even if ID specifies a chunk
+- `--json`: JSON output
+
+### `ra inspect doc [FILE]`
+
+Show how ra parses and chunks a document.
+
+### `ra inspect ctx [FILE]`
+
+Show context signals extracted from a file, including configured patterns.
+
+### `ra init`
+
+Create a starter `.ra.toml` configuration file.
+
+Options:
+- `--global`: Create in `~/.ra.toml`
+- `--force`: Overwrite existing file
+
+### `ra update`
+
+Force a full rebuild of the search index.
+
+### `ra status`
+
+Show configuration files, configured trees, index status, and validation warnings.
+
+### `ra config`
+
+Display the effective merged configuration.
+
+### `ra ls [WHAT]`
+
+List indexed content.
+
+- `ra ls trees`: List configured trees
+- `ra ls docs`: List indexed documents
+- `ra ls chunks`: List all indexed chunks
+
+
+## [Planned] Token Limiting
+
+The `--max-tokens` flag will limit results to fit within a token budget, using `tiktoken-rs`
+with the `cl100k_base` encoding for approximate counting.
+
+Different models use different tokenizers. cl100k_base (GPT-4's tokenizer) typically produces
+counts within 10-20% of other modern tokenizers.
+
+
+## [Planned] MCP Server
+
+ra will expose an MCP server for direct agent integration using the `rmcp` crate.
 
 ### Transport
 
@@ -173,20 +288,18 @@ ra will expose an MCP server for agent integration using the `rmcp` crate.
 
 ### Working Directory
 
-The MCP server operates relative to its current working directory when launched.
-This determines which `.ra.toml` files are discovered. ra is designed for
-per-project use—there is no global daemon.
+The MCP server operates relative to its working directory when launched, which determines
+configuration discovery. ra is designed for per-project use—there is no global daemon.
 
 ### Tools
 
 #### `search`
 
-Search the knowledge base and return matching chunks.
+Search the knowledge base.
 
 ```json
 {
   "name": "search",
-  "description": "Search the knowledge base. Use array of queries for multi-topic research.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -194,21 +307,11 @@ Search the knowledge base and return matching chunks.
         "oneOf": [
           { "type": "string" },
           { "type": "array", "items": { "type": "string" } }
-        ],
-        "description": "Search term(s). Quote for exact phrase. Array for multi-topic."
+        ]
       },
-      "limit": {
-        "type": "integer",
-        "description": "Results per query (default from config)"
-      },
-      "max_tokens": {
-        "type": "integer",
-        "description": "Total token budget across all results"
-      },
-      "list": {
-        "type": "boolean",
-        "description": "Return snippets only, omit full content (default: false)"
-      }
+      "limit": { "type": "integer" },
+      "max_tokens": { "type": "integer" },
+      "list": { "type": "boolean" }
     },
     "required": ["queries"]
   }
@@ -217,32 +320,18 @@ Search the knowledge base and return matching chunks.
 
 #### `context`
 
-Analyze files and return relevant knowledge base context.
+Get relevant context for files being worked on.
 
 ```json
 {
   "name": "context",
-  "description": "Get relevant context for files being worked on.",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "files": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "File paths to analyze for context"
-      },
-      "limit": {
-        "type": "integer",
-        "description": "Maximum chunks to return (default from config)"
-      },
-      "max_tokens": {
-        "type": "integer",
-        "description": "Token budget for results"
-      },
-      "list": {
-        "type": "boolean",
-        "description": "Return snippets only, omit full content (default: false)"
-      }
+      "files": { "type": "array", "items": { "type": "string" } },
+      "limit": { "type": "integer" },
+      "max_tokens": { "type": "integer" },
+      "list": { "type": "boolean" }
     },
     "required": ["files"]
   }
@@ -251,23 +340,16 @@ Analyze files and return relevant knowledge base context.
 
 #### `get`
 
-Retrieve a specific chunk or document by identifier.
+Retrieve a specific document or chunk by ID.
 
 ```json
 {
   "name": "get",
-  "description": "Retrieve a specific document or chunk by ID",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "id": {
-        "type": "string",
-        "description": "Chunk ID (tree:path#heading) or document ID (tree:path)"
-      },
-      "full_document": {
-        "type": "boolean",
-        "description": "Return full document even if ID specifies a chunk"
-      }
+      "id": { "type": "string" },
+      "full_document": { "type": "boolean" }
     },
     "required": ["id"]
   }
@@ -276,12 +358,11 @@ Retrieve a specific chunk or document by identifier.
 
 #### `list_sources`
 
-Introspect available trees and their statistics.
+List available knowledge trees and their statistics.
 
 ```json
 {
   "name": "list_sources",
-  "description": "List available knowledge trees and their statistics",
   "inputSchema": {
     "type": "object",
     "properties": {}
@@ -291,72 +372,36 @@ Introspect available trees and their statistics.
 
 ### Index Freshness
 
-The MCP server checks index freshness on each call and performs incremental
-updates as needed, ensuring agents always search current content.
+The MCP server checks index freshness on each call and performs incremental updates as
+needed.
 
 
-## Agent File Generation
+## [Planned] Agent File Generation
 
-**Status: Not yet implemented**
-
-ra will generate agent instruction files (AGENTS.md, CLAUDE.md, GEMINI.md) that
-teach agents to use ra as their primary knowledge source.
+ra will generate agent instruction files (AGENTS.md, CLAUDE.md, GEMINI.md) that teach agents
+to use ra as their primary knowledge source.
 
 ### Philosophy
 
-Traditional approaches try to anticipate what context an agent needs at
-generation time. ra inverts this: generate minimal static instructions that
-teach the agent to search at runtime. The agent pays one round-trip for
-research, but gains flexibility—any documentation can live in the searchable
-knowledge base without bloating the agent file.
+Traditional approaches try to anticipate what context an agent needs at generation time.
+ra inverts this: generate minimal static instructions that teach the agent to search at
+runtime. The agent pays one round-trip for research but gains flexibility—any documentation
+can live in the searchable knowledge base without bloating the agent file.
 
 ### Template System
 
-Templates are markdown files that ra concatenates:
+Templates are markdown files concatenated in order:
 
-1. **Project template**: `.agents.md` in the project root (optional)
-2. **Global template**: `~/.agents.md` (optional)
-
-The project template appears first, followed by the global template.
+1. `.agents.md` in the project root (optional)
+2. `~/.agents.md` (optional)
 
 ### Dynamic Injection
 
-After concatenating templates, ra appends generated instructions containing:
+After concatenating templates, ra appends generated instructions including:
 
-- Clear guidance to use ra before making decisions
+- Guidance to use ra before making decisions
 - Usage examples for search and context commands
 - Specific triggers that should prompt a search
-
-Example generated section:
-
-```markdown
-## ra Knowledge Base
-
-This project uses ra for knowledge management. **Search ra before making
-significant decisions.**
-
-### Why This Matters
-
-This project's conventions WILL differ from your training data. Proceeding
-without consulting ra means you will miss project-specific requirements.
-
-### How to Use
-
-**Get context for files you're working on:**
-- `ra context src/api/handlers.rs`
-- `ra context src/*.rs`
-
-**Search for specific topics:**
-- `ra search "error handling"`
-- `ra search "error handling" "logging"`
-
-### When to Use
-
-- **Starting work on a file**: Run `ra context` on the files you'll modify
-- **Before writing new code**: Search for relevant patterns
-- **Encountering unfamiliar terms**: Search for project-specific concepts
-- **Choosing between approaches**: Search for guidance
-```
 
 ### CLI
 
@@ -375,15 +420,13 @@ OPTIONS:
 
 ## Future Directions
 
-These features are explicitly out of scope for v1 but may be considered later:
+These features are out of scope for the initial release but may be considered later:
 
-- **Semantic search**: Hybrid retrieval combining keyword and embedding-based
-  similarity
+- **Semantic search**: Hybrid retrieval combining keyword and embedding-based similarity
 - **Link-aware retrieval**: Follow wiki-links to include related context
 - **Watch mode**: File system watching for live index updates
 - **Custom chunking**: User-defined chunking strategies
 - **Multi-language stemming**: Automatic language detection per document
 - **Faceted search**: Filtering by tag, tree, or custom metadata
 - **Query expansion**: Automatic synonym expansion
-- **Image/binary support**: Index images with descriptions, PDFs with text
-  extraction
+- **Image/binary support**: Index images with descriptions, PDFs with text extraction

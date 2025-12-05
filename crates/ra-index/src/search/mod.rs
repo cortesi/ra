@@ -15,22 +15,18 @@ mod ranges;
 mod tests;
 mod types;
 
+use std::{collections::HashMap, path::PathBuf};
+
 pub use idf::TreeFilteredSearcher;
+use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use open::open_searcher;
 #[allow(unused_imports)]
 pub use params::{DEFAULT_CANDIDATE_LIMIT, SearchParams};
+use tantivy::{Index, tokenizer::TextAnalyzer};
 #[allow(unused_imports)]
 pub use types::{FieldMatch, MatchDetails, SearchResult};
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-use levenshtein_automata::LevenshteinAutomatonBuilder;
-use tantivy::Index;
-use tantivy::tokenizer::TextAnalyzer;
-
-use crate::query::QueryCompiler;
-use crate::schema::IndexSchema;
+use crate::{query::QueryCompiler, schema::IndexSchema};
 
 /// Default fuzzy edit distance used when compiling queries.
 pub const DEFAULT_FUZZY_DISTANCE: u8 = 1;

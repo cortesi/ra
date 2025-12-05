@@ -1,15 +1,16 @@
 //! Aggregated search entry points and parent lookup.
 
-use tantivy::Term;
-use tantivy::collector::TopDocs;
-use tantivy::query::TermQuery;
-use tantivy::schema::IndexRecordOption;
+use tantivy::{Term, collector::TopDocs, query::TermQuery, schema::IndexRecordOption};
 
-use super::execute::{aggregate_candidates, apply_elbow, single_results_from_candidates};
-use super::{SearchParams, Searcher};
-use crate::IndexError;
-use crate::aggregate::ParentInfo;
-use crate::result::{SearchCandidate, SearchResult as AggregatedSearchResult};
+use super::{
+    SearchParams, Searcher,
+    execute::{aggregate_candidates, apply_elbow, single_results_from_candidates},
+};
+use crate::{
+    IndexError,
+    aggregate::ParentInfo,
+    result::{SearchCandidate, SearchResult as AggregatedSearchResult},
+};
 
 impl Searcher {
     /// Searches using the three-phase hierarchical algorithm.

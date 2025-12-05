@@ -3,13 +3,14 @@
 use std::collections::HashSet;
 
 use ra_context::rank::IdfProvider;
-use tantivy::Term;
-use tantivy::collector::{Count, TopDocs};
-use tantivy::query::{AllQuery, Query, TermQuery};
-use tantivy::schema::IndexRecordOption;
+use tantivy::{
+    Term,
+    collector::{Count, TopDocs},
+    query::{AllQuery, Query, TermQuery},
+    schema::IndexRecordOption,
+};
 
-use super::Searcher;
-use super::types::SearchResult;
+use super::{Searcher, types::SearchResult};
 use crate::IndexError;
 
 impl Searcher {

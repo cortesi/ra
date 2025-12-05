@@ -1,12 +1,9 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::SystemTime;
+use std::{collections::HashMap, path::PathBuf, time::SystemTime};
 
 use tempfile::TempDir;
 
 use super::{SearchParams, Searcher};
-use crate::document::ChunkDocument;
-use crate::writer::IndexWriter;
+use crate::{document::ChunkDocument, writer::IndexWriter};
 
 fn make_trees() -> Vec<ra_config::Tree> {
     vec![

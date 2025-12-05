@@ -1,24 +1,31 @@
 //! Query execution paths and result conversion.
 
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::mem;
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    mem,
+};
 
-use tantivy::TantivyDocument;
-use tantivy::Term;
-use tantivy::collector::TopDocs;
-use tantivy::query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery};
-use tantivy::schema::{Field, IndexRecordOption, Value};
-use tantivy::snippet::SnippetGenerator;
+use tantivy::{
+    TantivyDocument, Term,
+    collector::TopDocs,
+    query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery},
+    schema::{Field, IndexRecordOption, Value},
+    snippet::SnippetGenerator,
+};
 
-use super::Searcher;
-use super::ranges::{extract_match_ranges, merge_ranges};
-use super::types::{FieldMatch, MatchDetails, SearchResult};
-use crate::IndexError;
-use crate::aggregate::{ParentInfo, aggregate};
-use crate::elbow::elbow_cutoff;
-use crate::result::{SearchCandidate, SearchResult as AggregatedSearchResult};
-use crate::schema::boost;
+use super::{
+    Searcher,
+    ranges::{extract_match_ranges, merge_ranges},
+    types::{FieldMatch, MatchDetails, SearchResult},
+};
+use crate::{
+    IndexError,
+    aggregate::{ParentInfo, aggregate},
+    elbow::elbow_cutoff,
+    result::{SearchCandidate, SearchResult as AggregatedSearchResult},
+    schema::boost,
+};
 
 /// Default maximum number of characters in a snippet.
 const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;

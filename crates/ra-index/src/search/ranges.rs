@@ -1,7 +1,6 @@
 //! Range utilities for merging and extracting highlight spans.
 
-use std::collections::HashSet;
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
 use tantivy::tokenizer::TextAnalyzer;
 

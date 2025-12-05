@@ -1,18 +1,21 @@
 //! Construction and filesystem helpers for `Searcher`.
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use levenshtein_automata::LevenshteinAutomatonBuilder;
-use tantivy::Index;
-use tantivy::directory::MmapDirectory;
+use tantivy::{Index, directory::MmapDirectory};
 
 use super::Searcher;
-use crate::IndexError;
-use crate::analyzer::{RA_TOKENIZER, build_analyzer_from_name};
-use crate::query::QueryCompiler;
-use crate::schema::IndexSchema;
+use crate::{
+    IndexError,
+    analyzer::{RA_TOKENIZER, build_analyzer_from_name},
+    query::QueryCompiler,
+    schema::IndexSchema,
+};
 
 impl Searcher {
     /// Opens an existing index for searching.
