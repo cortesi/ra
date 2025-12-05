@@ -1,7 +1,7 @@
 //! Command-line interface for the `ra` research assistant tool.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     io::{self, Write},
     ops::Range,
@@ -534,6 +534,13 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
     let details = result.match_details();
 
     if let Some(details) = details {
+        // Collect all terms that actually matched in this document
+        let matched_in_doc: HashSet<&str> = details
+            .field_matches
+            .values()
+            .flat_map(|fm| fm.matched_terms.iter().map(String::as_str))
+            .collect();
+
         // Always show matched terms at verbosity >= 1
         if verbosity >= 1 {
             // Show each query term with stemming and fuzzy matches
@@ -552,10 +559,12 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
                         output.push_str(&format!("    {} {}\n", dim("stem:"), stemmed));
                     }
 
-                    // Show fuzzy matches if there are any beyond the exact term
+                    // Show fuzzy matches that actually matched in this document
                     if let Some(matches) = details.term_mappings.get(stemmed) {
-                        let fuzzy: Vec<&String> =
-                            matches.iter().filter(|m| *m != stemmed).collect();
+                        let fuzzy: Vec<&String> = matches
+                            .iter()
+                            .filter(|m| *m != stemmed && matched_in_doc.contains(m.as_str()))
+                            .collect();
                         if !fuzzy.is_empty() {
                             output.push_str(&format!(
                                 "    {} {}\n",
