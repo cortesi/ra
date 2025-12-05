@@ -543,33 +543,41 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
 
         // Always show matched terms at verbosity >= 1
         if verbosity >= 1 {
-            // Show each query term with stemming and fuzzy matches
+            // Show each query term that actually matched in this document
             if !details.original_terms.is_empty() {
-                output.push_str(&format!("{}\n", dim("terms:")));
+                let mut terms_output = String::new();
                 for (orig, stemmed) in details
                     .original_terms
                     .iter()
                     .zip(details.stemmed_terms.iter())
                 {
-                    // Term heading
-                    output.push_str(&format!("  {}\n", orig));
+                    // Check if this term (stemmed or fuzzy variants) matched in the document
+                    let stemmed_matched = matched_in_doc.contains(stemmed.as_str());
+                    let fuzzy_matches: Vec<&String> =
+                        if let Some(matches) = details.term_mappings.get(stemmed) {
+                            matches
+                                .iter()
+                                .filter(|m| *m != stemmed && matched_in_doc.contains(m.as_str()))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
 
-                    // Show stemming if different from original
-                    if orig != stemmed {
-                        output.push_str(&format!("    {} {}\n", dim("stem:"), stemmed));
-                    }
+                    // Only show terms that actually matched
+                    if stemmed_matched || !fuzzy_matches.is_empty() {
+                        terms_output.push_str(&format!("  {}\n", orig));
 
-                    // Show fuzzy matches that actually matched in this document
-                    if let Some(matches) = details.term_mappings.get(stemmed) {
-                        let fuzzy: Vec<&String> = matches
-                            .iter()
-                            .filter(|m| *m != stemmed && matched_in_doc.contains(m.as_str()))
-                            .collect();
-                        if !fuzzy.is_empty() {
-                            output.push_str(&format!(
+                        // Show stemming if different from original
+                        if orig != stemmed {
+                            terms_output.push_str(&format!("    {} {}\n", dim("stem:"), stemmed));
+                        }
+
+                        // Show fuzzy matches
+                        if !fuzzy_matches.is_empty() {
+                            terms_output.push_str(&format!(
                                 "    {} {}\n",
                                 dim("fuzzy:"),
-                                fuzzy
+                                fuzzy_matches
                                     .iter()
                                     .map(|s| s.as_str())
                                     .collect::<Vec<_>>()
@@ -577,6 +585,10 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
                             ));
                         }
                     }
+                }
+                if !terms_output.is_empty() {
+                    output.push_str(&format!("{}\n", dim("terms:")));
+                    output.push_str(&terms_output);
                 }
             }
         }
