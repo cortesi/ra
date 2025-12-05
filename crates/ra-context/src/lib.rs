@@ -11,8 +11,10 @@
 
 #![warn(missing_docs)]
 
+mod analyze;
 pub mod parser;
 pub mod phrase;
+pub mod query;
 pub mod rank;
 mod stopwords;
 mod term;
@@ -24,6 +26,7 @@ use std::{
     path::{Component, Path},
 };
 
+pub use analyze::{AnalysisConfig, ContextAnalysis, analyze_context};
 use ra_config::{CompiledContextPatterns, ContextSettings};
 pub use stopwords::Stopwords;
 pub use term::{TermSource, WeightedTerm};

@@ -17,6 +17,7 @@ use stop_words::LANGUAGE;
 ///
 /// Uses a `HashSet` for O(1) lookup performance. All words are stored in
 /// lowercase for case-insensitive matching.
+#[derive(Clone)]
 pub struct Stopwords {
     words: HashSet<String>,
 }

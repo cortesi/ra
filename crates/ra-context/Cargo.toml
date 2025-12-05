@@ -7,6 +7,7 @@ description = "Context analysis for ra research assistant"
 [dependencies]
 ra-config = { path = "../ra-config" }
 ra-document = { path = "../ra-document" }
+ra-query = { path = "../ra-query" }
 stop-words = "0.9.0"
 
 [dev-dependencies]
