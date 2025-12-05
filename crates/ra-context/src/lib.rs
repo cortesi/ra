@@ -12,6 +12,7 @@
 #![warn(missing_docs)]
 
 pub mod parser;
+pub mod phrase;
 pub mod rank;
 mod stopwords;
 mod term;
