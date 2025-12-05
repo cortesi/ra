@@ -341,6 +341,24 @@ terms. Snippets include HTML `<b>` tags around matches:
 Full search results include byte ranges indicating where matches occur in the
 body. This enables precise highlighting in output formatting.
 
+- Ranges are offsets into the returned `body` text (UTF-8 byte indices).
+- They are sorted, non-overlapping, and merged when adjacent.
+- Each range corresponds to a token emitted by the index analyzer (lowercased,
+  stemmed, and possibly fuzzy-expanded), so highlighting the substring at
+  `offset..offset+length` marks the exact word that satisfied the query.
+- Multi-topic searches merge ranges from all topics using the same invariants.
+- JSON output (`ra search --json`) exposes `body` and `match_ranges` for every
+  result; use these fields together to render highlights accurately. Aggregated
+  results omit `match_ranges` because highlights are per constituent.
+
+### Developer Notes
+
+- Highlight extraction is analyzer-driven: token offsets from the configured
+  analyzer (lowercase + stemmer) are the single source of truth. Keep analyzer
+  changes in sync with tests that assert range alignment.
+- Do not derive highlights from Tantivy snippets; they may diverge from fuzzy
+  matches. Use the stored `match_ranges` instead.
+
 
 ## Incremental Indexing
 

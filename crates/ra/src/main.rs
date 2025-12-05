@@ -16,7 +16,8 @@ use ra_config::{
 };
 use ra_document::parse_file;
 use ra_highlight::{
-    Highlighter, breadcrumb, dim, error, format_body, header, indent_content, subheader, warning,
+    Highlighter, breadcrumb, dim, error, format_body, header, indent_content, subheader, theme,
+    warning,
 };
 use ra_index::{
     AggregatedSearchResult, ContextAnalyzer, IndexStats, IndexStatus, Indexer, ProgressReporter,
@@ -397,9 +398,30 @@ struct JsonSearchResult {
     /// Snippet with highlighted terms.
     #[serde(skip_serializing_if = "Option::is_none")]
     snippet: Option<String>,
-    /// Full chunk content.
+    /// Raw chunk body text (no formatting).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<String>,
+    /// Full chunk content (legacy, includes breadcrumb prefix when present).
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    /// Match highlight ranges relative to `body` offsets (byte offset, length).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    match_ranges: Option<Vec<JsonMatchRange>>,
+    /// Title highlight ranges (byte offset, length).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title_match_ranges: Option<Vec<JsonMatchRange>>,
+    /// Path highlight ranges (byte offset, length).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_match_ranges: Option<Vec<JsonMatchRange>>,
+}
+
+/// Highlight range for JSON output.
+#[derive(Serialize)]
+struct JsonMatchRange {
+    /// Byte offset into the body text.
+    offset: usize,
+    /// Length in bytes of the highlighted span.
+    length: usize,
 }
 
 /// Results for a single query in JSON output.
@@ -609,8 +631,16 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
 /// Formats a search result for full content output.
 fn format_result_full(result: &SearchResult) -> String {
     let mut output = String::new();
-    output.push_str(&format!("─── {} ───\n", header(&result.id)));
-    output.push_str(&format!("{}\n\n", breadcrumb(&result.breadcrumb)));
+    output.push_str(&format!(
+        "─── {} ───\n",
+        highlight_id_with_path(&result.id, &result.path_match_ranges)
+    ));
+    let breadcrumb_line = highlight_breadcrumb_title(
+        &result.breadcrumb,
+        &result.title,
+        &result.title_match_ranges,
+    );
+    output.push_str(&format!("{breadcrumb_line}\n\n"));
 
     // Format body with content styling, indentation, and match highlighting
     let body = format_body(&result.body, &result.match_ranges);
@@ -622,11 +652,163 @@ fn format_result_full(result: &SearchResult) -> String {
     output
 }
 
+/// Highlights text with a base style, reapplying the base styling after each match.
+fn highlight_with_base(
+    text: &str,
+    ranges: &[Range<usize>],
+    base_prefix: &str,
+    base_suffix: &str,
+) -> String {
+    if ranges.is_empty() {
+        return format!("{base_prefix}{text}{base_suffix}");
+    }
+
+    let match_prefix = theme::MATCH.prefix();
+    let match_suffix = theme::MATCH.suffix();
+    let mut output = String::new();
+    output.push_str(base_prefix);
+
+    let mut cursor = 0;
+    for range in ranges {
+        if range.start > cursor {
+            output.push_str(&text[cursor..range.start]);
+        }
+        output.push_str(&match_prefix);
+        output.push_str(&text[range.start..range.end]);
+        output.push_str(match_suffix);
+        output.push_str(base_prefix);
+        cursor = range.end;
+    }
+
+    if cursor < text.len() {
+        output.push_str(&text[cursor..]);
+    }
+    output.push_str(base_suffix);
+    output
+}
+
+/// Highlights the path portion inside an id (tree:path#slug) using path ranges.
+fn highlight_id_with_path(id: &str, path_ranges: &[Range<usize>]) -> String {
+    let Some(colon) = id.find(':') else {
+        let header_prefix = theme::HEADER.prefix();
+        return highlight_with_base(id, &[], &header_prefix, theme::HEADER.suffix());
+    };
+    let path_start = colon + 1;
+    let path_end = id.find('#').unwrap_or(id.len());
+    let path_len = path_end.saturating_sub(path_start);
+
+    let header_prefix = theme::HEADER.prefix();
+
+    let shifted: Vec<Range<usize>> = path_ranges
+        .iter()
+        .filter_map(|r| {
+            if r.end <= path_len {
+                Some((r.start + path_start)..(r.end + path_start))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    highlight_with_base(id, &shifted, &header_prefix, theme::HEADER.suffix())
+}
+
+/// Highlights the trailing title segment inside a breadcrumb using title ranges.
+fn highlight_breadcrumb_title(
+    breadcrumb: &str,
+    title: &str,
+    title_ranges: &[Range<usize>],
+) -> String {
+    let breadcrumb_prefix = theme::BREADCRUMB.prefix();
+    if title_ranges.is_empty() || title.is_empty() {
+        return highlight_with_base(
+            breadcrumb,
+            &[],
+            &breadcrumb_prefix,
+            theme::BREADCRUMB.suffix(),
+        );
+    }
+
+    if let Some(pos) = breadcrumb.rfind(title) {
+        let shifted: Vec<Range<usize>> = title_ranges
+            .iter()
+            .map(|r| (r.start + pos)..(r.end + pos))
+            .collect();
+        highlight_with_base(
+            breadcrumb,
+            &shifted,
+            &breadcrumb_prefix,
+            theme::BREADCRUMB.suffix(),
+        )
+    } else {
+        highlight_with_base(
+            breadcrumb,
+            &[],
+            &breadcrumb_prefix,
+            theme::BREADCRUMB.suffix(),
+        )
+    }
+}
+
+/// Sorts and merges overlapping or adjacent ranges.
+fn merge_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    if ranges.is_empty() {
+        return ranges;
+    }
+    ranges.sort_by_key(|r| r.start);
+    let mut merged = Vec::with_capacity(ranges.len());
+    let mut current = ranges[0].clone();
+    for range in ranges.into_iter().skip(1) {
+        if range.start <= current.end {
+            current.end = current.end.max(range.end);
+        } else {
+            merged.push(current);
+            current = range;
+        }
+    }
+    merged.push(current);
+    merged
+}
+
+/// Computes highlight ranges for a search result, mapping child matches into the parent body.
+fn aggregated_match_ranges(result: &AggregatedSearchResult, full_body: &str) -> Vec<Range<usize>> {
+    match result {
+        AggregatedSearchResult::Single(candidate) => candidate.match_ranges.clone(),
+        AggregatedSearchResult::Aggregated { constituents, .. } => {
+            let parent_start = result.byte_start() as usize;
+            let mut ranges = Vec::new();
+            for child in constituents {
+                let shift = child.byte_start as usize;
+                if shift < parent_start {
+                    continue;
+                }
+                let offset = shift - parent_start;
+                for r in &child.match_ranges {
+                    let start = offset + r.start;
+                    let end = offset + r.end;
+                    if end <= full_body.len() && start < end {
+                        ranges.push(start..end);
+                    }
+                }
+            }
+            merge_ranges(ranges)
+        }
+    }
+}
+
 /// Formats a search result for list mode output.
 fn format_result_list(result: &SearchResult) -> String {
     let mut output = String::new();
-    output.push_str(&format!("─── {} ───\n", header(&result.id)));
-    output.push_str(&format!("{}\n", breadcrumb(&result.breadcrumb)));
+    output.push_str(&format!(
+        "─── {} ───\n",
+        highlight_id_with_path(&result.id, &result.path_match_ranges)
+    ));
+    let breadcrumb_line = highlight_breadcrumb_title(
+        &result.breadcrumb,
+        &result.title,
+        &result.title_match_ranges,
+    );
+    output.push_str(&format!("{breadcrumb_line}\n"));
 
     // Show stats: match count, content size, score
     let match_count = result.match_ranges.len();
@@ -852,6 +1034,21 @@ fn output_aggregated_results(
                     .iter()
                     .map(|r| {
                         let constituents_count = r.constituents().map(|c| c.len()).unwrap_or(0);
+                        let match_ranges = match r {
+                            AggregatedSearchResult::Single(c) => Some(
+                                c.match_ranges
+                                    .iter()
+                                    .map(|range| JsonMatchRange {
+                                        offset: range.start,
+                                        length: range.end - range.start,
+                                    })
+                                    .collect(),
+                            ),
+                            AggregatedSearchResult::Aggregated { .. } => None,
+                        };
+
+                        let body_field = Some(r.body().to_string());
+
                         JsonSearchResult {
                             id: r.id().to_string(),
                             tree: r.tree().to_string(),
@@ -864,11 +1061,31 @@ fn output_aggregated_results(
                             } else {
                                 None
                             },
+                            body: body_field,
                             content: if list {
                                 None
                             } else {
                                 Some(format!("> {}\n\n{}", r.breadcrumb(), r.body()))
                             },
+                            match_ranges,
+                            title_match_ranges: Some(
+                                r.title_match_ranges()
+                                    .iter()
+                                    .map(|range| JsonMatchRange {
+                                        offset: range.start,
+                                        length: range.end - range.start,
+                                    })
+                                    .collect(),
+                            ),
+                            path_match_ranges: Some(
+                                r.path_match_ranges()
+                                    .iter()
+                                    .map(|range| JsonMatchRange {
+                                        offset: range.start,
+                                        length: range.end - range.start,
+                                    })
+                                    .collect(),
+                            ),
                         }
                     })
                     .collect(),
@@ -925,7 +1142,19 @@ fn output_aggregated_results(
             println!("{}", dim("No results found."));
         } else {
             for result in results {
-                print!("{}", format_aggregated_result_matches(result, verbose));
+                let full_body = searcher
+                    .read_full_content(
+                        result.tree(),
+                        result.path(),
+                        result.byte_start(),
+                        result.byte_end(),
+                    )
+                    .unwrap_or_else(|_| result.body().to_string());
+
+                print!(
+                    "{}",
+                    format_aggregated_result_matches(result, verbose, &full_body)
+                );
             }
         }
     } else {
@@ -989,17 +1218,24 @@ fn format_aggregated_result_full(
 ) -> String {
     let mut output = String::new();
 
+    let header_id = highlight_id_with_path(result.id(), result.path_match_ranges());
     if verbose > 0 && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
-            header(result.id()),
+            header_id,
             constituents.len()
         ));
     } else {
-        output.push_str(&format!("─── {} ───\n", header(result.id())));
+        output.push_str(&format!("─── {} ───\n", header_id));
     }
-    output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
+
+    let breadcrumb_line = highlight_breadcrumb_title(
+        result.breadcrumb(),
+        result.title(),
+        result.title_match_ranges(),
+    );
+    output.push_str(&format!("{breadcrumb_line}\n"));
 
     // Show stats only in verbose mode
     if verbose > 0 {
@@ -1018,30 +1254,11 @@ fn format_aggregated_result_full(
         output.push_str(&format_match_details(result, verbose));
     }
 
-    // Format body with content styling - use full content including children
-    let body_trimmed = full_body.trim();
-    if !body_trimmed.is_empty() {
+    if !full_body.is_empty() {
+        let ranges = aggregated_match_ranges(result, full_body);
         output.push('\n');
-        output.push_str(&format_body(body_trimmed, &[]));
+        output.push_str(&format_body(full_body, &ranges));
         output.push('\n');
-    }
-
-    // Show constituents for aggregated results (only in verbose mode)
-    if verbose > 0
-        && let Some(constituents) = result.constituents()
-    {
-        output.push_str(&format!(
-            "{}\n",
-            dim(&format!("─ Child node matches ({}) ─", constituents.len()))
-        ));
-        for constituent in constituents {
-            output.push_str(&format!(
-                "  {} {} {}\n",
-                dim("•"),
-                constituent.id,
-                dim(&format!("(score: {:.2})", constituent.score))
-            ));
-        }
     }
 
     output
@@ -1057,17 +1274,24 @@ fn format_aggregated_result_list(
 ) -> String {
     let mut output = String::new();
 
+    let header_id = highlight_id_with_path(result.id(), result.path_match_ranges());
     if verbose > 0 && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
-            header(result.id()),
+            header_id,
             constituents.len()
         ));
     } else {
-        output.push_str(&format!("─── {} ───\n", header(result.id())));
+        output.push_str(&format!("─── {} ───\n", header_id));
     }
-    output.push_str(&format!("{}\n", breadcrumb(result.breadcrumb())));
+
+    let breadcrumb_line = highlight_breadcrumb_title(
+        result.breadcrumb(),
+        result.title(),
+        result.title_match_ranges(),
+    );
+    output.push_str(&format!("{breadcrumb_line}\n"));
 
     // Show stats only in verbose mode
     if verbose > 0 {
@@ -1086,22 +1310,11 @@ fn format_aggregated_result_list(
         output.push_str(&format_match_details(result, verbose));
     }
 
-    // Show constituents for aggregated results (only in verbose mode)
-    if verbose > 0
-        && let Some(constituents) = result.constituents()
-    {
-        output.push_str(&format!(
-            "{}\n",
-            dim(&format!("─ Child node matches ({}) ─", constituents.len()))
-        ));
-        for constituent in constituents {
-            output.push_str(&format!(
-                "  {} {} {}\n",
-                dim("•"),
-                constituent.id,
-                dim(&format!("(score: {:.2})", constituent.score))
-            ));
-        }
+    let ranges = aggregated_match_ranges(result, full_body);
+    if !ranges.is_empty() {
+        let formatted = extract_matching_lines(full_body, &ranges);
+        output.push_str(&formatted);
+        output.push('\n');
     }
 
     output.push('\n');
@@ -1109,47 +1322,41 @@ fn format_aggregated_result_list(
 }
 
 /// Formats an aggregated search result showing only lines that contain matches.
-fn format_aggregated_result_matches(result: &AggregatedSearchResult, verbose: u8) -> String {
+fn format_aggregated_result_matches(
+    result: &AggregatedSearchResult,
+    verbose: u8,
+    full_body: &str,
+) -> String {
     let mut output = String::new();
 
+    let header_id = highlight_id_with_path(result.id(), result.path_match_ranges());
     if verbose > 0 && result.is_aggregated() {
         let constituents = result.constituents().unwrap();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
-            header(result.id()),
+            header_id,
             constituents.len()
         ));
     } else {
-        output.push_str(&format!("─── {} ───\n", header(result.id())));
+        output.push_str(&format!("─── {} ───\n", header_id));
     }
-    output.push_str(&format!("{}\n\n", breadcrumb(result.breadcrumb())));
+    let breadcrumb_line = highlight_breadcrumb_title(
+        result.breadcrumb(),
+        result.title(),
+        result.title_match_ranges(),
+    );
+    output.push_str(&format!("{breadcrumb_line}\n\n"));
 
     // Show match details when verbose
     if verbose > 0 {
         output.push_str(&format_match_details(result, verbose));
     }
 
-    // For aggregated results, show constituent highlights (only in verbose mode)
-    if verbose > 0 {
-        if let Some(constituents) = result.constituents() {
-            for constituent in constituents {
-                if !constituent.match_ranges.is_empty() {
-                    output.push_str(&format!("{}\n", dim(&format!("• {}", constituent.id))));
-                    let formatted =
-                        extract_matching_lines(&constituent.body, &constituent.match_ranges);
-                    output.push_str(&formatted);
-                    output.push('\n');
-                }
-            }
-        } else {
-            // Single result - show its own body with no match highlighting
-            // (match_ranges would need to be on the result type)
-            output.push_str(&dim("   (match details not available)\n"));
-        }
-    } else {
-        // Non-verbose mode: for aggregated results show nothing special,
-        // for single results show basic match info if available
-        output.push_str(&dim("   (use -v for match details)\n"));
+    let ranges = aggregated_match_ranges(result, full_body);
+    if !ranges.is_empty() {
+        let formatted = extract_matching_lines(full_body, &ranges);
+        output.push_str(&formatted);
+        output.push('\n');
     }
 
     output.push('\n');
@@ -1268,11 +1475,39 @@ fn cmd_context(
                         breadcrumb: r.breadcrumb.clone(),
                         score: r.score,
                         snippet: r.snippet.clone(),
+                        body: Some(r.body.clone()),
                         content: if list {
                             None
                         } else {
                             Some(format!("> {}\n\n{}", r.breadcrumb, r.body))
                         },
+                        match_ranges: Some(
+                            r.match_ranges
+                                .iter()
+                                .map(|range| JsonMatchRange {
+                                    offset: range.start,
+                                    length: range.end - range.start,
+                                })
+                                .collect(),
+                        ),
+                        title_match_ranges: Some(
+                            r.title_match_ranges
+                                .iter()
+                                .map(|range| JsonMatchRange {
+                                    offset: range.start,
+                                    length: range.end - range.start,
+                                })
+                                .collect(),
+                        ),
+                        path_match_ranges: Some(
+                            r.path_match_ranges
+                                .iter()
+                                .map(|range| JsonMatchRange {
+                                    offset: range.start,
+                                    length: range.end - range.start,
+                                })
+                                .collect(),
+                        ),
                     })
                     .collect(),
             }],
@@ -1403,7 +1638,35 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
                         breadcrumb: r.breadcrumb.clone(),
                         score: r.score,
                         snippet: None,
+                        body: Some(r.body.clone()),
                         content: Some(format!("> {}\n\n{}", r.breadcrumb, r.body)),
+                        match_ranges: Some(
+                            r.match_ranges
+                                .iter()
+                                .map(|range| JsonMatchRange {
+                                    offset: range.start,
+                                    length: range.end - range.start,
+                                })
+                                .collect(),
+                        ),
+                        title_match_ranges: Some(
+                            r.title_match_ranges
+                                .iter()
+                                .map(|range| JsonMatchRange {
+                                    offset: range.start,
+                                    length: range.end - range.start,
+                                })
+                                .collect(),
+                        ),
+                        path_match_ranges: Some(
+                            r.path_match_ranges
+                                .iter()
+                                .map(|range| JsonMatchRange {
+                                    offset: range.start,
+                                    length: range.end - range.start,
+                                })
+                                .collect(),
+                        ),
                     })
                     .collect(),
             }],

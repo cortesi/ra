@@ -46,10 +46,15 @@ pub struct SearchCandidate {
     pub snippet: Option<String>,
     /// Byte ranges within `body` where search terms match.
     ///
-    /// These ranges can be used to highlight matching terms in the full body text.
-    /// Each range represents a contiguous span of bytes that matched a search term.
-    /// Ranges are sorted by start position and do not overlap.
+    /// Offsets are byte positions into the returned `body` text, already sorted and merged
+    /// (no overlaps). Each range aligns to a token produced by the index analyzer after
+    /// lowercasing/stemming/fuzzy expansion, so consumers can safely highlight the original
+    /// substrings using these offsets.
     pub match_ranges: Vec<Range<usize>>,
+    /// Byte ranges within `title` where search terms match.
+    pub title_match_ranges: Vec<Range<usize>>,
+    /// Byte ranges within `path` where search terms match.
+    pub path_match_ranges: Vec<Range<usize>>,
     /// Detailed match information for verbose output.
     pub match_details: Option<MatchDetails>,
 }
@@ -61,6 +66,7 @@ pub struct SearchCandidate {
 /// represents both cases:
 /// - `Single`: An individual chunk match
 /// - `Aggregated`: A parent node that aggregates multiple child matches
+#[allow(clippy::large_enum_variant)] // Aggregated carries chunk bodies; boxing would add indirection
 #[derive(Debug, Clone)]
 pub enum SearchResult {
     /// A single chunk match.
@@ -95,6 +101,10 @@ pub enum SearchResult {
         sibling_count: u64,
         /// Aggregated score (max of constituent scores).
         score: f32,
+        /// Title match ranges for the parent node.
+        title_match_ranges: Vec<Range<usize>>,
+        /// Path match ranges for the parent node.
+        path_match_ranges: Vec<Range<usize>>,
         /// The constituent matches that were aggregated.
         constituents: Vec<SearchCandidate>,
     },
@@ -244,6 +254,34 @@ impl SearchResult {
         }
     }
 
+    /// Returns title match ranges.
+    pub fn title_match_ranges(&self) -> &[Range<usize>] {
+        match self {
+            Self::Single(candidate) => &candidate.title_match_ranges,
+            Self::Aggregated {
+                title_match_ranges, ..
+            } => title_match_ranges,
+        }
+    }
+
+    /// Returns path match ranges.
+    pub fn path_match_ranges(&self) -> &[Range<usize>] {
+        match self {
+            Self::Single(candidate) => &candidate.path_match_ranges,
+            Self::Aggregated {
+                path_match_ranges, ..
+            } => path_match_ranges,
+        }
+    }
+
+    /// Returns body match ranges.
+    pub fn match_ranges(&self) -> &[Range<usize>] {
+        match self {
+            Self::Single(candidate) => &candidate.match_ranges,
+            Self::Aggregated { .. } => &[],
+        }
+    }
+
     /// Creates a single result from a candidate.
     pub fn single(candidate: SearchCandidate) -> Self {
         Self::Single(candidate)
@@ -273,6 +311,8 @@ impl SearchResult {
             byte_end: parent.byte_end,
             sibling_count: parent.sibling_count,
             score: max_score,
+            title_match_ranges: parent.title_match_ranges,
+            path_match_ranges: parent.path_match_ranges,
             constituents,
         }
     }
@@ -301,6 +341,8 @@ impl From<super::search::SearchResult> for SearchCandidate {
             score: r.score,
             snippet: r.snippet,
             match_ranges: r.match_ranges,
+            title_match_ranges: r.title_match_ranges,
+            path_match_ranges: r.path_match_ranges,
             match_details: r.match_details,
         }
     }
@@ -332,6 +374,8 @@ mod test {
             score,
             snippet: None,
             match_ranges: vec![],
+            title_match_ranges: vec![],
+            path_match_ranges: vec![],
             match_details: None,
         }
     }
@@ -408,15 +452,20 @@ mod test {
     }
 
     #[test]
+    #[allow(clippy::single_range_in_vec_init)]
     fn candidate_with_match_ranges() {
         let mut candidate = make_candidate("local:test.md#intro", 5.0, 1);
         candidate.match_ranges = vec![0..5, 10..15];
+        candidate.title_match_ranges = vec![0..5];
+        candidate.path_match_ranges = vec![0..5];
         candidate.snippet = Some("highlighted <b>text</b>".to_string());
 
         let result = SearchResult::single(candidate);
 
         if let SearchResult::Single(c) = result {
             assert_eq!(c.match_ranges.len(), 2);
+            assert_eq!(c.title_match_ranges.len(), 1);
+            assert_eq!(c.path_match_ranges.len(), 1);
             assert_eq!(c.snippet, Some("highlighted <b>text</b>".to_string()));
         } else {
             panic!("Expected Single variant");

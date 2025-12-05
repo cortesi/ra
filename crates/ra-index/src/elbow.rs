@@ -123,6 +123,8 @@ mod test {
             score,
             snippet: None,
             match_ranges: vec![],
+            title_match_ranges: vec![],
+            path_match_ranges: vec![],
             match_details: None,
         }
     }

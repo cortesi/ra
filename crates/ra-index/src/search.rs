@@ -153,6 +153,33 @@ fn merge_ranges(mut a: Vec<Range<usize>>, b: Vec<Range<usize>>) -> Vec<Range<usi
     merged
 }
 
+/// Extracts byte ranges for matched terms within `body` using the configured analyzer.
+///
+/// Offsets are relative to the original body text and are guaranteed to be sorted,
+/// non-overlapping, and merged where adjacent.
+fn extract_match_ranges(
+    analyzer: &TextAnalyzer,
+    body: &str,
+    matched_terms: &HashSet<String>,
+) -> Vec<Range<usize>> {
+    if matched_terms.is_empty() || body.is_empty() {
+        return Vec::new();
+    }
+
+    let mut analyzer = analyzer.clone();
+    let mut stream = analyzer.token_stream(body);
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+
+    while let Some(token) = stream.next() {
+        if matched_terms.contains(&token.text) {
+            ranges.push(token.offset_from..token.offset_to);
+        }
+    }
+
+    // Token stream yields ranges in order; merge to collapse adjacency/overlap.
+    merge_ranges(ranges, Vec::new())
+}
+
 /// Details about how a term matched in a specific field.
 #[derive(Debug, Clone, Default)]
 pub struct FieldMatch {
@@ -233,13 +260,15 @@ pub struct SearchResult {
     pub snippet: Option<String>,
     /// Byte ranges within `body` where search terms match.
     ///
-    /// These ranges can be used to highlight matching terms in the full body text.
-    /// Each range represents a contiguous span of bytes that matched a search term.
-    /// Ranges are sorted by start position and do not overlap.
-    ///
-    /// Empty when the result was retrieved via `get_by_id` or `get_by_path`,
-    /// or when using `search_no_snippets`.
+    /// Offsets are byte positions into the returned `body` text (UTF-8 safe), sorted,
+    /// merged, and non-overlapping. Each range corresponds to a token produced by the
+    /// index analyzer (after lowercasing/stemming/fuzzy expansion), ensuring consumers
+    /// can reliably highlight the exact substrings in the original body content.
     pub match_ranges: Vec<Range<usize>>,
+    /// Byte ranges within `title` where search terms match.
+    pub title_match_ranges: Vec<Range<usize>>,
+    /// Byte ranges within `path` where search terms match.
+    pub path_match_ranges: Vec<Range<usize>>,
     /// Detailed match information for verbose output.
     pub match_details: Option<MatchDetails>,
 }
@@ -406,6 +435,15 @@ impl Searcher {
                             mem::take(&mut existing.match_ranges),
                             result.match_ranges.clone(),
                         );
+                        // Merge title/path match ranges
+                        existing.title_match_ranges = merge_ranges(
+                            mem::take(&mut existing.title_match_ranges),
+                            result.title_match_ranges.clone(),
+                        );
+                        existing.path_match_ranges = merge_ranges(
+                            mem::take(&mut existing.path_match_ranges),
+                            result.path_match_ranges.clone(),
+                        );
                         // Merge snippets if both present
                         if let (Some(existing_snippet), Some(new_snippet)) =
                             (&existing.snippet, &result.snippet)
@@ -445,7 +483,9 @@ impl Searcher {
             None => return Ok(Vec::new()),
         };
 
-        self.execute_query_no_highlights(&*query, limit)
+        let query_terms = self.tokenize_query(query_str);
+
+        self.execute_query_no_highlights(&*query, &query_terms, limit)
     }
 
     /// Searches using the three-phase hierarchical algorithm.
@@ -660,6 +700,7 @@ impl Searcher {
         &self,
         searcher: &tantivy::Searcher,
         query_terms: &[String],
+        fields: &[Field],
     ) -> HashSet<String> {
         let mut matched_terms = HashSet::new();
 
@@ -674,20 +715,22 @@ impl Searcher {
 
         // Search the body field's term dictionary for matching terms
         for segment_reader in searcher.segment_readers() {
-            if let Ok(inverted_index) = segment_reader.inverted_index(self.schema.body) {
-                let term_dict = inverted_index.terms();
+            for field in fields {
+                if let Ok(inverted_index) = segment_reader.inverted_index(*field) {
+                    let term_dict = inverted_index.terms();
 
-                for query_term in query_terms {
-                    // Build a Levenshtein DFA for this query term
-                    let dfa = LevenshteinDfa(self.lev_builder.build_dfa(query_term));
+                    for query_term in query_terms {
+                        // Build a Levenshtein DFA for this query term
+                        let dfa = LevenshteinDfa(self.lev_builder.build_dfa(query_term));
 
-                    // Search the term dictionary with the automaton
-                    let mut stream = term_dict.search(dfa).into_stream().unwrap();
+                        // Search the term dictionary with the automaton
+                        let mut stream = term_dict.search(dfa).into_stream().unwrap();
 
-                    while stream.advance() {
-                        // The key is the actual indexed term (as bytes)
-                        if let Ok(term_str) = str::from_utf8(stream.key()) {
-                            matched_terms.insert(term_str.to_string());
+                        while stream.advance() {
+                            // The key is the actual indexed term (as bytes)
+                            if let Ok(term_str) = str::from_utf8(stream.key()) {
+                                matched_terms.insert(term_str.to_string());
+                            }
                         }
                     }
                 }
@@ -771,6 +814,7 @@ impl Searcher {
     }
 
     /// Collects detailed match information for a search result.
+    #[allow(clippy::too_many_arguments)]
     fn collect_match_details(
         &mut self,
         doc: &TantivyDocument,
@@ -943,7 +987,11 @@ impl Searcher {
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
         // Find actual terms in the index that match our query terms (including fuzzy matches)
-        let matched_terms = self.find_matched_terms(&searcher, query_terms);
+        let matched_terms = self.find_matched_terms(
+            &searcher,
+            query_terms,
+            &[self.schema.body, self.schema.title, self.schema.path],
+        );
 
         // Build a highlight query from the actual matched terms (non-fuzzy)
         let highlight_query = self.build_highlight_query(&matched_terms);
@@ -958,16 +1006,6 @@ impl Searcher {
             None
         };
 
-        // Create a separate generator for full-body match highlighting.
-        let highlight_generator = if let Some(ref hq) = highlight_query {
-            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
-                .map_err(|e| IndexError::Write(e.to_string()))?;
-            generator.set_max_num_chars(usize::MAX);
-            Some(generator)
-        } else {
-            None
-        };
-
         let mut results = Vec::with_capacity(top_docs.len());
 
         for (score, doc_address) in top_docs {
@@ -975,7 +1013,7 @@ impl Searcher {
                 .doc(doc_address)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
-            let result = self.doc_to_result(&doc, score, &snippet_generator, &highlight_generator);
+            let result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
             results.push(result);
         }
 
@@ -986,6 +1024,7 @@ impl Searcher {
     fn execute_query_no_highlights(
         &self,
         query: &dyn Query,
+        query_terms: &[String],
         limit: usize,
     ) -> Result<Vec<SearchResult>, IndexError> {
         let reader = self
@@ -994,6 +1033,12 @@ impl Searcher {
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
         let searcher = reader.searcher();
+
+        let matched_terms = self.find_matched_terms(
+            &searcher,
+            query_terms,
+            &[self.schema.body, self.schema.title, self.schema.path],
+        );
 
         let top_docs = searcher
             .search(query, &TopDocs::with_limit(limit))
@@ -1006,7 +1051,7 @@ impl Searcher {
                 .doc(doc_address)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
-            let result = self.doc_to_result(&doc, score, &None, &None);
+            let result = self.doc_to_result(&doc, score, &None, &matched_terms);
             results.push(result);
         }
 
@@ -1017,6 +1062,7 @@ impl Searcher {
     ///
     /// This is the most expensive execution mode, collecting detailed information
     /// about which terms matched, their frequencies, and score breakdowns.
+    #[allow(clippy::too_many_arguments)]
     fn execute_query_with_details(
         &mut self,
         query: &dyn Query,
@@ -1039,8 +1085,15 @@ impl Searcher {
         // Find term mappings (query term -> indexed terms)
         let term_mappings = self.find_term_mappings(&searcher, query_terms);
 
-        // Get all matched terms for highlighting
-        let matched_terms: HashSet<String> = term_mappings.values().flatten().cloned().collect();
+        // Get all matched terms for highlighting (include title/path fields as well)
+        let mut matched_terms: HashSet<String> =
+            term_mappings.values().flatten().cloned().collect();
+        let extra_terms = self.find_matched_terms(
+            &searcher,
+            query_terms,
+            &[self.schema.title, self.schema.path],
+        );
+        matched_terms.extend(extra_terms);
 
         // Build highlight query
         let highlight_query = self.build_highlight_query(&matched_terms);
@@ -1055,15 +1108,6 @@ impl Searcher {
             None
         };
 
-        let highlight_generator = if let Some(ref hq) = highlight_query {
-            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
-                .map_err(|e| IndexError::Write(e.to_string()))?;
-            generator.set_max_num_chars(usize::MAX);
-            Some(generator)
-        } else {
-            None
-        };
-
         let mut results = Vec::with_capacity(top_docs.len());
 
         for (score, doc_address) in top_docs {
@@ -1071,8 +1115,7 @@ impl Searcher {
                 .doc(doc_address)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
-            let mut result =
-                self.doc_to_result(&doc, score, &snippet_generator, &highlight_generator);
+            let mut result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
 
             // Compute local boost for this result
             let is_global = self
@@ -1109,7 +1152,7 @@ impl Searcher {
         doc: &TantivyDocument,
         base_score: f32,
         snippet_generator: &Option<SnippetGenerator>,
-        highlight_generator: &Option<SnippetGenerator>,
+        matched_terms: &HashSet<String>,
     ) -> SearchResult {
         let id = self.get_text_field(doc, self.schema.id);
         let doc_id = self.get_text_field(doc, self.schema.doc_id);
@@ -1144,14 +1187,10 @@ impl Searcher {
             snippet.to_html()
         });
 
-        // Extract match ranges from the full body
-        let match_ranges = highlight_generator
-            .as_ref()
-            .map(|generator| {
-                let snippet = generator.snippet(&body);
-                snippet.highlighted().to_vec()
-            })
-            .unwrap_or_default();
+        // Extract deterministic match ranges from the body
+        let match_ranges = extract_match_ranges(&self.analyzer, &body, matched_terms);
+        let title_match_ranges = extract_match_ranges(&self.analyzer, &title, matched_terms);
+        let path_match_ranges = extract_match_ranges(&self.analyzer, &path, matched_terms);
 
         SearchResult {
             id,
@@ -1170,6 +1209,8 @@ impl Searcher {
             score,
             snippet,
             match_ranges,
+            title_match_ranges,
+            path_match_ranges,
             match_details: None,
         }
     }
@@ -1224,7 +1265,8 @@ impl Searcher {
                 .doc(*doc_address)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
-            let result = self.doc_to_result(&doc, *score, &None, &None);
+            let empty_terms = HashSet::new();
+            let result = self.doc_to_result(&doc, *score, &None, &empty_terms);
             Ok(Some(result))
         } else {
             Ok(None)
@@ -1251,7 +1293,8 @@ impl Searcher {
             .into_iter()
             .filter_map(|(score, doc_address)| {
                 let doc: TantivyDocument = searcher.doc(doc_address).ok()?;
-                Some(self.doc_to_result(&doc, score, &None, &None))
+                let empty_terms = HashSet::new();
+                Some(self.doc_to_result(&doc, score, &None, &empty_terms))
             })
             .collect();
 
@@ -1293,7 +1336,8 @@ impl Searcher {
             .into_iter()
             .filter_map(|(score, doc_address)| {
                 let doc: TantivyDocument = searcher.doc(doc_address).ok()?;
-                let result = self.doc_to_result(&doc, score, &None, &None);
+                let empty_terms = HashSet::new();
+                let result = self.doc_to_result(&doc, score, &None, &empty_terms);
                 // Check if ID starts with our prefix (either exact or with # separator)
                 if result.id == id_prefix || result.id.starts_with(&format!("{id_prefix}#")) {
                     Some(result)
@@ -1736,6 +1780,33 @@ mod test {
     }
 
     #[test]
+    fn search_multi_merges_title_and_path_ranges() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        // Combine topics so that different fields contribute highlights
+        let results = searcher
+            .search_multi(&["rust", "introduction", "docs"], 10)
+            .unwrap();
+
+        let intro = results.iter().find(|r| r.id.contains("rust.md")).unwrap();
+
+        let title_ranges = &intro.title_match_ranges;
+        assert!(
+            title_ranges.len() >= 2,
+            "expected merged title ranges for 'Introduction' and 'Rust'"
+        );
+
+        let path_ranges = &intro.path_match_ranges;
+        assert!(
+            path_ranges.len() >= 2,
+            "expected merged path ranges for 'docs' and 'rust'"
+        );
+    }
+
+    #[test]
     fn search_multi_keeps_highest_score() {
         let temp = TempDir::new().unwrap();
         create_test_index(&temp);
@@ -1937,6 +2008,225 @@ mod test {
             !results[0].match_ranges.is_empty(),
             "Should have match ranges for actual terms"
         );
+    }
+
+    #[test]
+    fn match_ranges_align_with_body_offsets() {
+        let temp = TempDir::new().unwrap();
+
+        let docs = vec![ChunkDocument {
+            id: "local:docs/test.md".to_string(),
+            doc_id: "local:docs/test.md".to_string(),
+            parent_id: None,
+            title: "Test".to_string(),
+            tags: vec![],
+            path: "docs/test.md".to_string(),
+            path_components: vec!["docs".to_string(), "test".to_string()],
+            tree: "local".to_string(),
+            body: "The quick brown fox jumps over the lazy dog.".to_string(),
+            breadcrumb: "Test".to_string(),
+            depth: 0,
+            position: 0,
+            byte_start: 0,
+            byte_end: 100,
+            sibling_count: 1,
+            mtime: SystemTime::UNIX_EPOCH,
+        }];
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let results = searcher.search("foz", 10).unwrap();
+
+        let result = &results[0];
+        assert!(
+            result
+                .match_ranges
+                .windows(2)
+                .all(|w| w[0].end <= w[1].start),
+            "ranges should be sorted and non-overlapping"
+        );
+
+        let slices: Vec<&str> = result
+            .match_ranges
+            .iter()
+            .map(|r| &result.body[r.clone()])
+            .collect();
+        assert!(slices.iter().any(|s| s.to_lowercase() == "fox"));
+    }
+
+    #[test]
+    fn match_ranges_cover_stemmed_tokens() {
+        let temp = TempDir::new().unwrap();
+
+        let docs = vec![ChunkDocument {
+            id: "local:docs/stems.md".to_string(),
+            doc_id: "local:docs/stems.md".to_string(),
+            parent_id: None,
+            title: "Stems".to_string(),
+            tags: vec![],
+            path: "docs/stems.md".to_string(),
+            path_components: vec!["docs".to_string(), "stems".to_string(), "md".to_string()],
+            tree: "local".to_string(),
+            body: "Handling handled handles".to_string(),
+            breadcrumb: "Stems".to_string(),
+            depth: 0,
+            position: 0,
+            byte_start: 0,
+            byte_end: 64,
+            sibling_count: 1,
+            mtime: SystemTime::UNIX_EPOCH,
+        }];
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let results = searcher.search("handling", 10).unwrap();
+        let result = &results[0];
+
+        let slices: Vec<&str> = result
+            .match_ranges
+            .iter()
+            .map(|r| &result.body[r.clone()])
+            .collect();
+
+        assert!(slices.iter().any(|s| s.to_lowercase() == "handling"));
+        assert!(slices.iter().any(|s| s.to_lowercase() == "handled"));
+    }
+
+    #[test]
+    fn match_ranges_roundtrip_offset_length() {
+        let temp = TempDir::new().unwrap();
+
+        let docs = vec![ChunkDocument {
+            id: "local:docs/roundtrip.md".to_string(),
+            doc_id: "local:docs/roundtrip.md".to_string(),
+            parent_id: None,
+            title: "Roundtrip".to_string(),
+            tags: vec![],
+            path: "docs/roundtrip.md".to_string(),
+            path_components: vec![
+                "docs".to_string(),
+                "roundtrip".to_string(),
+                "md".to_string(),
+            ],
+            tree: "local".to_string(),
+            body: "Alpha beta gamma alpha".to_string(),
+            breadcrumb: "Roundtrip".to_string(),
+            depth: 0,
+            position: 0,
+            byte_start: 0,
+            byte_end: 64,
+            sibling_count: 1,
+            mtime: SystemTime::UNIX_EPOCH,
+        }];
+
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let results = searcher.search("alpha", 10).unwrap();
+        let result = &results[0];
+
+        let offsets_and_lengths: Vec<(usize, usize)> = result
+            .match_ranges
+            .iter()
+            .map(|r| (r.start, r.end - r.start))
+            .collect();
+
+        let reconstructed: Vec<Range<usize>> = offsets_and_lengths
+            .iter()
+            .map(|(o, l)| *o..*o + *l)
+            .collect();
+
+        assert_eq!(result.match_ranges, reconstructed);
+
+        // Ensure reconstructed slices match the original term
+        for range in reconstructed {
+            let slice = &result.body[range];
+            assert_eq!(slice.to_lowercase(), "alpha");
+        }
+    }
+
+    #[test]
+    fn title_and_path_match_ranges_present() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+        let results = searcher.search("rust", 10).unwrap();
+        let result = results
+            .iter()
+            .find(|r| r.title.contains("Rust"))
+            .expect("rust result");
+
+        assert!(
+            !result.title_match_ranges.is_empty(),
+            "expected title match ranges"
+        );
+        assert!(
+            !result.path_match_ranges.is_empty(),
+            "expected path match ranges"
+        );
+
+        let title_slice = &result.title[result.title_match_ranges[0].clone()];
+        assert!(
+            title_slice.to_lowercase().contains("rust"),
+            "title slice should include rust"
+        );
+
+        let path_slice = &result.path[result.path_match_ranges[0].clone()];
+        assert!(
+            path_slice.to_lowercase().contains("rust"),
+            "path slice should include rust"
+        );
+    }
+
+    #[test]
+    fn search_no_snippets_still_has_highlights() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        let results = searcher.search_no_snippets("safety", 10).unwrap();
+
+        assert!(!results.is_empty());
+        assert!(
+            !results[0].match_ranges.is_empty(),
+            "match ranges should still be populated without snippets"
+        );
+    }
+
+    #[test]
+    fn multi_topic_merge_keeps_distinct_ranges() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let mut searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        let results = searcher.search_multi(&["rust", "safety"], 10).unwrap();
+        let intro = results.iter().find(|r| r.id.contains("rust.md")).unwrap();
+
+        let slices: Vec<String> = intro
+            .match_ranges
+            .iter()
+            .map(|r| intro.body[r.clone()].to_string())
+            .collect();
+
+        assert!(slices.iter().any(|s| s.to_lowercase() == "rust"));
+        assert!(slices.iter().any(|s| s.to_lowercase() == "safety"));
     }
 
     #[test]

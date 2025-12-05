@@ -29,6 +29,26 @@ fn ra_with_home(home: &Path) -> Command {
     cmd
 }
 
+/// Strips ANSI escape sequences from a string.
+fn strip_ansi(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+
+    output
+}
+
 mod init {
     use super::*;
 
@@ -540,13 +560,20 @@ path = "./docs"
     fn list_mode_shows_titles() {
         let dir = setup_indexed_dir();
 
-        ra_with_home(dir.path())
+        let assert = ra_with_home(dir.path())
             .current_dir(dir.path())
             .args(["search", "--list", "rust"])
             .assert()
-            .success()
-            // Path is relative to tree root, not including tree path
-            .stdout(predicate::str::contains("docs:rust.md"));
+            .success();
+
+        let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+        let plain = strip_ansi(&stdout);
+
+        // Path is relative to tree root, not including tree path
+        assert!(
+            plain.contains("docs:rust.md"),
+            "list output missing path: {plain}"
+        );
     }
 
     #[test]
@@ -561,6 +588,52 @@ path = "./docs"
             .stdout(predicate::str::contains("\"queries\""))
             .stdout(predicate::str::contains("\"id\""))
             .stdout(predicate::str::contains("\"title\""));
+    }
+
+    #[test]
+    fn json_includes_match_ranges_and_body() {
+        let dir = setup_indexed_dir();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["search", "--json", "--no-aggregation", "rust"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        let result = &json["queries"][0]["results"][0];
+        let body = result["body"].as_str().expect("body present");
+        let ranges = result["match_ranges"].as_array().expect("ranges present");
+        let title_ranges = result["title_match_ranges"]
+            .as_array()
+            .expect("title ranges present");
+        let path_ranges = result["path_match_ranges"]
+            .as_array()
+            .expect("path ranges present");
+
+        assert!(!ranges.is_empty(), "expected at least one match range");
+        assert!(!title_ranges.is_empty(), "expected title match ranges");
+        assert!(!path_ranges.is_empty(), "expected path match ranges");
+
+        // Ensure ranges slice valid substrings and contain the matched token "rust".
+        let mut contains_rust = false;
+        for r in ranges {
+            let offset = r["offset"].as_u64().unwrap() as usize;
+            let length = r["length"].as_u64().unwrap() as usize;
+
+            assert!(offset + length <= body.len(), "range out of bounds");
+            let slice = &body[offset..offset + length];
+            if slice.to_lowercase() == "rust" {
+                contains_rust = true;
+            }
+        }
+
+        assert!(
+            contains_rust,
+            "match ranges should include the 'rust' token"
+        );
     }
 
     #[test]
