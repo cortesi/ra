@@ -5,7 +5,7 @@ use std::{
     env, fs,
     io::{self, Write},
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     process::ExitCode,
 };
 
@@ -17,7 +17,7 @@ use ra_config::{
 };
 use ra_document::parse_file;
 use ra_highlight::{
-    Highlighter, breadcrumb, dim, error, format_body, header, indent_content, subheader, theme,
+    Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader, theme,
     warning,
 };
 use ra_index::{
@@ -81,6 +81,42 @@ fn print_hierarchical_help() {
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
+}
+
+/// Returns the current working directory or exits with a consistent error.
+fn current_dir_or_failure() -> Result<PathBuf, ExitCode> {
+    env::current_dir().map_err(|e| {
+        eprintln!("error: could not determine current directory: {e}");
+        ExitCode::FAILURE
+    })
+}
+
+/// Loads configuration from the provided directory or exits with an error.
+fn load_config_or_failure(cwd: &Path) -> Result<Config, ExitCode> {
+    Config::load(cwd).map_err(|e| {
+        eprintln!("error: failed to load configuration: {e}");
+        ExitCode::FAILURE
+    })
+}
+
+/// Ensures at least one tree is configured, optionally printing an init hint.
+fn ensure_trees(config: &Config, show_init_hint: bool) -> Result<(), ExitCode> {
+    if config.trees.is_empty() {
+        eprintln!("error: no trees defined in configuration");
+        if show_init_hint {
+            eprintln!("Run 'ra init' to create a configuration file, then add tree definitions.");
+        }
+        return Err(ExitCode::FAILURE);
+    }
+    Ok(())
+}
+
+/// Loads configuration from the current directory and checks that trees exist.
+fn load_config_with_cwd(show_init_hint: bool) -> Result<(PathBuf, Config), ExitCode> {
+    let cwd = current_dir_or_failure()?;
+    let config = load_config_or_failure(&cwd)?;
+    ensure_trees(&config, show_init_hint)?;
+    Ok((cwd, config))
 }
 
 #[derive(Subcommand)]
@@ -965,28 +1001,10 @@ fn cmd_search(
         return ExitCode::SUCCESS;
     }
 
-    let cwd = match env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    let (_, config) = match load_config_with_cwd(true) {
+        Ok(res) => res,
+        Err(code) => return code,
     };
-
-    // Load configuration
-    let config = match Config::load(&cwd) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if config.trees.is_empty() {
-        eprintln!("error: no trees defined in configuration");
-        eprintln!("Run 'ra init' to create a configuration file, then add tree definitions.");
-        return ExitCode::FAILURE;
-    }
 
     // Ensure index is fresh
     let mut searcher = match ensure_index_fresh(&config) {
@@ -1385,28 +1403,10 @@ fn cmd_context(
     verbose: u8,
     trees: &[String],
 ) -> ExitCode {
-    let cwd = match env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    let (_, config) = match load_config_with_cwd(true) {
+        Ok(res) => res,
+        Err(code) => return code,
     };
-
-    // Load configuration
-    let config = match Config::load(&cwd) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if config.trees.is_empty() {
-        eprintln!("error: no trees defined in configuration");
-        eprintln!("Run 'ra init' to create a configuration file, then add tree definitions.");
-        return ExitCode::FAILURE;
-    }
 
     // Ensure index is fresh (needed for both explain and search modes)
     let mut searcher = match ensure_index_fresh(&config) {
@@ -1696,27 +1696,10 @@ fn parse_chunk_id(id: &str) -> Option<(String, String, Option<String>)> {
 
 /// Implements the `ra get` command.
 fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
-    let cwd = match env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    let (_, config) = match load_config_with_cwd(false) {
+        Ok(res) => res,
+        Err(code) => return code,
     };
-
-    // Load configuration
-    let config = match Config::load(&cwd) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if config.trees.is_empty() {
-        eprintln!("error: no trees defined in configuration");
-        return ExitCode::FAILURE;
-    }
 
     // Parse the ID
     let Some((tree, path, slug)) = parse_chunk_id(id) else {
@@ -1826,12 +1809,9 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
 
 /// Implements the `ra init` command.
 fn cmd_init(global: bool, force: bool) -> ExitCode {
-    let cwd = match env::current_dir() {
+    let cwd = match current_dir_or_failure() {
         Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
     // Determine if we're in the home directory
@@ -1935,15 +1915,9 @@ fn update_gitignore(config_path: &Path) -> io::Result<()> {
 ///
 /// Shows configuration files, trees, index status, and validates the configuration.
 fn cmd_status() -> ExitCode {
-    let cwd = match env::current_dir() {
+    let cwd = match current_dir_or_failure() {
         Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!(
-                "{} could not determine current directory: {e}",
-                error("error:")
-            );
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
     // Discover config files
@@ -1967,12 +1941,9 @@ fn cmd_status() -> ExitCode {
     println!();
 
     // Load merged config
-    let config = match Config::load(&cwd) {
+    let config = match load_config_or_failure(&cwd) {
         Ok(config) => config,
-        Err(e) => {
-            eprintln!("{} {e}", error("error:"));
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
     // Show trees with status
@@ -2057,21 +2028,14 @@ fn cmd_status() -> ExitCode {
 
 /// Implements the `ra config` command.
 fn cmd_config() -> ExitCode {
-    let cwd = match env::current_dir() {
+    let cwd = match current_dir_or_failure() {
         Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
-    // Load merged config
-    let config = match Config::load(&cwd) {
+    let config = match load_config_or_failure(&cwd) {
         Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
     // Output effective settings in TOML format with syntax highlighting
@@ -2092,20 +2056,14 @@ fn cmd_ls(what: LsWhat, long: bool) -> ExitCode {
 
 /// Lists all configured trees.
 fn cmd_ls_trees(long: bool) -> ExitCode {
-    let cwd = match env::current_dir() {
+    let cwd = match current_dir_or_failure() {
         Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
-    let config = match Config::load(&cwd) {
+    let config = match load_config_or_failure(&cwd) {
         Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
     if config.trees.is_empty() {
@@ -2154,26 +2112,10 @@ struct DocInfo {
 
 /// Lists all indexed documents.
 fn cmd_ls_docs(long: bool) -> ExitCode {
-    let cwd = match env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    let (_, config) = match load_config_with_cwd(false) {
+        Ok(res) => res,
+        Err(code) => return code,
     };
-
-    let config = match Config::load(&cwd) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if config.trees.is_empty() {
-        eprintln!("error: no trees defined in configuration");
-        return ExitCode::FAILURE;
-    }
 
     // Ensure index is fresh
     let searcher = match ensure_index_fresh(&config) {
@@ -2240,26 +2182,10 @@ fn cmd_ls_docs(long: bool) -> ExitCode {
 
 /// Lists all indexed chunks.
 fn cmd_ls_chunks(long: bool) -> ExitCode {
-    let cwd = match env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    let (_, config) = match load_config_with_cwd(false) {
+        Ok(res) => res,
+        Err(code) => return code,
     };
-
-    let config = match Config::load(&cwd) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if config.trees.is_empty() {
-        eprintln!("error: no trees defined in configuration");
-        return ExitCode::FAILURE;
-    }
 
     // Ensure index is fresh
     let searcher = match ensure_index_fresh(&config) {
@@ -2442,20 +2368,14 @@ fn cmd_inspect_ctx(file: &str) -> ExitCode {
     }
 
     // Load config to get context patterns
-    let cwd = match env::current_dir() {
+    let cwd = match current_dir_or_failure() {
         Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
-    let config = match Config::load(&cwd) {
+    let config = match load_config_or_failure(&cwd) {
         Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(code) => return code,
     };
 
     // Compile context patterns
@@ -2576,28 +2496,10 @@ impl ProgressReporter for ConsoleReporter {
 
 /// Implements the `ra update` command.
 fn cmd_update() -> ExitCode {
-    let cwd = match env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(e) => {
-            eprintln!("error: could not determine current directory: {e}");
-            return ExitCode::FAILURE;
-        }
+    let (_, config) = match load_config_with_cwd(true) {
+        Ok(res) => res,
+        Err(code) => return code,
     };
-
-    // Load configuration
-    let config = match Config::load(&cwd) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("error: failed to load configuration: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if config.trees.is_empty() {
-        eprintln!("error: no trees defined in configuration");
-        eprintln!("Run 'ra init' to create a configuration file, then add tree definitions.");
-        return ExitCode::FAILURE;
-    }
 
     // Create indexer
     let indexer = match Indexer::new(&config) {
