@@ -5,6 +5,7 @@
 //! - Query building with injected terms
 //! - Tree filtering based on matched rules
 //! - Include injection into results
+//! - Self-exclusion of input files from results
 //!
 //! This API is designed for reuse across CLI and MCP service.
 
@@ -52,6 +53,8 @@ pub struct ContextAnalysisResult {
     pub query_expr: Option<QueryExpr>,
     /// Warnings encountered while analyzing files.
     pub warnings: Vec<ContextWarning>,
+    /// Doc IDs to exclude from results (the input files themselves).
+    pub exclude_doc_ids: HashSet<String>,
 }
 
 impl ContextAnalysisResult {
@@ -125,6 +128,9 @@ impl<'a> ContextSearch<'a> {
         let mut file_analyses: Vec<FileAnalysis> = Vec::new();
         let mut warnings: Vec<ContextWarning> = Vec::new();
 
+        // Compute doc IDs to exclude (the input files themselves)
+        let exclude_doc_ids = self.compute_exclude_doc_ids(files);
+
         for path in files {
             // Skip non-existent files
             if !path.exists() {
@@ -179,7 +185,41 @@ impl<'a> ContextSearch<'a> {
             merged_rules: all_matched_rules,
             query_expr,
             warnings,
+            exclude_doc_ids,
         }
+    }
+
+    /// Computes doc IDs to exclude from results based on input file paths.
+    ///
+    /// For each input file, attempts to find which tree it belongs to and computes
+    /// the corresponding doc ID in `tree:relative_path` format.
+    fn compute_exclude_doc_ids(&self, files: &[&Path]) -> HashSet<String> {
+        let mut exclude = HashSet::new();
+
+        for path in files {
+            // Canonicalize the input path for reliable comparison
+            let Ok(canonical) = path.canonicalize() else {
+                continue;
+            };
+
+            // Check each tree to see if this file is within it
+            for (tree_name, tree_path) in &self.searcher.tree_paths {
+                let Ok(tree_canonical) = tree_path.canonicalize() else {
+                    continue;
+                };
+
+                // Check if the file is within this tree
+                if let Ok(relative) = canonical.strip_prefix(&tree_canonical) {
+                    // Convert to forward slashes for consistency with indexed paths
+                    let relative_str = relative.to_string_lossy().replace('\\', "/");
+                    let doc_id = format!("{tree_name}:{relative_str}");
+                    exclude.insert(doc_id);
+                    break; // File can only be in one tree
+                }
+            }
+        }
+
+        exclude
     }
 
     /// Executes a context search and returns aggregated results.
@@ -226,6 +266,11 @@ impl<'a> ContextSearch<'a> {
 
         // Execute the search
         let mut results = self.searcher.search_aggregated_expr(expr, &search_params)?;
+
+        // Filter out input files from results (self-exclusion)
+        if !analysis.exclude_doc_ids.is_empty() {
+            results.retain(|r| !analysis.exclude_doc_ids.contains(r.doc_id()));
+        }
 
         // Inject auto-included files from rules
         self.inject_includes(
@@ -377,5 +422,70 @@ mod tests {
         assert!(result.files.is_empty());
         assert_eq!(result.warnings.len(), 1);
         assert!(result.warnings[0].path.ends_with("dir_as_file"));
+    }
+
+    #[test]
+    fn analyze_computes_exclude_doc_ids_for_files_in_tree() {
+        let tree_dir = TempDir::new().unwrap();
+        let index_dir = TempDir::new().unwrap();
+
+        // Create a test file inside the tree
+        let test_file = tree_dir.path().join("docs").join("guide.md");
+        fs::create_dir_all(test_file.parent().unwrap()).unwrap();
+        fs::write(&test_file, "# Guide\n\nSome content.").unwrap();
+
+        // Create an empty index
+        let mut writer = IndexWriter::open(index_dir.path(), "english").unwrap();
+        writer.commit().unwrap();
+
+        let trees = vec![ra_config::Tree {
+            name: "docs".to_string(),
+            path: tree_dir.path().to_path_buf(),
+            is_global: false,
+            include: Vec::new(),
+            exclude: Vec::new(),
+        }];
+
+        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
+        let settings = ContextSettings::default();
+        let context_search = ContextSearch::new(&mut searcher, &settings, settings.limit).unwrap();
+
+        let result = context_search.analyze(&[test_file.as_path()], &[]);
+
+        // Should have computed the doc ID for the file
+        assert_eq!(result.exclude_doc_ids.len(), 1);
+        assert!(result.exclude_doc_ids.contains("docs:docs/guide.md"));
+    }
+
+    #[test]
+    fn analyze_excludes_files_not_in_any_tree() {
+        let tree_dir = TempDir::new().unwrap();
+        let index_dir = TempDir::new().unwrap();
+        let other_dir = TempDir::new().unwrap();
+
+        // Create a test file outside any tree
+        let outside_file = other_dir.path().join("outside.md");
+        fs::write(&outside_file, "# Outside\n\nNot in any tree.").unwrap();
+
+        // Create an empty index
+        let mut writer = IndexWriter::open(index_dir.path(), "english").unwrap();
+        writer.commit().unwrap();
+
+        let trees = vec![ra_config::Tree {
+            name: "docs".to_string(),
+            path: tree_dir.path().to_path_buf(),
+            is_global: false,
+            include: Vec::new(),
+            exclude: Vec::new(),
+        }];
+
+        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
+        let settings = ContextSettings::default();
+        let context_search = ContextSearch::new(&mut searcher, &settings, settings.limit).unwrap();
+
+        let result = context_search.analyze(&[outside_file.as_path()], &[]);
+
+        // File is not in any tree, so no doc ID to exclude
+        assert!(result.exclude_doc_ids.is_empty());
     }
 }
