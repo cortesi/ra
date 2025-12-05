@@ -12,8 +12,9 @@ use std::{
 use clap::{Parser, Subcommand, error::ErrorKind};
 use comfy_table::{Cell, Table, presets::UTF8_FULL_CONDENSED};
 use ra_config::{
-    CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, discover_config_files,
-    format_path_for_display, global_config_path, global_template, local_template,
+    CONFIG_FILENAME, CompiledContextPatterns, CompiledContextRules, Config, ConfigWarning,
+    MatchedRules, discover_config_files, format_path_for_display, global_config_path,
+    global_template, local_template,
 };
 use ra_context::{AnalysisConfig, ContextAnalysis, analyze_context};
 use ra_document::parse_file;
@@ -23,7 +24,7 @@ use ra_highlight::{
 };
 use ra_index::{
     AggregatedSearchResult, IndexStats, IndexStatus, Indexer, ProgressReporter, QueryExpr,
-    SearchParams, SearchResult, Searcher, SilentReporter, TreeFilteredSearcher,
+    SearchCandidate, SearchParams, SearchResult, Searcher, SilentReporter, TreeFilteredSearcher,
     detect_index_status, index_directory, is_binary_file, open_searcher, parse_query,
 };
 use serde::Serialize;
@@ -1399,6 +1400,15 @@ fn cmd_context(
         return ExitCode::FAILURE;
     }
 
+    // Compile context rules for matching
+    let context_rules = match CompiledContextRules::compile(&config.context) {
+        Ok(rules) => rules,
+        Err(e) => {
+            eprintln!("error: failed to compile context rules: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     // Ensure index is fresh (needed for both explain and search modes)
     let searcher = match ensure_index_fresh(&config) {
         Ok(s) => s,
@@ -1411,10 +1421,10 @@ fn cmd_context(
         min_term_length: 3,
     };
 
-    // Use tree-filtered searcher for IDF lookups when trees are specified
-    let filtered_searcher = TreeFilteredSearcher::new(&searcher, trees.to_vec());
+    // Collect matched rules for all files (for tree/term merging)
+    let mut all_matched_rules = MatchedRules::default();
+    let mut analyses: Vec<(String, ContextAnalysis, MatchedRules)> = Vec::new();
 
-    let mut analyses: Vec<(String, ContextAnalysis)> = Vec::new();
     for file_str in files {
         let path = Path::new(file_str);
 
@@ -1430,6 +1440,12 @@ fn cmd_context(
             continue;
         }
 
+        // Match context rules for this file
+        let matched = context_rules.match_rules(path);
+
+        // Merge matched rules across all files
+        merge_matched_rules(&mut all_matched_rules, &matched);
+
         // Read file content
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
@@ -1439,11 +1455,15 @@ fn cmd_context(
             }
         };
 
+        // Use tree-filtered searcher for IDF lookups based on CLI + matched trees
+        let effective_trees = compute_effective_trees(trees, &matched.trees);
+        let filtered_searcher = TreeFilteredSearcher::new(&searcher, effective_trees);
+
         // Analyze using the tree-filtered searcher for IDF lookups
         let analysis = analyze_context(path, &content, &filtered_searcher, &analysis_config);
 
         if !analysis.is_empty() {
-            analyses.push((file_str.clone(), analysis));
+            analyses.push((file_str.clone(), analysis, matched));
         }
     }
 
@@ -1458,11 +1478,20 @@ fn cmd_context(
     }
 
     // Build a combined query expression from all file analyses
-    let combined_expr = build_combined_context_expr(&analyses);
+    let combined_expr = build_combined_context_expr_with_rules(
+        &analyses
+            .iter()
+            .map(|(f, a, _)| (f.clone(), a.clone()))
+            .collect::<Vec<_>>(),
+        &all_matched_rules,
+    );
     let Some(expr) = combined_expr else {
         println!("{}", dim("No context terms extracted."));
         return ExitCode::SUCCESS;
     };
+
+    // Compute final effective trees: CLI trees intersected with rule-matched trees
+    let effective_trees = compute_effective_trees(trees, &all_matched_rules.trees);
 
     // Execute the search using the query expression directly
     let mut searcher = searcher;
@@ -1472,17 +1501,20 @@ fn cmd_context(
         max_results: limit,
         aggregation_threshold: 0.5,
         disable_aggregation: false,
-        trees: trees.to_vec(),
+        trees: effective_trees,
         verbosity: verbose,
     };
 
-    let results = match searcher.search_aggregated_expr(&expr, &params) {
+    let mut results = match searcher.search_aggregated_expr(&expr, &params) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: context search failed: {e}");
             return ExitCode::FAILURE;
         }
     };
+
+    // Handle automatic includes from matched rules
+    inject_includes(&mut results, &all_matched_rules.include, &searcher, limit);
 
     // Output results (use query string representation for display)
     let query_display = expr.to_query_string();
@@ -1497,12 +1529,126 @@ fn cmd_context(
     )
 }
 
-/// Builds a combined query expression from multiple file analyses.
-fn build_combined_context_expr(analyses: &[(String, ContextAnalysis)]) -> Option<QueryExpr> {
-    let exprs: Vec<QueryExpr> = analyses
+/// Merges matched rules from a file into the accumulated rules.
+fn merge_matched_rules(accumulated: &mut MatchedRules, new_rules: &MatchedRules) {
+    // Terms: concatenate (deduplicated)
+    for term in &new_rules.terms {
+        if !accumulated.terms.contains(term) {
+            accumulated.terms.push(term.clone());
+        }
+    }
+
+    // Includes: concatenate (deduplicated)
+    for inc in &new_rules.include {
+        if !accumulated.include.contains(inc) {
+            accumulated.include.push(inc.clone());
+        }
+    }
+
+    // Trees: intersection
+    if !new_rules.trees.is_empty() {
+        if accumulated.trees.is_empty() {
+            // First rule with trees - take them as-is
+            accumulated.trees = new_rules.trees.clone();
+        } else {
+            // Intersect with existing
+            accumulated.trees.retain(|t| new_rules.trees.contains(t));
+        }
+    }
+}
+
+/// Computes effective trees by combining CLI-provided trees with rule-matched trees.
+///
+/// - If CLI trees are specified, they take precedence (intersected with rule trees if any)
+/// - If only rule trees are specified, use those
+/// - If neither is specified, return empty (meaning all trees)
+fn compute_effective_trees(cli_trees: &[String], rule_trees: &[String]) -> Vec<String> {
+    match (cli_trees.is_empty(), rule_trees.is_empty()) {
+        (true, true) => Vec::new(),           // No restriction
+        (true, false) => rule_trees.to_vec(), // Use rule trees
+        (false, true) => cli_trees.to_vec(),  // Use CLI trees
+        (false, false) => {
+            // Intersect CLI and rule trees
+            cli_trees
+                .iter()
+                .filter(|t| rule_trees.contains(t))
+                .cloned()
+                .collect()
+        }
+    }
+}
+
+/// Injects automatically included files from matched rules into the results.
+///
+/// Include paths are in the format "tree:path". Each matching chunk is added
+/// to the results if not already present.
+fn inject_includes(
+    results: &mut Vec<AggregatedSearchResult>,
+    includes: &[String],
+    searcher: &Searcher,
+    limit: usize,
+) {
+    if includes.is_empty() {
+        return;
+    }
+
+    // Track existing doc IDs to avoid duplicates
+    let existing_doc_ids: HashSet<String> =
+        results.iter().map(|r| r.doc_id().to_string()).collect();
+
+    // Parse and look up each include
+    for include in includes {
+        // Parse tree:path format
+        let Some(colon_pos) = include.find(':') else {
+            continue; // Invalid format, skip
+        };
+        let tree = &include[..colon_pos];
+        let path = &include[colon_pos + 1..];
+
+        // Find chunks matching this tree/path combination
+        if let Ok(search_results) = searcher.get_by_path(tree, path) {
+            if search_results.is_empty() {
+                continue;
+            }
+
+            // Build the doc ID key
+            let doc_id = format!("{tree}:{path}");
+            if existing_doc_ids.contains(&doc_id) {
+                continue; // Already in results
+            }
+
+            // Create an aggregated result for this included file
+            if results.len() < limit {
+                // Convert the first result to a candidate with score 0 (manual inclusion)
+                let first_result = search_results.into_iter().next().unwrap();
+                let mut candidate: SearchCandidate = first_result.into();
+                candidate.score = 0.0; // Manual inclusion gets score 0
+
+                results.push(AggregatedSearchResult::single(candidate));
+            }
+        }
+    }
+}
+
+/// Boost applied to terms injected from context rules.
+const INJECTED_TERM_BOOST: f32 = 2.0;
+
+/// Builds a combined query expression from multiple file analyses, injecting rule-matched terms.
+fn build_combined_context_expr_with_rules(
+    analyses: &[(String, ContextAnalysis)],
+    matched_rules: &MatchedRules,
+) -> Option<QueryExpr> {
+    let mut exprs: Vec<QueryExpr> = analyses
         .iter()
         .filter_map(|(_, analysis)| analysis.query_expr().cloned())
         .collect();
+
+    // Inject terms from matched rules with a moderate boost
+    for term in &matched_rules.terms {
+        let term_expr = QueryExpr::Term(term.clone());
+        let boosted = QueryExpr::boost(term_expr, INJECTED_TERM_BOOST);
+        exprs.push(boosted);
+    }
 
     if exprs.is_empty() {
         return None;
@@ -1517,13 +1663,16 @@ fn build_combined_context_expr(analyses: &[(String, ContextAnalysis)]) -> Option
 }
 
 /// Outputs explain mode information for context analysis.
-fn output_context_explain(analyses: &[(String, ContextAnalysis)], json: bool) -> ExitCode {
+fn output_context_explain(
+    analyses: &[(String, ContextAnalysis, MatchedRules)],
+    json: bool,
+) -> ExitCode {
     if json {
         // JSON output for explain mode
         let json_output = JsonContextExplain {
             files: analyses
                 .iter()
-                .map(|(file, analysis)| JsonFileAnalysis {
+                .map(|(file, analysis, matched)| JsonFileAnalysis {
                     file: file.clone(),
                     terms: analysis
                         .ranked_terms
@@ -1538,6 +1687,11 @@ fn output_context_explain(analyses: &[(String, ContextAnalysis)], json: bool) ->
                         })
                         .collect(),
                     query: analysis.query_string().map(|s| s.to_string()),
+                    matched_rules: JsonMatchedRules {
+                        terms: matched.terms.clone(),
+                        trees: matched.trees.clone(),
+                        include: matched.include.clone(),
+                    },
                 })
                 .collect(),
         };
@@ -1551,9 +1705,24 @@ fn output_context_explain(analyses: &[(String, ContextAnalysis)], json: bool) ->
         }
     } else {
         // Human-readable explain output
-        for (file, analysis) in analyses {
+        for (file, analysis, matched) in analyses {
             println!("{}", subheader(&format!("File: {file}")));
             println!();
+
+            // Show matched rules if any
+            if !matched.is_empty() {
+                println!("{}", subheader("Matched rules:"));
+                if !matched.terms.is_empty() {
+                    println!("  Terms:   {}", matched.terms.join(", "));
+                }
+                if !matched.trees.is_empty() {
+                    println!("  Trees:   {}", matched.trees.join(", "));
+                }
+                if !matched.include.is_empty() {
+                    println!("  Include: {}", matched.include.join(", "));
+                }
+                println!();
+            }
 
             // Show ranked terms
             println!("{}", subheader("Ranked terms:"));
@@ -1613,6 +1782,19 @@ struct JsonFileAnalysis {
     terms: Vec<JsonTermAnalysis>,
     /// Generated query string.
     query: Option<String>,
+    /// Matched context rules.
+    matched_rules: JsonMatchedRules,
+}
+
+/// JSON output for matched context rules.
+#[derive(Serialize)]
+struct JsonMatchedRules {
+    /// Terms injected from matching rules.
+    terms: Vec<String>,
+    /// Trees to limit search to.
+    trees: Vec<String>,
+    /// Files to always include.
+    include: Vec<String>,
 }
 
 /// JSON output for a single term's analysis.

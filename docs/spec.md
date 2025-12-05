@@ -26,26 +26,32 @@ exclude = ["**/drafts/**"]
 Trees defined in `~/.ra.toml` are global. Trees defined elsewhere are local. Local trees
 receive a relevance boost in search results (configurable via `settings.local_boost`).
 
-### Context Patterns
+### Context Rules
 
-Context patterns associate file globs with search terms, providing hints when analyzing
-source files:
+Context rules customize search behavior based on file patterns. When `ra context` analyzes
+a file, matching rules can inject terms, limit trees, and auto-include files:
 
 ```toml
-[context.patterns]
-"*.rs" = ["rust"]
-"src/api/**" = ["http", "api"]
+[[context.rules]]
+match = "*.rs"
+trees = ["docs"]
+terms = ["rust"]
+
+[[context.rules]]
+match = "src/api/**"
+terms = ["http", "routing"]
+include = ["docs:api/overview.md"]
 ```
 
-These patterns are surfaced by `ra inspect ctx` and available to custom tooling. They are
-not yet incorporated into the generated queries from `ra context`.
+When multiple rules match, terms and includes are concatenated (deduplicated) and tree
+restrictions are intersected. See [context.md](context.md) for the full specification.
 
 ### Merge Semantics
 
 - Scalar settings: closer files override more distant files.
 - Trees: merged by name; a tree definition completely replaces any same-named tree from a
   more distant config.
-- Context patterns: merged by glob key; closer definitions take precedence.
+- Context rules: merged per file; terms and includes concatenate, trees intersect.
 
 Use `ra config` to see the effective merged configuration. Use `ra init` to generate a
 starter configuration file.
@@ -188,8 +194,8 @@ The `ra context` command analyzes source files and generates search queries auto
 Terms that don't appear in the index are filtered out. The top N terms by score are combined
 into a boosted OR query.
 
-Context patterns from configuration are surfaced by `ra inspect ctx` but are not yet
-incorporated into generated queries.
+Context rules from configuration are used to inject additional terms, limit search to
+specific trees, and auto-include files in results.
 
 
 ## CLI Commands

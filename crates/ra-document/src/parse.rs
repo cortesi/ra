@@ -383,7 +383,7 @@ Section 2 content.
         let result = parse_markdown(content, Path::new("chunking.md"), "docs");
 
         assert!(result.has_chunks);
-        assert_eq!(result.document.title, "Chunking Specification");
+        assert_eq!(result.document.title, "Chunking");
 
         // Should have hierarchical structure with multiple sections
         let chunks = result
@@ -394,7 +394,7 @@ Section 2 content.
 
         // Check that some expected sections exist
         let titles: Vec<&str> = chunks.iter().map(|c| c.title.as_str()).collect();
-        assert!(titles.contains(&"Goals"));
+        assert!(titles.contains(&"Overview"));
         assert!(titles.contains(&"Terminology"));
     }
 
@@ -405,7 +405,7 @@ Section 2 content.
         let result = parse_markdown(content, Path::new("search.md"), "docs");
 
         assert!(result.has_chunks);
-        assert_eq!(result.document.title, "Search and Chunking");
+        assert_eq!(result.document.title, "Search");
 
         // Should have chunks
         let tree = &result.document.chunk_tree;

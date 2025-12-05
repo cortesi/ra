@@ -23,7 +23,7 @@ Use `ra status` to see which configs were found and which defines the index loca
 
 - **Scalar settings**: Nearer files override more distant files
 - **Trees**: Merged by name; nearer definition completely replaces more distant definition
-- **Context patterns**: Merged by glob key; nearer definition wins
+- **Context rules**: Merged per file; terms and includes concatenate, trees intersect
 
 
 ## Minimal Example
@@ -91,18 +91,31 @@ Settings for `ra context` and context analysis.
 | `sample_size` | 50000 | Bytes to read from large files |
 
 
-## Context Patterns
+## Context Rules
 
-Map file globs to hint terms:
+Rules customize `ra context` behavior based on file patterns:
 
 ```toml
-[context.patterns]
-"*.rs" = ["rust"]
-"src/api/**" = ["http", "api"]
+[[context.rules]]
+match = "*.rs"
+trees = ["docs"]
+terms = ["rust"]
+
+[[context.rules]]
+match = "src/api/**"
+terms = ["http", "routing"]
+include = ["docs:api/overview.md"]
 ```
 
-Patterns appear in `ra inspect ctx` and are available to custom tooling. They are not yet
-incorporated into the generated query from `ra context`.
+| Field | Type | Description |
+|-------|------|-------------|
+| `match` | String or [String] | Glob pattern(s) to match file paths |
+| `trees` | [String] | Limit search to these trees |
+| `terms` | [String] | Additional search terms to inject |
+| `include` | [String] | Files to always include (`tree:path` format) |
+
+When multiple rules match a file, terms and includes are concatenated (deduplicated) and
+tree restrictions are intersected. See [context.md](context.md) for the full specification.
 
 
 ## Global vs Project Configs

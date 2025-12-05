@@ -175,15 +175,163 @@ max_word_length = 30    # Skip long tokens
 sample_size = 50000     # Bytes read from large files
 ```
 
-### Context Patterns
 
-Patterns associate file globs with hint terms:
+## Context Rules
+
+Rules customize context search behavior based on file patterns. When `ra context` analyzes a
+file, matching rules can:
+
+- **Inject terms** into the search query
+- **Limit search** to specific trees
+- **Auto-include** specific files in results
+
+### Rule Format
+
+Rules use TOML's array-of-tables syntax under `[[context.rules]]`:
 
 ```toml
-[context.patterns]
-"*.rs" = ["rust"]
-"src/api/**" = ["http", "api"]
+[[context.rules]]
+match = "*.rs"
+trees = ["docs"]
+terms = ["rust"]
+include = ["docs:api/overview.md"]
 ```
 
-These patterns are surfaced by `ra inspect ctx` but are not yet incorporated into generated
-queries.
+### Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `match` | `String` or `[String]` | Yes | Glob pattern(s) matched against file paths |
+| `trees` | `[String]` | No | Limit search to these trees (default: all trees) |
+| `terms` | `[String]` | No | Additional search terms to inject into the query |
+| `include` | `[String]` | No | Files to always include in results |
+
+### Match Patterns
+
+The `match` field accepts either a single glob or an array of globs:
+
+```toml
+# Single pattern
+[[context.rules]]
+match = "*.rs"
+terms = ["rust"]
+
+# Multiple patterns
+[[context.rules]]
+match = ["*.tsx", "*.jsx"]
+terms = ["react", "components"]
+```
+
+Patterns are matched against the file path relative to the config file location, using standard
+glob syntax (`*`, `**`, `?`, `[...]`).
+
+### Tree-Prefixed Include Paths
+
+The `include` field uses tree-prefixed paths in the format `tree:path`:
+
+```toml
+[[context.rules]]
+match = "src/api/**"
+include = ["docs:api/overview.md", "docs:api/authentication.md"]
+```
+
+This explicitly names which tree contains each file, avoiding ambiguity when multiple trees
+might contain files with similar paths.
+
+### Rule Merging
+
+When multiple rules match a file, their effects are merged:
+
+- **terms**: All terms from matching rules are concatenated (deduplicated)
+- **trees**: Intersection of all specified trees (if any rule specifies trees, only the
+  intersection is searched; if no rules specify trees, all trees are searched)
+- **include**: All include paths from matching rules are concatenated (deduplicated)
+
+Example with two matching rules:
+
+```toml
+[[context.rules]]
+match = "*.rs"
+trees = ["docs", "examples"]
+terms = ["rust"]
+
+[[context.rules]]
+match = "src/api/**"
+trees = ["docs"]
+terms = ["http", "handlers"]
+include = ["docs:api/overview.md"]
+```
+
+For `src/api/handler.rs`:
+- **trees**: `["docs"]` (intersection of `["docs", "examples"]` and `["docs"]`)
+- **terms**: `["rust", "http", "handlers"]`
+- **include**: `["docs:api/overview.md"]`
+
+### CLI Interaction
+
+The `--tree` flag interacts with rule-based tree filtering:
+
+- If neither CLI nor rules specify trees: search all trees
+- If only CLI specifies trees: use CLI trees
+- If only rules specify trees: use rule trees
+- If both specify trees: use intersection of CLI and rule trees
+
+### Explain Output
+
+Use `--explain` to see which rules matched and their effects:
+
+```bash
+$ ra context --explain src/api/handler.rs
+
+File: src/api/handler.rs
+
+Matched rules:
+  - *.rs
+    terms: ["rust"]
+    trees: ["docs", "examples"]
+  - src/api/**
+    terms: ["http", "handlers"]
+    trees: ["docs"]
+    include: ["docs:api/overview.md"]
+
+Merged effects:
+  terms: ["rust", "http", "handlers"]
+  trees: ["docs"]
+  include: ["docs:api/overview.md"]
+
+Ranked terms:
+  ...
+```
+
+### Example Configuration
+
+```toml
+[context]
+limit = 10
+min_word_length = 4
+
+[[context.rules]]
+match = "*.rs"
+trees = ["docs"]
+terms = ["rust"]
+
+[[context.rules]]
+match = "*.py"
+trees = ["docs"]
+terms = ["python"]
+
+[[context.rules]]
+match = "src/api/**"
+terms = ["http", "routing", "handlers"]
+include = ["docs:api/overview.md"]
+
+[[context.rules]]
+match = ["*.tsx", "*.jsx"]
+terms = ["react", "typescript", "components"]
+include = ["docs:frontend/components.md"]
+
+[[context.rules]]
+match = "tests/**"
+trees = ["docs", "examples"]
+terms = ["testing"]
+```

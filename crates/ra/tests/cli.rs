@@ -898,9 +898,13 @@ mod context {
             r#"[tree.docs]
 path = "./docs"
 
-[context.patterns]
-"*.rs" = ["rust"]
-"src/auth/**" = ["authentication", "login"]
+[[context.rules]]
+match = "*.rs"
+terms = ["rust"]
+
+[[context.rules]]
+match = "src/auth/**"
+terms = ["authentication", "login"]
 "#,
         )
         .unwrap();
@@ -1183,6 +1187,165 @@ path = "./docs"
                 "Expected at most 3 terms in query, found {boost_count}: {query}"
             );
         }
+    }
+
+    #[test]
+    fn explain_shows_matched_rules() {
+        let dir = setup_indexed_dir();
+
+        // Create a Rust file that should match the "*.rs" rule
+        fs::write(dir.path().join("test.rs"), "fn main() { login() }").unwrap();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["context", "--explain", "test.rs"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let plain = strip_ansi(&stdout);
+
+        // Should show matched rules section
+        assert!(
+            plain.contains("Matched rules"),
+            "output should show matched rules section: {plain}"
+        );
+        // Should show the term "rust" from the matched rule
+        assert!(
+            plain.contains("rust"),
+            "output should include 'rust' term from matched rule: {plain}"
+        );
+    }
+
+    #[test]
+    fn explain_json_includes_matched_rules() {
+        let dir = setup_indexed_dir();
+
+        // Create a file matching the *.rs rule
+        fs::write(dir.path().join("handler.rs"), "fn handle() {}").unwrap();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["context", "--explain", "--json", "handler.rs"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        // Should have matched_rules in the file analysis
+        let file = &json["files"][0];
+        assert!(
+            file["matched_rules"].is_object(),
+            "file entry should have matched_rules object: {file}"
+        );
+
+        let matched_rules = &file["matched_rules"];
+        assert!(
+            matched_rules["terms"].is_array(),
+            "matched_rules should have terms array"
+        );
+        assert!(
+            matched_rules["trees"].is_array(),
+            "matched_rules should have trees array"
+        );
+        assert!(
+            matched_rules["include"].is_array(),
+            "matched_rules should have include array"
+        );
+    }
+
+    #[test]
+    fn rules_inject_terms_into_query() {
+        let dir = setup_indexed_dir();
+
+        // Create an auth file that matches both *.rs and src/auth/** rules
+        let src = dir.path().join("src");
+        fs::create_dir_all(src.join("auth")).unwrap();
+        fs::write(src.join("auth").join("login.rs"), "fn login() {}").unwrap();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["context", "--explain", "--json", "src/auth/login.rs"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        let matched_rules = &json["files"][0]["matched_rules"];
+        let terms = matched_rules["terms"].as_array().unwrap();
+
+        // Should have terms from both matching rules
+        let term_strs: Vec<&str> = terms.iter().filter_map(|t| t.as_str()).collect();
+        assert!(
+            term_strs.contains(&"rust"),
+            "Should contain 'rust' from *.rs rule: {:?}",
+            term_strs
+        );
+        assert!(
+            term_strs.contains(&"authentication") || term_strs.contains(&"login"),
+            "Should contain terms from src/auth/** rule: {:?}",
+            term_strs
+        );
+    }
+
+    #[test]
+    fn rules_with_tree_filter() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        let examples = dir.path().join("examples");
+        fs::create_dir(&docs).unwrap();
+        fs::create_dir(&examples).unwrap();
+
+        // Create docs in both trees
+        fs::write(docs.join("guide.md"), "# Guide\n\nRust programming guide.").unwrap();
+        fs::write(examples.join("sample.md"), "# Sample\n\nExample Rust code.").unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+
+[tree.examples]
+path = "./examples"
+
+[[context.rules]]
+match = "*.rs"
+trees = ["docs"]
+terms = ["rust"]
+"#,
+        )
+        .unwrap();
+
+        // Index the content
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        // Create a test file
+        fs::write(dir.path().join("test.rs"), "fn main() {}").unwrap();
+
+        // Run context with explain to see matched rules
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["context", "--explain", "--json", "test.rs"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        // Check that matched_rules has trees restriction
+        let matched_rules = &json["files"][0]["matched_rules"];
+        let trees = matched_rules["trees"].as_array().unwrap();
+        assert!(
+            trees.iter().any(|t| t.as_str() == Some("docs")),
+            "Should have 'docs' in trees filter: {:?}",
+            trees
+        );
     }
 }
 
