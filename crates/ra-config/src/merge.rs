@@ -6,9 +6,11 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    Config, ConfigError, ContextSettings, SearchSettings, Settings, Tree,
+    Config, ConfigError, ContextRule, ContextSettings, SearchSettings, Settings, Tree,
     discovery::is_global_config,
-    parse::{RawConfig, RawContextSettings, RawSearchSettings, RawSettings, RawTree},
+    parse::{
+        RawConfig, RawContextRule, RawContextSettings, RawSearchSettings, RawSettings, RawTree,
+    },
     resolve::resolve_tree_path,
 };
 
@@ -112,18 +114,33 @@ fn apply_raw_search(result: &mut SearchSettings, raw: &RawSearchSettings) {
 fn merge_context_settings(configs: &[ParsedConfig]) -> ContextSettings {
     let mut result = ContextSettings::default();
 
-    // Iterate in reverse (lowest precedence first) so higher precedence overwrites
+    // For scalar values, iterate in reverse (lowest precedence first) so higher precedence
+    // overwrites. For rules, iterate in forward order (highest precedence first) so those
+    // rules are checked first when matching.
+
+    // First pass: scalar values (reverse order)
     for parsed in configs.iter().rev() {
         if let Some(ref context) = parsed.config.context {
-            apply_raw_context(&mut result, context);
+            apply_raw_context_scalars(&mut result, context);
+        }
+    }
+
+    // Second pass: rules (forward order - high precedence first)
+    for parsed in configs {
+        if let Some(ref context) = parsed.config.context
+            && let Some(ref rules) = context.rules
+        {
+            for rule in rules {
+                result.rules.push(convert_context_rule(rule));
+            }
         }
     }
 
     result
 }
 
-/// Applies raw context settings to result.
-fn apply_raw_context(result: &mut ContextSettings, raw: &RawContextSettings) {
+/// Applies raw context scalar settings to result (not rules).
+fn apply_raw_context_scalars(result: &mut ContextSettings, raw: &RawContextSettings) {
     if let Some(v) = raw.limit {
         result.limit = v;
     }
@@ -139,11 +156,15 @@ fn apply_raw_context(result: &mut ContextSettings, raw: &RawContextSettings) {
     if let Some(v) = raw.sample_size {
         result.sample_size = v;
     }
-    if let Some(ref patterns) = raw.patterns {
-        // Merge patterns - raw values overwrite existing for same key
-        for (key, value) in patterns {
-            result.patterns.insert(key.clone(), value.clone());
-        }
+}
+
+/// Converts a raw context rule to the resolved type.
+fn convert_context_rule(raw: &RawContextRule) -> ContextRule {
+    ContextRule {
+        patterns: raw.patterns.clone(),
+        trees: raw.trees.clone().unwrap_or_default(),
+        terms: raw.terms.clone().unwrap_or_default(),
+        include: raw.include.clone().unwrap_or_default(),
     }
 }
 
@@ -414,16 +435,20 @@ path = "./global"
     }
 
     #[test]
-    fn test_merge_context_patterns() {
+    fn test_merge_context_rules() {
         let test_dir = TestDir::new();
 
         let high_prec = ParsedConfig {
             path: test_dir.path().join("project/.ra.toml"),
             config: crate::parse_config_str(
                 r#"
-[context.patterns]
-"*.rs" = ["rust", "systems"]
-"src/api/**" = ["http"]
+[[context.rules]]
+match = "*.rs"
+terms = ["rust", "systems"]
+
+[[context.rules]]
+match = "src/api/**"
+terms = ["http"]
 "#,
                 Path::new("test"),
             )
@@ -434,9 +459,9 @@ path = "./global"
             path: test_dir.path().join(".ra.toml"),
             config: crate::parse_config_str(
                 r#"
-[context.patterns]
-"*.rs" = ["rust"]
-"*.py" = ["python"]
+[[context.rules]]
+match = "*.py"
+terms = ["python"]
 "#,
                 Path::new("test"),
             )
@@ -445,21 +470,21 @@ path = "./global"
 
         let result = merge_configs(&[high_prec, low_prec]).unwrap();
 
-        // High precedence wins for *.rs
+        // Rules are accumulated with high precedence first
+        assert_eq!(result.context.rules.len(), 3);
+
+        // High precedence rules come first
+        assert_eq!(result.context.rules[0].patterns, vec!["*.rs"]);
         assert_eq!(
-            result.context.patterns.get("*.rs"),
-            Some(&vec!["rust".to_string(), "systems".to_string()])
+            result.context.rules[0].terms,
+            vec!["rust".to_string(), "systems".to_string()]
         );
-        // Low precedence provides *.py
-        assert_eq!(
-            result.context.patterns.get("*.py"),
-            Some(&vec!["python".to_string()])
-        );
-        // High precedence provides src/api/**
-        assert_eq!(
-            result.context.patterns.get("src/api/**"),
-            Some(&vec!["http".to_string()])
-        );
+        assert_eq!(result.context.rules[1].patterns, vec!["src/api/**"]);
+        assert_eq!(result.context.rules[1].terms, vec!["http".to_string()]);
+
+        // Low precedence rules come last
+        assert_eq!(result.context.rules[2].patterns, vec!["*.py"]);
+        assert_eq!(result.context.rules[2].terms, vec!["python".to_string()]);
     }
 
     #[test]

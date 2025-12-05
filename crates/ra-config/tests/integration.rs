@@ -354,8 +354,9 @@ min_word_length = 3
 max_word_length = 50
 sample_size = 100000
 
-[context.patterns]
-"*.py" = ["python3", "django"]
+[[context.rules]]
+match = "*.py"
+terms = ["python3", "django"]
 "#,
             docs.display()
         ),
@@ -376,10 +377,11 @@ sample_size = 100000
     assert_eq!(config.context.min_word_length, 3);
     assert_eq!(config.context.max_word_length, 50);
     assert_eq!(config.context.sample_size, 100000);
-    assert!(config.context.patterns.contains_key("*.py"));
+    assert_eq!(config.context.rules.len(), 1);
+    assert_eq!(config.context.rules[0].patterns, vec!["*.py"]);
     assert_eq!(
-        config.context.patterns.get("*.py"),
-        Some(&vec!["python3".to_string(), "django".to_string()])
+        config.context.rules[0].terms,
+        vec!["python3".to_string(), "django".to_string()]
     );
 }
 
@@ -534,12 +536,12 @@ local_boost = 3.0
 }
 
 #[test]
-fn test_context_patterns_merge() {
+fn test_context_rules_merge() {
     let env = TestEnv::new();
     let docs = env.create_dir("docs");
     let project = env.create_dir("project");
 
-    // Parent config with context patterns
+    // Parent config with context rules
     env.create_file(
         ".ra.toml",
         &format!(
@@ -547,39 +549,49 @@ fn test_context_patterns_merge() {
 [tree.docs]
 path = "{}"
 
-[context.patterns]
-"*.rs" = ["rust", "cargo"]
-"*.py" = ["python"]
+[[context.rules]]
+match = "*.rs"
+terms = ["rust", "cargo"]
+
+[[context.rules]]
+match = "*.py"
+terms = ["python"]
 "#,
             docs.display()
         ),
     );
 
-    // Child config overrides one pattern, adds another
+    // Child config adds more rules (higher precedence)
     env.create_file(
         "project/.ra.toml",
         r#"
-[context.patterns]
-"*.rs" = ["rust-lang"]
-"*.go" = ["golang"]
+[[context.rules]]
+match = "*.rs"
+terms = ["rust-lang"]
+
+[[context.rules]]
+match = "*.go"
+terms = ["golang"]
 "#,
     );
 
     let config = env.load(&project).unwrap();
 
-    // *.rs should be overridden by child
+    // All rules should be merged, with child rules first (higher precedence)
+    assert_eq!(config.context.rules.len(), 4);
+
+    // Child rules come first
+    assert_eq!(config.context.rules[0].patterns, vec!["*.rs"]);
+    assert_eq!(config.context.rules[0].terms, vec!["rust-lang".to_string()]);
+    assert_eq!(config.context.rules[1].patterns, vec!["*.go"]);
+    assert_eq!(config.context.rules[1].terms, vec!["golang".to_string()]);
+
+    // Parent rules come after
+    assert_eq!(config.context.rules[2].patterns, vec!["*.rs"]);
     assert_eq!(
-        config.context.patterns.get("*.rs"),
-        Some(&vec!["rust-lang".to_string()])
+        config.context.rules[2].terms,
+        vec!["rust".to_string(), "cargo".to_string()]
     );
-    // *.py should be from parent
-    assert_eq!(
-        config.context.patterns.get("*.py"),
-        Some(&vec!["python".to_string()])
-    );
-    // *.go should be from child
-    assert_eq!(
-        config.context.patterns.get("*.go"),
-        Some(&vec!["golang".to_string()])
-    );
+    assert_eq!(config.context.rules[3].patterns, vec!["*.py"]);
+    assert_eq!(config.context.rules[3].terms, vec!["python".to_string()]);
 }

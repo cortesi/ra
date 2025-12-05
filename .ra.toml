@@ -31,35 +31,25 @@ path = "./docs"
 # max_word_length = 30
 # sample_size = 50000
 
-# Glob patterns that inject additional search terms when matched.
-# When `ra context` analyzes a file, it matches the file path against these
-# patterns and adds the corresponding terms to the search query. This helps
-# find relevant documentation based on file type or project structure.
+# Context rules - customize search behavior based on file patterns.
+# When `ra context` analyzes a file, matching rules modify the search:
+# - `match`: glob pattern(s) to match file paths (string or array)
+# - `trees`: limit search to specific trees (optional)
+# - `terms`: additional search terms to inject (optional)
+# - `include`: files to always include in results, as "tree:path" (optional)
 #
-# Multiple patterns can match the same file - all matching terms are merged.
-# Child configs can override patterns from parent configs for the same glob.
+# Multiple rules can match the same file - effects are merged.
 
-# [context.patterns]
-# "*.rs" = ["rust"]
-# "*.py" = ["python"]
-# "*.go" = ["golang"]
-# "*.ts" = ["typescript"]
-# "*.tsx" = ["typescript", "react"]
-# "*.jsx" = ["javascript", "react"]
-# "*.rb" = ["ruby"]
-# "*.ex" = ["elixir"]
-# "*.exs" = ["elixir"]
-# "*.clj" = ["clojure"]
-# "*.hs" = ["haskell"]
-# "*.swift" = ["swift"]
-# "*.kt" = ["kotlin"]
-# "*.java" = ["java"]
-# "*.c" = ["c"]
-# "*.cpp" = ["cpp"]
-# "*.h" = ["c", "cpp"]
-# "*.hpp" = ["cpp"]
-# "src/api/**" = ["http", "handlers", "routing", "REST"]
-# "src/auth/**" = ["authentication", "security", "jwt"]
-# "src/db/**" = ["database", "queries", "migrations"]
-# "tests/**" = ["testing", "fixtures"]
-# "migrations/**" = ["database", "schema"]
+# [[context.rules]]
+# match = "*.rs"
+# terms = ["rust"]
+
+# [[context.rules]]
+# match = ["*.tsx", "*.jsx"]
+# terms = ["typescript", "react"]
+
+# [[context.rules]]
+# match = "src/api/**"
+# trees = ["docs"]
+# terms = ["http", "routing"]
+# include = ["docs:api/overview.md"]

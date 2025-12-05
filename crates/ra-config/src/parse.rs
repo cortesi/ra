@@ -3,9 +3,9 @@
 //! Parses individual `.ra.toml` files into intermediate `RawConfig` structures
 //! that preserve the optional nature of all fields before merging.
 
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fmt, fs, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 use toml::de::Error as TomlError;
 
 use crate::ConfigError;
@@ -78,8 +78,62 @@ pub struct RawContextSettings {
     pub max_word_length: Option<usize>,
     /// Maximum bytes to sample from large files.
     pub sample_size: Option<usize>,
-    /// Glob pattern to search term mappings.
-    pub patterns: Option<HashMap<String, Vec<String>>>,
+    /// Context rules for customizing search behavior per file pattern.
+    pub rules: Option<Vec<RawContextRule>>,
+}
+
+/// Raw context rule from TOML.
+///
+/// Each rule specifies glob patterns to match against file paths, and the
+/// search behavior customizations to apply when a file matches.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawContextRule {
+    /// Glob pattern(s) to match against file paths.
+    /// Accepts either a single string or an array of strings.
+    #[serde(rename = "match", deserialize_with = "deserialize_string_or_vec")]
+    pub patterns: Vec<String>,
+    /// Limit search to these trees (default: all trees).
+    pub trees: Option<Vec<String>>,
+    /// Additional search terms to inject into the query.
+    pub terms: Option<Vec<String>>,
+    /// Files to always include in results (tree-prefixed paths like "docs:api/overview.md").
+    pub include: Option<Vec<String>>,
+}
+
+/// Deserializes a field that can be either a single string or an array of strings.
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StringOrVec;
+
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or an array of strings")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value.to_string()])
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut values = Vec::new();
+            while let Some(value) = seq.next_element::<String>()? {
+                values.push(value);
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
 }
 
 /// Parses a configuration file from disk.
@@ -233,24 +287,76 @@ sample_size = 100000
     }
 
     #[test]
-    fn test_parse_context_patterns() {
+    fn test_parse_context_rules() {
         let toml = r#"
-[context.patterns]
-"*.rs" = ["rust", "systems"]
-"*.py" = ["python"]
-"src/api/**" = ["http", "handlers"]
+[[context.rules]]
+match = "*.rs"
+terms = ["rust", "systems"]
+
+[[context.rules]]
+match = "*.py"
+terms = ["python"]
+
+[[context.rules]]
+match = "src/api/**"
+terms = ["http", "handlers"]
+trees = ["docs"]
 "#;
         let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
         let context = config.context.unwrap();
-        let patterns = context.patterns.unwrap();
+        let rules = context.rules.unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].patterns, vec!["*.rs"]);
         assert_eq!(
-            patterns.get("*.rs"),
-            Some(&vec!["rust".to_string(), "systems".to_string()])
+            rules[0].terms,
+            Some(vec!["rust".to_string(), "systems".to_string()])
         );
-        assert_eq!(patterns.get("*.py"), Some(&vec!["python".to_string()]));
+        assert_eq!(rules[1].patterns, vec!["*.py"]);
+        assert_eq!(rules[1].terms, Some(vec!["python".to_string()]));
+        assert_eq!(rules[2].patterns, vec!["src/api/**"]);
         assert_eq!(
-            patterns.get("src/api/**"),
-            Some(&vec!["http".to_string(), "handlers".to_string()])
+            rules[2].terms,
+            Some(vec!["http".to_string(), "handlers".to_string()])
+        );
+        assert_eq!(rules[2].trees, Some(vec!["docs".to_string()]));
+    }
+
+    #[test]
+    fn test_parse_context_rules_with_multiple_match_patterns() {
+        let toml = r#"
+[[context.rules]]
+match = ["*.tsx", "*.jsx"]
+terms = ["react", "components"]
+"#;
+        let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
+        let context = config.context.unwrap();
+        let rules = context.rules.unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].patterns, vec!["*.tsx", "*.jsx"]);
+        assert_eq!(
+            rules[0].terms,
+            Some(vec!["react".to_string(), "components".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_context_rules_with_include() {
+        let toml = r#"
+[[context.rules]]
+match = "src/api/**"
+terms = ["http"]
+include = ["docs:api/overview.md", "docs:api/auth.md"]
+"#;
+        let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
+        let context = config.context.unwrap();
+        let rules = context.rules.unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].include,
+            Some(vec![
+                "docs:api/overview.md".to_string(),
+                "docs:api/auth.md".to_string()
+            ])
         );
     }
 
@@ -267,8 +373,9 @@ stemmer = "english"
 [context]
 limit = 10
 
-[context.patterns]
-"*.rs" = ["rust"]
+[[context.rules]]
+match = "*.rs"
+terms = ["rust"]
 
 [tree.global]
 path = "~/docs"
@@ -287,7 +394,8 @@ include = ["**/*"]
 
         let context = config.context.unwrap();
         assert_eq!(context.limit, Some(10));
-        assert!(context.patterns.is_some());
+        assert!(context.rules.is_some());
+        assert_eq!(context.rules.as_ref().unwrap().len(), 1);
 
         let trees = config.tree.unwrap();
         assert_eq!(trees.len(), 2);

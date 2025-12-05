@@ -15,18 +15,15 @@ mod resolve;
 mod templates;
 mod validate;
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
 use directories::BaseDirs;
 pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
 pub use error::ConfigError;
 pub use merge::{ParsedConfig, merge_configs};
 pub use parse::{
-    RawConfig, RawContextSettings, RawSearchSettings, RawSettings, RawTree, is_root_config,
-    parse_config, parse_config_file, parse_config_str,
+    RawConfig, RawContextRule, RawContextSettings, RawSearchSettings, RawSettings, RawTree,
+    is_root_config, parse_config, parse_config_file, parse_config_str,
 };
 pub use patterns::{CompiledContextPatterns, CompiledPatterns};
 pub use resolve::resolve_tree_path;
@@ -212,8 +209,7 @@ impl Default for SearchSettings {
 }
 
 /// Settings for the `ra context` command.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[derive(Debug, Clone)]
 pub struct ContextSettings {
     /// Default number of chunks to return.
     pub limit: usize,
@@ -225,8 +221,23 @@ pub struct ContextSettings {
     pub max_word_length: usize,
     /// Maximum bytes to analyze from large files.
     pub sample_size: usize,
-    /// Glob pattern to search term mappings.
-    pub patterns: HashMap<String, Vec<String>>,
+    /// Context rules for customizing search behavior per file pattern.
+    pub rules: Vec<ContextRule>,
+}
+
+/// A resolved context rule.
+///
+/// Specifies how context search should behave for files matching certain patterns.
+#[derive(Debug, Clone)]
+pub struct ContextRule {
+    /// Glob patterns to match against file paths.
+    pub patterns: Vec<String>,
+    /// Limit search to these trees (empty means all trees).
+    pub trees: Vec<String>,
+    /// Additional search terms to inject into the query.
+    pub terms: Vec<String>,
+    /// Files to always include in results (tree-prefixed paths like "docs:api/overview.md").
+    pub include: Vec<String>,
 }
 
 impl Default for ContextSettings {
@@ -237,7 +248,7 @@ impl Default for ContextSettings {
             min_word_length: 4,
             max_word_length: 30,
             sample_size: 50_000,
-            patterns: HashMap::new(),
+            rules: Vec::new(),
         }
     }
 }
@@ -253,7 +264,7 @@ struct SerializableSettings {
     context: SerializableContextSettings,
 }
 
-/// Context settings with sorted patterns for deterministic TOML output.
+/// Context settings serializable to TOML.
 #[derive(Serialize)]
 struct SerializableContextSettings {
     /// Default number of chunks to return.
@@ -266,8 +277,46 @@ struct SerializableContextSettings {
     max_word_length: usize,
     /// Maximum bytes to analyze from large files.
     sample_size: usize,
-    /// Glob pattern to search term mappings (sorted for deterministic output).
-    patterns: BTreeMap<String, Vec<String>>,
+    /// Context rules for customizing search behavior.
+    rules: Vec<SerializableContextRule>,
+}
+
+/// A context rule serializable to TOML.
+#[derive(Serialize)]
+struct SerializableContextRule {
+    /// Glob pattern(s) to match.
+    #[serde(rename = "match")]
+    patterns: StringOrVec,
+    /// Trees to limit search to.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    trees: Vec<String>,
+    /// Terms to inject.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    terms: Vec<String>,
+    /// Files to always include.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    include: Vec<String>,
+}
+
+/// Helper for serializing either a single string or array.
+#[derive(Clone)]
+enum StringOrVec {
+    /// A single string value.
+    Single(String),
+    /// Multiple string values.
+    Multiple(Vec<String>),
+}
+
+impl Serialize for StringOrVec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Single(s) => serializer.serialize_str(s),
+            Self::Multiple(v) => v.serialize(serializer),
+        }
+    }
 }
 
 impl From<&ContextSettings> for SerializableContextSettings {
@@ -278,11 +327,27 @@ impl From<&ContextSettings> for SerializableContextSettings {
             min_word_length: ctx.min_word_length,
             max_word_length: ctx.max_word_length,
             sample_size: ctx.sample_size,
-            patterns: ctx
-                .patterns
+            rules: ctx
+                .rules
                 .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
+                .map(SerializableContextRule::from)
                 .collect(),
+        }
+    }
+}
+
+impl From<&ContextRule> for SerializableContextRule {
+    fn from(rule: &ContextRule) -> Self {
+        let patterns = if rule.patterns.len() == 1 {
+            StringOrVec::Single(rule.patterns[0].clone())
+        } else {
+            StringOrVec::Multiple(rule.patterns.clone())
+        };
+        Self {
+            patterns,
+            trees: rule.trees.clone(),
+            terms: rule.terms.clone(),
+            include: rule.include.clone(),
         }
     }
 }
@@ -329,7 +394,7 @@ mod tests {
         assert_eq!(context.min_word_length, 4);
         assert_eq!(context.max_word_length, 30);
         assert_eq!(context.sample_size, 50_000);
-        assert!(context.patterns.is_empty());
+        assert!(context.rules.is_empty());
     }
 
     #[test]
@@ -363,7 +428,6 @@ mod tests {
         assert!(toml.contains("[settings]"));
         assert!(toml.contains("[search]"));
         assert!(toml.contains("[context]"));
-        assert!(toml.contains("[context.patterns]"));
 
         // Should contain default values in TOML format
         assert!(toml.contains("default_limit = 5"));

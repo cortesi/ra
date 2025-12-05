@@ -30,11 +30,23 @@ min_word_length = 4        # minimum word length for term extraction
 max_word_length = 30       # maximum word length for term extraction
 sample_size = 50000        # bytes to sample from large files
 
-# Context patterns - inject search terms based on file paths.
-# When `ra context` analyzes a file, matching patterns add terms to the query.
-# Use these to connect code files to relevant documentation.
-[context.patterns]
-"*.rs" = ["rust"]                      # file extension
-"*.tsx" = ["typescript", "react"]      # multiple terms
-"src/api/**" = ["http", "routing"]     # directory patterns
-"tests/**" = ["testing"]               # test directories
+# Context rules - customize search behavior based on file patterns.
+# When `ra context` analyzes a file, matching rules modify the search:
+# - `match`: glob pattern(s) to match file paths (string or array)
+# - `trees`: limit search to specific trees (optional)
+# - `terms`: additional search terms to inject (optional)
+# - `include`: files to always include in results, as "tree:path" (optional)
+
+# [[context.rules]]
+# match = "*.rs"
+# terms = ["rust"]
+
+# [[context.rules]]
+# match = ["*.tsx", "*.jsx"]
+# terms = ["typescript", "react"]
+
+# [[context.rules]]
+# match = "src/api/**"
+# trees = ["docs"]
+# terms = ["http", "routing"]
+# include = ["docs:api/overview.md"]
