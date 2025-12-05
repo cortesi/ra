@@ -233,6 +233,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::parse::parse_config_str;
 
     struct TestDir {
         root: tempfile::TempDir,
@@ -270,7 +271,7 @@ mod tests {
 
         let parsed = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [settings]
 default_limit = 10
@@ -299,7 +300,7 @@ path = "./docs"
 
         let parsed = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [tree.local]
 path = "./docs"
@@ -323,7 +324,7 @@ exclude = ["**/drafts/**"]
         // Higher precedence config (closer to CWD)
         let high_prec = ParsedConfig {
             path: test_dir.path().join("project/.ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [settings]
 default_limit = 20
@@ -336,7 +337,7 @@ default_limit = 20
         // Lower precedence config
         let low_prec = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [settings]
 default_limit = 5
@@ -363,7 +364,7 @@ local_boost = 2.0
 
         let high_prec = ParsedConfig {
             path: test_dir.path().join("project/.ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [tree.docs]
 path = "./docs"
@@ -376,7 +377,7 @@ include = ["**/*.md"]
 
         let low_prec = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [tree.docs]
 path = "./docs"
@@ -404,7 +405,7 @@ include = ["**/*"]
 
         let high_prec = ParsedConfig {
             path: test_dir.path().join("project/.ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [tree.local]
 path = "./local"
@@ -416,7 +417,7 @@ path = "./local"
 
         let low_prec = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [tree.global]
 path = "./global"
@@ -440,7 +441,7 @@ path = "./global"
 
         let high_prec = ParsedConfig {
             path: test_dir.path().join("project/.ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [[context.rules]]
 match = "*.rs"
@@ -457,7 +458,7 @@ terms = ["http"]
 
         let low_prec = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [[context.rules]]
 match = "*.py"
@@ -497,7 +498,7 @@ terms = ["python"]
         // Highest precedence (deepest)
         let leaf = ParsedConfig {
             path: test_dir.path().join("project/sub/.ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [settings]
 default_limit = 3
@@ -513,7 +514,7 @@ path = "./local"
         // Middle precedence
         let mid = ParsedConfig {
             path: test_dir.path().join("project/.ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [settings]
 default_limit = 5
@@ -531,7 +532,7 @@ include = ["**/*.md"]
         // Lowest precedence
         let root = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [settings]
 default_limit = 10
@@ -570,7 +571,7 @@ include = ["**/*"]
 
         let high_prec = ParsedConfig {
             path: test_dir.path().join("project/.ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [search]
 stemmer = "french"
@@ -582,7 +583,7 @@ stemmer = "french"
 
         let low_prec = ParsedConfig {
             path: test_dir.path().join(".ra.toml"),
-            config: crate::parse_config_str(
+            config: parse_config_str(
                 r#"
 [search]
 stemmer = "german"

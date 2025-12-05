@@ -8,8 +8,8 @@ use std::path::Path;
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::{
-    Slugifier,
     node::{HeadingParams, Node},
+    slug::Slugifier,
     tree::ChunkTree,
 };
 

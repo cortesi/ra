@@ -12,9 +12,9 @@
 #![warn(missing_docs)]
 
 mod analyze;
-pub mod parser;
-pub mod query;
-pub mod rank;
+mod parser;
+mod query;
+mod rank;
 mod stopwords;
 mod term;
 
@@ -26,7 +26,9 @@ use std::{
 };
 
 pub use analyze::{AnalysisConfig, ContextAnalysis, analyze_context};
+pub use query::ContextQuery;
 use ra_config::{CompiledContextPatterns, ContextSettings};
+pub use rank::{IdfProvider, RankedTerm};
 pub use stopwords::Stopwords;
 pub use term::WeightedTerm;
 

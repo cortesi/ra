@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use ra_context::rank::IdfProvider;
+use ra_context::IdfProvider;
 use tantivy::{
     Term,
     collector::{Count, TopDocs},
@@ -169,42 +169,6 @@ impl Searcher {
         results.sort_by(|a, b| a.id.cmp(&b.id));
 
         Ok(results)
-    }
-
-    /// Searches for context relevant to the given signals.
-    pub fn search_context(
-        &mut self,
-        signals: &[crate::ContextSignals],
-        limit: usize,
-        trees: &[String],
-    ) -> Result<Vec<SearchResult>, IndexError> {
-        if signals.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut all_terms: Vec<String> = Vec::new();
-        for signal in signals {
-            all_terms.extend(signal.all_terms());
-        }
-
-        all_terms.sort();
-        all_terms.dedup();
-
-        if all_terms.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let term_refs: Vec<&str> = all_terms.iter().map(|s| s.as_str()).collect();
-        let results = self.search_multi(&term_refs, limit)?;
-
-        if trees.is_empty() {
-            Ok(results)
-        } else {
-            Ok(results
-                .into_iter()
-                .filter(|r| trees.contains(&r.tree))
-                .collect())
-        }
     }
 }
 

@@ -89,6 +89,7 @@ pub fn rank_terms<P: IdfProvider>(terms: Vec<WeightedTerm>, idf_provider: &P) ->
 /// Selects the top N ranked terms.
 ///
 /// Convenience function that ranks terms and returns only the top results.
+#[cfg(test)]
 pub fn top_terms<P: IdfProvider>(
     terms: Vec<WeightedTerm>,
     idf_provider: &P,

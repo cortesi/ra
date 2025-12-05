@@ -9,13 +9,13 @@
 
 #![warn(missing_docs)]
 
-pub mod build;
+mod build;
 mod error;
 mod frontmatter;
-pub mod node;
+mod node;
 mod parse;
 mod slug;
-pub mod tree;
+mod tree;
 
 use std::path::PathBuf;
 
@@ -23,8 +23,6 @@ pub use build::{HeadingInfo, build_chunk_tree, extract_headings};
 pub use error::DocumentError;
 pub use frontmatter::{Frontmatter, parse_frontmatter};
 pub use parse::{ParseResult, parse_file, parse_markdown, parse_text};
-pub use pulldown_cmark::HeadingLevel;
-pub use slug::Slugifier;
 pub use tree::{ChunkTree, TreeChunk};
 
 /// A parsed document ready for indexing.

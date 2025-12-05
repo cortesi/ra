@@ -43,6 +43,7 @@ impl Slugifier {
     }
 
     /// Marks a slug as already used so future slugs will be deduplicated.
+    #[cfg(test)]
     pub fn reserve_slug(&mut self, slug: &str) {
         let base = Self::make_base_slug(slug);
         let count = self.counts.entry(base).or_insert(0);

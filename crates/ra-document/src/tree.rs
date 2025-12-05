@@ -4,6 +4,7 @@
 //! as a hierarchical tree of nodes. The tree supports traversal, node lookup, and
 //! iteration over chunks (nodes with non-empty body text).
 
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
@@ -264,6 +265,7 @@ pub struct TreeChunk {
 }
 
 /// Builder for constructing chunk trees from parsed heading data.
+#[cfg(test)]
 pub struct ChunkTreeBuilder {
     /// The tree name (collection identifier).
     tree_name: String,
@@ -271,6 +273,7 @@ pub struct ChunkTreeBuilder {
     path: PathBuf,
 }
 
+#[cfg(test)]
 impl ChunkTreeBuilder {
     /// Creates a new tree builder for the given tree name and document path.
     pub fn new(tree_name: impl Into<String>, path: impl AsRef<Path>) -> Self {

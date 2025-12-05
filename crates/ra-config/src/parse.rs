@@ -6,6 +6,7 @@
 use std::{collections::HashMap, fmt, fs, path::Path};
 
 use serde::{Deserialize, Deserializer, de};
+#[cfg(test)]
 use toml::de::Error as TomlError;
 
 use crate::ConfigError;
@@ -160,7 +161,8 @@ pub fn parse_config_str(contents: &str, path: &Path) -> Result<RawConfig, Config
 
 /// Parses configuration from a TOML string without path context.
 ///
-/// Useful for validating template content.
+/// Useful for validating template content (tests only).
+#[cfg(test)]
 pub fn parse_config(contents: &str) -> Result<RawConfig, TomlError> {
     toml::from_str(contents)
 }

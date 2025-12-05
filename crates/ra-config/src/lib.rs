@@ -17,16 +17,14 @@ mod validate;
 
 use std::path::{Component, Path, PathBuf};
 
+use crate::{
+    merge::{ParsedConfig, merge_configs},
+    parse::parse_config_file,
+};
 use directories::BaseDirs;
 pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
 pub use error::ConfigError;
-pub use merge::{ParsedConfig, merge_configs};
-pub use parse::{
-    RawConfig, RawContextRule, RawContextSettings, RawSearchSettings, RawSettings, RawTree,
-    is_root_config, parse_config, parse_config_file, parse_config_str,
-};
 pub use patterns::{CompiledContextPatterns, CompiledContextRules, CompiledPatterns, MatchedRules};
-pub use resolve::resolve_tree_path;
 use serde::{Deserialize, Serialize};
 pub use templates::{global_template, local_template};
 pub use validate::ConfigWarning;
