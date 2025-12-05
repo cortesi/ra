@@ -17,10 +17,6 @@ mod validate;
 
 use std::path::{Component, Path, PathBuf};
 
-use crate::{
-    merge::{ParsedConfig, merge_configs},
-    parse::parse_config_file,
-};
 use directories::BaseDirs;
 pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
 pub use error::ConfigError;
@@ -29,6 +25,11 @@ use serde::{Deserialize, Serialize};
 pub use templates::{global_template, local_template};
 pub use validate::ConfigWarning;
 use validate::validate_config;
+
+use crate::{
+    merge::{ParsedConfig, merge_configs},
+    parse::parse_config_file,
+};
 
 /// Formats a path for display, using `~` for home directory or relative paths where appropriate.
 ///

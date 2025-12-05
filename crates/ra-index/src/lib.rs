@@ -34,6 +34,7 @@
 mod aggregate;
 mod analyzer;
 mod config_hash;
+mod context;
 mod diff;
 mod discovery;
 mod document;
@@ -50,13 +51,13 @@ mod status;
 mod writer;
 
 // Core public API - types and functions used by the ra CLI
+pub use context::{ContextAnalysisResult, ContextSearch, ContextWarning, FileAnalysis};
 pub use error::IndexError;
 pub use indexer::{IndexStats, Indexer, ProgressReporter, SilentReporter};
 pub use location::index_directory;
 pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::is_binary_file;
-pub use result::SearchResult as AggregatedSearchResult;
-pub use result::SearchCandidate;
+pub use result::{SearchCandidate, SearchResult as AggregatedSearchResult};
 pub use search::{
     MatchDetails, SearchParams, SearchResult, Searcher, TreeFilteredSearcher, open_searcher,
 };

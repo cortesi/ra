@@ -124,6 +124,59 @@ impl MatchedRules {
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty() && self.trees.is_empty() && self.include.is_empty()
     }
+
+    /// Merges another `MatchedRules` into this one.
+    ///
+    /// - **terms**: concatenated (deduplicated)
+    /// - **trees**: intersected (if either specifies trees)
+    /// - **include**: concatenated (deduplicated)
+    pub fn merge(&mut self, other: &Self) {
+        // Terms: concatenate (deduplicated)
+        for term in &other.terms {
+            if !self.terms.contains(term) {
+                self.terms.push(term.clone());
+            }
+        }
+
+        // Includes: concatenate (deduplicated)
+        for inc in &other.include {
+            if !self.include.contains(inc) {
+                self.include.push(inc.clone());
+            }
+        }
+
+        // Trees: intersection
+        if !other.trees.is_empty() {
+            if self.trees.is_empty() {
+                // First set with trees - take them as-is
+                self.trees = other.trees.clone();
+            } else {
+                // Intersect with existing
+                self.trees.retain(|t| other.trees.contains(t));
+            }
+        }
+    }
+
+    /// Computes effective trees by combining explicit tree filters with rule-matched trees.
+    ///
+    /// - If explicit trees are specified, they take precedence (intersected with rule trees if any)
+    /// - If only rule trees are specified, use those
+    /// - If neither is specified, returns empty (meaning all trees)
+    pub fn compute_effective_trees(&self, explicit_trees: &[String]) -> Vec<String> {
+        match (explicit_trees.is_empty(), self.trees.is_empty()) {
+            (true, true) => Vec::new(),               // No restriction
+            (true, false) => self.trees.clone(),      // Use rule trees
+            (false, true) => explicit_trees.to_vec(), // Use explicit trees
+            (false, false) => {
+                // Intersect explicit and rule trees
+                explicit_trees
+                    .iter()
+                    .filter(|t| self.trees.contains(t))
+                    .cloned()
+                    .collect()
+            }
+        }
+    }
 }
 
 /// Compiled context rules for file-pattern-based search customization.
@@ -703,6 +756,121 @@ mod tests {
             )]);
             let result = CompiledContextRules::compile(&settings);
             assert!(result.is_err());
+        }
+    }
+
+    mod matched_rules {
+        use super::*;
+
+        fn make_rules(terms: Vec<&str>, trees: Vec<&str>, include: Vec<&str>) -> MatchedRules {
+            MatchedRules {
+                terms: terms.into_iter().map(String::from).collect(),
+                trees: trees.into_iter().map(String::from).collect(),
+                include: include.into_iter().map(String::from).collect(),
+            }
+        }
+
+        #[test]
+        fn test_merge_terms() {
+            let mut a = make_rules(vec!["rust"], vec![], vec![]);
+            let b = make_rules(vec!["http", "api"], vec![], vec![]);
+            a.merge(&b);
+            assert_eq!(a.terms, vec!["rust", "http", "api"]);
+        }
+
+        #[test]
+        fn test_merge_terms_deduplicates() {
+            let mut a = make_rules(vec!["rust", "http"], vec![], vec![]);
+            let b = make_rules(vec!["http", "api"], vec![], vec![]);
+            a.merge(&b);
+            assert_eq!(a.terms, vec!["rust", "http", "api"]); // "http" not duplicated
+        }
+
+        #[test]
+        fn test_merge_include() {
+            let mut a = make_rules(vec![], vec![], vec!["docs:a.md"]);
+            let b = make_rules(vec![], vec![], vec!["docs:b.md"]);
+            a.merge(&b);
+            assert_eq!(a.include, vec!["docs:a.md", "docs:b.md"]);
+        }
+
+        #[test]
+        fn test_merge_include_deduplicates() {
+            let mut a = make_rules(vec![], vec![], vec!["docs:a.md", "docs:b.md"]);
+            let b = make_rules(vec![], vec![], vec!["docs:b.md", "docs:c.md"]);
+            a.merge(&b);
+            assert_eq!(a.include, vec!["docs:a.md", "docs:b.md", "docs:c.md"]);
+        }
+
+        #[test]
+        fn test_merge_trees_intersection() {
+            let mut a = make_rules(vec![], vec!["docs", "examples"], vec![]);
+            let b = make_rules(vec![], vec!["docs", "api"], vec![]);
+            a.merge(&b);
+            assert_eq!(a.trees, vec!["docs"]);
+        }
+
+        #[test]
+        fn test_merge_trees_first_empty() {
+            let mut a = make_rules(vec![], vec![], vec![]);
+            let b = make_rules(vec![], vec!["docs", "api"], vec![]);
+            a.merge(&b);
+            assert_eq!(a.trees, vec!["docs", "api"]);
+        }
+
+        #[test]
+        fn test_merge_trees_second_empty() {
+            let mut a = make_rules(vec![], vec!["docs", "examples"], vec![]);
+            let b = make_rules(vec![], vec![], vec![]);
+            a.merge(&b);
+            assert_eq!(a.trees, vec!["docs", "examples"]);
+        }
+
+        #[test]
+        fn test_merge_trees_no_overlap() {
+            let mut a = make_rules(vec![], vec!["docs"], vec![]);
+            let b = make_rules(vec![], vec!["examples"], vec![]);
+            a.merge(&b);
+            assert!(a.trees.is_empty());
+        }
+
+        #[test]
+        fn test_compute_effective_trees_both_empty() {
+            let rules = make_rules(vec![], vec![], vec![]);
+            assert!(rules.compute_effective_trees(&[]).is_empty());
+        }
+
+        #[test]
+        fn test_compute_effective_trees_explicit_only() {
+            let rules = make_rules(vec![], vec![], vec![]);
+            let explicit = vec!["docs".to_string(), "api".to_string()];
+            assert_eq!(rules.compute_effective_trees(&explicit), explicit);
+        }
+
+        #[test]
+        fn test_compute_effective_trees_rules_only() {
+            let rules = make_rules(vec![], vec!["docs", "examples"], vec![]);
+            assert_eq!(
+                rules.compute_effective_trees(&[]),
+                vec!["docs".to_string(), "examples".to_string()]
+            );
+        }
+
+        #[test]
+        fn test_compute_effective_trees_intersection() {
+            let rules = make_rules(vec![], vec!["docs", "examples"], vec![]);
+            let explicit = vec!["docs".to_string(), "api".to_string()];
+            assert_eq!(
+                rules.compute_effective_trees(&explicit),
+                vec!["docs".to_string()]
+            );
+        }
+
+        #[test]
+        fn test_compute_effective_trees_no_intersection() {
+            let rules = make_rules(vec![], vec!["examples"], vec![]);
+            let explicit = vec!["docs".to_string()];
+            assert!(rules.compute_effective_trees(&explicit).is_empty());
         }
     }
 }

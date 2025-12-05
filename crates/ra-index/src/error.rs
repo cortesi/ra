@@ -37,6 +37,10 @@ pub enum IndexError {
     /// Search query error.
     #[error("{0}")]
     Query(#[from] QueryError),
+
+    /// Configuration error.
+    #[error("configuration error: {0}")]
+    Config(String),
 }
 
 impl IndexError {
