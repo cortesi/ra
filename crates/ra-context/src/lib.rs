@@ -11,7 +11,9 @@
 
 #![warn(missing_docs)]
 
+pub mod parser;
 mod stopwords;
+mod term;
 
 use std::{
     collections::HashSet,
@@ -22,6 +24,7 @@ use std::{
 
 use ra_config::{CompiledContextPatterns, ContextSettings};
 pub use stopwords::Stopwords;
+pub use term::{TermSource, WeightedTerm};
 
 /// Maximum bytes to read for content sampling.
 const DEFAULT_SAMPLE_SIZE: usize = 50_000;
@@ -167,6 +170,64 @@ impl ContextAnalyzer {
     }
 }
 
+/// Extracts weighted terms from a file path.
+///
+/// Path components are split on common delimiters and assigned weights based on
+/// their position:
+/// - Filename components: weight 4.0
+/// - Directory components: weight 3.0
+///
+/// Terms are filtered against stopwords and deduplicated.
+pub fn extract_path_terms(
+    path: &Path,
+    stopwords: &Stopwords,
+    min_length: usize,
+) -> Vec<WeightedTerm> {
+    let mut terms = Vec::new();
+    let components: Vec<_> = path.components().collect();
+    let num_components = components.len();
+
+    for (idx, component) in components.into_iter().enumerate() {
+        if let Component::Normal(os_str) = component
+            && let Some(s) = os_str.to_str()
+        {
+            // Last component is the filename
+            let is_filename = idx == num_components - 1;
+            let source = if is_filename {
+                TermSource::PathFilename
+            } else {
+                TermSource::PathDirectory
+            };
+
+            // Split on common delimiters
+            for part in s.split(['_', '-', '.']) {
+                let part = part.to_ascii_lowercase();
+                if part.len() >= min_length
+                    && part.chars().all(|c| c.is_alphanumeric())
+                    && !stopwords.contains(&part)
+                {
+                    // Check if we already have this term
+                    if let Some(existing) = terms
+                        .iter_mut()
+                        .find(|t: &&mut WeightedTerm| t.term == part)
+                    {
+                        existing.increment();
+                        // Keep the higher weight source
+                        if source.default_weight() > existing.source.default_weight() {
+                            existing.source = source;
+                            existing.weight = source.default_weight();
+                        }
+                    } else {
+                        terms.push(WeightedTerm::new(part, source));
+                    }
+                }
+            }
+        }
+    }
+
+    terms
+}
+
 /// Checks if a file is likely binary based on its extension.
 pub fn is_binary_file(path: &Path) -> bool {
     let binary_extensions = [
@@ -310,5 +371,69 @@ mod test {
     fn is_binary_file_handles_no_extension() {
         assert!(!is_binary_file(Path::new("Makefile")));
         assert!(!is_binary_file(Path::new("Dockerfile")));
+    }
+
+    #[test]
+    fn extract_path_terms_assigns_weights() {
+        let stopwords = Stopwords::new();
+        let path = Path::new("api/authentication/oauth_handler.rs");
+        let terms = extract_path_terms(path, &stopwords, 3);
+
+        // Find terms by name
+        let find_term = |name: &str| terms.iter().find(|t| t.term == name);
+
+        // Directory terms get directory weight
+        let api = find_term("api").unwrap();
+        assert_eq!(api.source, TermSource::PathDirectory);
+        assert_eq!(api.weight, 3.0);
+
+        let auth = find_term("authentication").unwrap();
+        assert_eq!(auth.source, TermSource::PathDirectory);
+        assert_eq!(auth.weight, 3.0);
+
+        // Filename terms get filename weight
+        let oauth = find_term("oauth").unwrap();
+        assert_eq!(oauth.source, TermSource::PathFilename);
+        assert_eq!(oauth.weight, 4.0);
+
+        let handler = find_term("handler").unwrap();
+        assert_eq!(handler.source, TermSource::PathFilename);
+        assert_eq!(handler.weight, 4.0);
+    }
+
+    #[test]
+    fn extract_path_terms_filters_stopwords() {
+        let stopwords = Stopwords::new();
+        // Use Rust keywords which are definitely stopwords
+        // "async" and "static" are keywords, "handler" is domain-specific
+        let path = Path::new("async/static_handler.rs");
+        let terms = extract_path_terms(path, &stopwords, 3);
+
+        let term_strings: Vec<_> = terms.iter().map(|t| t.term.as_str()).collect();
+
+        // "async", "static" are Rust keywords (stopwords)
+        assert!(!term_strings.contains(&"async"));
+        assert!(!term_strings.contains(&"static"));
+
+        // "handler" should remain (domain-specific)
+        assert!(term_strings.contains(&"handler"));
+    }
+
+    #[test]
+    fn extract_path_terms_deduplicates_with_higher_weight() {
+        let stopwords = Stopwords::new();
+        // "oauth" appears in both directory and filename
+        let path = Path::new("oauth/oauth_service.rs");
+        let terms = extract_path_terms(path, &stopwords, 3);
+
+        // Should only have one "oauth" entry
+        let oauth_terms: Vec<_> = terms.iter().filter(|t| t.term == "oauth").collect();
+        assert_eq!(oauth_terms.len(), 1);
+
+        // Should have filename weight (higher) and frequency 2
+        let oauth = oauth_terms[0];
+        assert_eq!(oauth.source, TermSource::PathFilename);
+        assert_eq!(oauth.weight, 4.0);
+        assert_eq!(oauth.frequency, 2);
     }
 }

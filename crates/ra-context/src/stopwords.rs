@@ -90,7 +90,7 @@ static RUST_RESERVED_KEYWORDS: &[&str] = &[
     // Reserved keywords
     "abstract", "become", "box", "do", "final", "macro", "override", "priv", "typeof", "unsized",
     "virtual", "yield", // Reserved keywords (2018 edition+)
-    "try", // Reserved keywords (2024 edition+)
+    "try",   // Reserved keywords (2024 edition+)
     "gen",
 ];
 
