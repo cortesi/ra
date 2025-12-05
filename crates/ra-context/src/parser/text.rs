@@ -16,7 +16,9 @@ const WEIGHT_BODY: f32 = 1.0;
 /// Extracts all terms with body-level weight since plain text has no
 /// structural hierarchy.
 pub struct TextParser {
+    /// Stopword list used to filter out common words.
     stopwords: Stopwords,
+    /// Minimum token length to consider for indexing.
     min_term_length: usize,
 }
 

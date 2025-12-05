@@ -27,7 +27,9 @@ const WEIGHT_BODY: f32 = 1.0;
 /// - H4-H6 headings: weight 1.5
 /// - Body text: weight 1.0
 pub struct MarkdownParser {
+    /// Stopword list used to filter out common words.
     stopwords: Stopwords,
+    /// Minimum token length to consider for indexing.
     min_term_length: usize,
 }
 

@@ -19,6 +19,7 @@ use stop_words::LANGUAGE;
 /// lowercase for case-insensitive matching.
 #[derive(Clone)]
 pub struct Stopwords {
+    /// Unique stopword tokens used to filter noise terms.
     words: HashSet<String>,
 }
 
