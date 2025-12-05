@@ -519,69 +519,61 @@ fn read_full_body(result: &AggregatedSearchResult, searcher: &Searcher) -> Strin
 /// Ensures the index is fresh, triggering an update if needed.
 /// Returns the searcher if successful.
 fn ensure_index_fresh(config: &Config) -> Result<Searcher, ExitCode> {
-    let status = detect_index_status(config);
-
-    match status {
-        IndexStatus::Current => {
-            // Index is fresh, open and return
-            match open_searcher(config) {
-                Ok(searcher) => Ok(searcher),
-                Err(e) => {
-                    eprintln!("error: failed to open index: {e}");
-                    Err(ExitCode::FAILURE)
-                }
-            }
-        }
+    match detect_index_status(config) {
+        IndexStatus::Current => open_searcher_or_failure(config),
         IndexStatus::Missing | IndexStatus::ConfigChanged => {
-            // Need full reindex
-            eprintln!("Index needs rebuild, updating...");
-            let indexer = match Indexer::new(config) {
-                Ok(indexer) => indexer,
-                Err(e) => {
-                    eprintln!("error: failed to initialize indexer: {e}");
-                    return Err(ExitCode::FAILURE);
-                }
-            };
-
-            let mut reporter = SilentReporter;
-            if let Err(e) = indexer.full_reindex(&mut reporter) {
-                eprintln!("error: indexing failed: {e}");
-                return Err(ExitCode::FAILURE);
-            }
-
-            match open_searcher(config) {
-                Ok(searcher) => Ok(searcher),
-                Err(e) => {
-                    eprintln!("error: failed to open index: {e}");
-                    Err(ExitCode::FAILURE)
-                }
-            }
+            rebuild_index_and_open(config, IndexRefresh::Full)
         }
-        IndexStatus::Stale => {
-            // Need incremental update
-            let indexer = match Indexer::new(config) {
-                Ok(indexer) => indexer,
-                Err(e) => {
-                    eprintln!("error: failed to initialize indexer: {e}");
-                    return Err(ExitCode::FAILURE);
-                }
-            };
+        IndexStatus::Stale => rebuild_index_and_open(config, IndexRefresh::Incremental),
+    }
+}
 
-            let mut reporter = SilentReporter;
-            if let Err(e) = indexer.incremental_update(&mut reporter) {
-                eprintln!("error: indexing failed: {e}");
-                return Err(ExitCode::FAILURE);
-            }
+/// Index refresh modes.
+#[derive(Clone, Copy)]
+enum IndexRefresh {
+    /// Full rebuild of the index.
+    Full,
+    /// Incremental update of the index.
+    Incremental,
+}
 
-            match open_searcher(config) {
-                Ok(searcher) => Ok(searcher),
-                Err(e) => {
-                    eprintln!("error: failed to open index: {e}");
-                    Err(ExitCode::FAILURE)
-                }
-            }
+/// Opens the searcher, exiting with a consistent error on failure.
+fn open_searcher_or_failure(config: &Config) -> Result<Searcher, ExitCode> {
+    match open_searcher(config) {
+        Ok(searcher) => Ok(searcher),
+        Err(e) => {
+            eprintln!("error: failed to open index: {e}");
+            Err(ExitCode::FAILURE)
         }
     }
+}
+
+/// Rebuilds or updates the index, then opens the searcher.
+fn rebuild_index_and_open(config: &Config, mode: IndexRefresh) -> Result<Searcher, ExitCode> {
+    if matches!(mode, IndexRefresh::Full) {
+        eprintln!("Index needs rebuild, updating...");
+    }
+
+    let indexer = match Indexer::new(config) {
+        Ok(indexer) => indexer,
+        Err(e) => {
+            eprintln!("error: failed to initialize indexer: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+
+    let mut reporter = SilentReporter;
+    let update = match mode {
+        IndexRefresh::Full => indexer.full_reindex(&mut reporter),
+        IndexRefresh::Incremental => indexer.incremental_update(&mut reporter),
+    };
+
+    if let Err(e) = update {
+        eprintln!("error: indexing failed: {e}");
+        return Err(ExitCode::FAILURE);
+    }
+
+    open_searcher_or_failure(config)
 }
 
 /// Formats match details for verbose output.
