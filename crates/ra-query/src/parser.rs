@@ -21,42 +21,13 @@
 //! 4. AND (implicit, between adjacent terms)
 //! 5. OR (explicit keyword)
 
-use std::{error::Error, fmt, mem};
+use std::mem;
 
-use super::{
+use crate::{
     ast::QueryExpr,
-    lexer::{LexError, Token, tokenize},
+    error::ParseError,
+    lexer::{Token, tokenize},
 };
-
-/// Parse error with position information.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseError {
-    /// Error message.
-    pub message: String,
-    /// Token index where error occurred (if applicable).
-    pub token_index: Option<usize>,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(idx) = self.token_index {
-            write!(f, "at token {}: {}", idx, self.message)
-        } else {
-            write!(f, "{}", self.message)
-        }
-    }
-}
-
-impl Error for ParseError {}
-
-impl From<LexError> for ParseError {
-    fn from(err: LexError) -> Self {
-        Self {
-            message: err.message,
-            token_index: None,
-        }
-    }
-}
 
 /// Recursive descent parser for query expressions.
 struct Parser {
@@ -84,10 +55,10 @@ impl Parser {
         let expr = self.parse_or_expr()?;
 
         if self.position < self.tokens.len() {
-            return Err(ParseError {
-                message: format!("unexpected token: {:?}", self.tokens[self.position]),
-                token_index: Some(self.position),
-            });
+            return Err(ParseError::new(
+                format!("unexpected token: {:?}", self.tokens[self.position]),
+                Some(self.position),
+            ));
         }
 
         Ok(Some(expr))
@@ -133,6 +104,16 @@ impl Parser {
         )
     }
 
+    /// Checks if the current token is a boost operator and applies it if so.
+    fn maybe_apply_boost(&mut self, expr: QueryExpr) -> QueryExpr {
+        if let Some(Token::Boost(factor)) = self.peek().cloned() {
+            self.advance();
+            QueryExpr::boost(expr, factor)
+        } else {
+            expr
+        }
+    }
+
     /// Parses: unary → "-" unary | primary
     fn parse_unary(&mut self) -> Result<QueryExpr, ParseError> {
         if self.check(&Token::Not) {
@@ -145,13 +126,15 @@ impl Parser {
     }
 
     /// Parses: primary → TERM | PHRASE | field_expr | "(" or_expr ")"
+    ///
+    /// After parsing the primary expression, checks for an optional boost suffix.
     fn parse_primary(&mut self) -> Result<QueryExpr, ParseError> {
         let token = self.peek().cloned();
 
-        match token {
+        let expr = match token {
             Some(Token::Term(text)) => {
                 self.advance();
-                Ok(QueryExpr::Term(text))
+                QueryExpr::Term(text)
             }
 
             Some(Token::Phrase(text)) => {
@@ -160,55 +143,65 @@ impl Parser {
                 let words: Vec<String> = text.split_whitespace().map(|s| s.to_string()).collect();
                 if words.is_empty() {
                     // Empty phrase, treat as empty term
-                    Ok(QueryExpr::Term(String::new()))
+                    QueryExpr::Term(String::new())
                 } else {
-                    Ok(QueryExpr::Phrase(words))
+                    QueryExpr::Phrase(words)
                 }
             }
 
             Some(Token::FieldPrefix(name)) => {
                 self.advance();
-                self.parse_field_expr(name)
+                self.parse_field_expr(name)?
             }
 
             Some(Token::LParen) => {
                 self.advance(); // consume (
-                let expr = self.parse_or_expr()?;
+                let inner = self.parse_or_expr()?;
 
                 if !self.check(&Token::RParen) {
-                    return Err(ParseError {
-                        message: "expected closing parenthesis".into(),
-                        token_index: Some(self.position),
-                    });
+                    return Err(ParseError::new(
+                        "expected closing parenthesis",
+                        Some(self.position),
+                    ));
                 }
                 self.advance(); // consume )
 
-                Ok(expr)
+                inner
             }
 
-            Some(Token::RParen) => Err(ParseError {
-                message: "unexpected closing parenthesis".into(),
-                token_index: Some(self.position),
-            }),
+            Some(Token::RParen) => {
+                return Err(ParseError::new(
+                    "unexpected closing parenthesis",
+                    Some(self.position),
+                ));
+            }
 
-            Some(Token::Or) => Err(ParseError {
-                message: "unexpected OR (needs expression before it)".into(),
-                token_index: Some(self.position),
-            }),
+            Some(Token::Or) => {
+                return Err(ParseError::new(
+                    "unexpected OR (needs expression before it)",
+                    Some(self.position),
+                ));
+            }
 
             Some(Token::Not) => {
                 // This shouldn't happen as parse_unary handles Not
-                Err(ParseError {
-                    message: "unexpected negation".into(),
-                    token_index: Some(self.position),
-                })
+                return Err(ParseError::new("unexpected negation", Some(self.position)));
             }
 
-            None => Err(ParseError {
-                message: "unexpected end of query".into(),
-                token_index: None,
-            }),
-        }
+            Some(Token::Boost(_)) => {
+                return Err(ParseError::new(
+                    "unexpected boost (needs expression before it)",
+                    Some(self.position),
+                ));
+            }
+
+            None => {
+                return Err(ParseError::new("unexpected end of query", None));
+            }
+        };
+
+        // Check for optional boost suffix
+        Ok(self.maybe_apply_boost(expr))
     }
 
     /// Parses the expression after a field prefix.
@@ -236,10 +229,10 @@ impl Parser {
                 let inner = self.parse_or_expr()?;
 
                 if !self.check(&Token::RParen) {
-                    return Err(ParseError {
-                        message: "expected closing parenthesis after field expression".into(),
-                        token_index: Some(self.position),
-                    });
+                    return Err(ParseError::new(
+                        "expected closing parenthesis after field expression",
+                        Some(self.position),
+                    ));
                 }
                 self.advance(); // consume )
 
@@ -247,10 +240,10 @@ impl Parser {
             }
 
             _ => {
-                return Err(ParseError {
-                    message: format!("expected term, phrase, or group after '{}:'", name),
-                    token_index: Some(self.position),
-                });
+                return Err(ParseError::new(
+                    format!("expected term, phrase, or group after '{}:'", name),
+                    Some(self.position),
+                ));
             }
         };
 
@@ -624,5 +617,84 @@ mod tests {
             "Parsing 10,000 queries took {:?}, expected < 1s",
             elapsed
         );
+    }
+
+    fn boost(e: QueryExpr, factor: f32) -> QueryExpr {
+        QueryExpr::boost(e, factor)
+    }
+
+    #[test]
+    fn boosted_term() {
+        assert_eq!(parse("rust^2.5").unwrap(), Some(boost(term("rust"), 2.5)));
+    }
+
+    #[test]
+    fn boosted_phrase() {
+        assert_eq!(
+            parse("\"error handling\"^3.0").unwrap(),
+            Some(boost(phrase(&["error", "handling"]), 3.0))
+        );
+    }
+
+    #[test]
+    fn boosted_group() {
+        assert_eq!(
+            parse("(rust async)^2.0").unwrap(),
+            Some(boost(and(vec![term("rust"), term("async")]), 2.0))
+        );
+    }
+
+    #[test]
+    fn boosted_or_query() {
+        // "rust^2.5 OR golang^1.5" = (rust^2.5) OR (golang^1.5)
+        assert_eq!(
+            parse("rust^2.5 OR golang^1.5").unwrap(),
+            Some(or(vec![
+                boost(term("rust"), 2.5),
+                boost(term("golang"), 1.5)
+            ]))
+        );
+    }
+
+    #[test]
+    fn boosted_in_and() {
+        assert_eq!(
+            parse("rust^2.0 async").unwrap(),
+            Some(and(vec![boost(term("rust"), 2.0), term("async")]))
+        );
+    }
+
+    #[test]
+    fn boosted_field() {
+        assert_eq!(
+            parse("title:guide^2.5").unwrap(),
+            Some(boost(field("title", term("guide")), 2.5))
+        );
+    }
+
+    #[test]
+    fn boosted_field_phrase() {
+        assert_eq!(
+            parse("title:\"getting started\"^3.0").unwrap(),
+            Some(boost(field("title", phrase(&["getting", "started"])), 3.0))
+        );
+    }
+
+    #[test]
+    fn error_boost_at_start() {
+        let err = parse("^2.5 rust").unwrap_err();
+        assert!(err.message.contains("boost"));
+    }
+
+    #[test]
+    fn query_string_round_trip() {
+        // Test that to_query_string produces parseable output
+        let expr = or(vec![
+            boost(term("rust"), 2.5),
+            boost(phrase(&["error", "handling"]), 3.0),
+        ]);
+        let query_str = expr.to_query_string();
+        assert!(query_str.contains("rust^2.5"));
+        assert!(query_str.contains("\"error handling\"^3"));
     }
 }

@@ -2,10 +2,12 @@
 //!
 //! Converts a query string into a stream of tokens for the parser.
 
-use std::{error::Error, fmt, iter::Peekable, str::Chars};
+use std::{iter::Peekable, str::Chars};
+
+use crate::error::LexError;
 
 /// A token in the query language.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     /// A bare word (search term).
     Term(String),
@@ -27,46 +29,10 @@ pub enum Token {
 
     /// Field prefix (e.g., "title:" produces FieldPrefix("title")).
     FieldPrefix(String),
+
+    /// Boost operator with factor (e.g., "^2.5" produces Boost(2.5)).
+    Boost(f32),
 }
-
-/// Lexer error with position information.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LexError {
-    /// Error message.
-    pub message: String,
-    /// Byte position in input where error occurred.
-    pub position: usize,
-    /// The original input string.
-    pub input: String,
-}
-
-impl LexError {
-    /// Creates a new lexer error.
-    pub(super) fn new(message: impl Into<String>, position: usize, input: &str) -> Self {
-        Self {
-            message: message.into(),
-            position,
-            input: input.to_string(),
-        }
-    }
-
-    /// Formats the error with a position indicator showing where the error occurred.
-    pub fn format_with_context(&self) -> String {
-        let mut result = String::new();
-        result.push_str(&format!("query syntax error: {}\n", self.message));
-        result.push_str(&format!("  {}\n", self.input));
-        result.push_str(&format!("  {}^", " ".repeat(self.position)));
-        result
-    }
-}
-
-impl fmt::Display for LexError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.format_with_context())
-    }
-}
-
-impl Error for LexError {}
 
 /// Tokenizes a query string.
 struct Lexer<'a> {
@@ -126,6 +92,7 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 Ok(Some(Token::Not))
             }
+            '^' => self.read_boost(),
             _ => self.read_term_or_keyword(),
         }
     }
@@ -160,7 +127,7 @@ impl<'a> Lexer<'a> {
         let mut word = String::new();
 
         while let Some(&ch) = self.chars.peek() {
-            if ch.is_whitespace() || ch == '(' || ch == ')' || ch == '"' {
+            if ch.is_whitespace() || ch == '(' || ch == ')' || ch == '"' || ch == '^' {
                 break;
             }
 
@@ -188,6 +155,34 @@ impl<'a> Lexer<'a> {
         }
 
         Ok(Some(Token::Term(word)))
+    }
+
+    /// Reads a boost operator (^N or ^N.N).
+    fn read_boost(&mut self) -> Result<Option<Token>, LexError> {
+        let start_pos = self.position;
+        self.advance(); // consume '^'
+
+        let mut number = String::new();
+
+        // Read digits and optional decimal point
+        while let Some(&ch) = self.chars.peek() {
+            if ch.is_ascii_digit() || (ch == '.' && !number.contains('.')) {
+                number.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if number.is_empty() {
+            return Err(self.error_at("expected number after '^'", start_pos));
+        }
+
+        // Parse the number
+        match number.parse::<f32>() {
+            Ok(factor) => Ok(Some(Token::Boost(factor))),
+            Err(_) => Err(self.error_at(format!("invalid boost value: {}", number), start_pos)),
+        }
     }
 
     /// Skips whitespace characters.
@@ -389,6 +384,70 @@ mod tests {
             vec![
                 Token::FieldPrefix("title".into()),
                 Token::Phrase("getting started".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn boost_integer() {
+        assert_eq!(
+            tokenize("rust^2").unwrap(),
+            vec![Token::Term("rust".into()), Token::Boost(2.0)]
+        );
+    }
+
+    #[test]
+    fn boost_float() {
+        assert_eq!(
+            tokenize("rust^2.5").unwrap(),
+            vec![Token::Term("rust".into()), Token::Boost(2.5)]
+        );
+    }
+
+    #[test]
+    fn boost_phrase() {
+        assert_eq!(
+            tokenize("\"error handling\"^3.0").unwrap(),
+            vec![Token::Phrase("error handling".into()), Token::Boost(3.0)]
+        );
+    }
+
+    #[test]
+    fn boost_in_or_query() {
+        assert_eq!(
+            tokenize("rust^2.5 OR golang^1.5").unwrap(),
+            vec![
+                Token::Term("rust".into()),
+                Token::Boost(2.5),
+                Token::Or,
+                Token::Term("golang".into()),
+                Token::Boost(1.5)
+            ]
+        );
+    }
+
+    #[test]
+    fn boost_missing_number() {
+        let err = tokenize("rust^").unwrap_err();
+        assert!(err.message.contains("expected number"));
+    }
+
+    #[test]
+    fn boost_invalid_number() {
+        let err = tokenize("rust^abc").unwrap_err();
+        assert!(err.message.contains("expected number"));
+    }
+
+    #[test]
+    fn boost_after_group() {
+        assert_eq!(
+            tokenize("(rust async)^2.0").unwrap(),
+            vec![
+                Token::LParen,
+                Token::Term("rust".into()),
+                Token::Term("async".into()),
+                Token::RParen,
+                Token::Boost(2.0)
             ]
         );
     }

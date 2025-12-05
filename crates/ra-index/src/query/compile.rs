@@ -4,6 +4,7 @@
 
 use std::{error::Error, fmt};
 
+use ra_query::QueryExpr;
 use tantivy::{
     Term,
     query::{
@@ -13,7 +14,6 @@ use tantivy::{
     tokenizer::{TextAnalyzer, TokenStream},
 };
 
-use super::ast::QueryExpr;
 use crate::{
     IndexError,
     analyzer::build_analyzer_from_name,
@@ -72,6 +72,21 @@ impl QueryCompiler {
             QueryExpr::And(exprs) => self.compile_and(exprs),
             QueryExpr::Or(exprs) => self.compile_or(exprs),
             QueryExpr::Field { name, expr } => self.compile_field(name, expr),
+            QueryExpr::Boost { expr, factor } => self.compile_boost(expr, *factor),
+        }
+    }
+
+    /// Compiles a boosted expression.
+    ///
+    /// Wraps the inner query with a `BoostQuery` that multiplies the score.
+    fn compile_boost(
+        &mut self,
+        expr: &QueryExpr,
+        factor: f32,
+    ) -> Result<Option<Box<dyn Query>>, CompileError> {
+        match self.compile(expr)? {
+            Some(inner) => Ok(Some(Box::new(BoostQuery::new(inner, factor)))),
+            None => Ok(None),
         }
     }
 
@@ -306,6 +321,17 @@ impl QueryCompiler {
             QueryExpr::Field { .. } => Err(CompileError {
                 message: "nested field queries not supported".into(),
             }),
+            QueryExpr::Boost {
+                expr: inner,
+                factor,
+            } => {
+                // Apply both the field boost and the explicit boost
+                if let Some(q) = self.compile_single_field_query(field, boost_value, inner)? {
+                    Ok(Some(Box::new(BoostQuery::new(q, *factor))))
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 
@@ -424,8 +450,9 @@ impl QueryCompiler {
 
 #[cfg(test)]
 mod tests {
+    use ra_query::parse;
+
     use super::*;
-    use crate::query::parser::parse;
 
     fn compile_query(input: &str) -> Option<Box<dyn Query>> {
         let schema = IndexSchema::new();
@@ -569,6 +596,42 @@ mod tests {
     #[test]
     fn grouped_or_with_and() {
         let q = compile_query("(rust async) OR (go goroutine)");
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn boosted_term() {
+        let q = compile_query("rust^2.5");
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn boosted_phrase() {
+        let q = compile_query("\"error handling\"^3.0");
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn boosted_group() {
+        let q = compile_query("(rust async)^2.0");
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn boosted_or_terms() {
+        let q = compile_query("rust^2.5 OR golang^1.5");
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn boosted_field() {
+        let q = compile_query("title:guide^2.5");
+        assert!(q.is_some());
+    }
+
+    #[test]
+    fn boosted_in_complex_query() {
+        let q = compile_query("title:guide^2.0 (rust^3.0 OR golang^2.5) -deprecated");
         assert!(q.is_some());
     }
 }

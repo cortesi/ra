@@ -1,0 +1,13 @@
+[package]
+name = "ra-query"
+version = "0.1.0"
+edition = "2024"
+description = "Query parsing and AST for ra search"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]

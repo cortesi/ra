@@ -929,6 +929,7 @@ dependencies = [
  "ra-config",
  "ra-context",
  "ra-document",
+ "ra-query",
  "serde",
  "serde_json",
  "siphasher",
@@ -937,6 +938,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "walkdir",
+]
+
+[[package]]
+name = "ra-query"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.17",
 ]
 
 [[package]]

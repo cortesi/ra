@@ -1,11 +1,11 @@
 //! Query abstract syntax tree.
 //!
-//! Represents parsed query expressions before compilation to Tantivy queries.
+//! Represents parsed query expressions before compilation to search engine queries.
 
 use std::fmt;
 
 /// A parsed query expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum QueryExpr {
     /// A single search term.
     Term(String),
@@ -24,10 +24,18 @@ pub enum QueryExpr {
 
     /// Field-scoped query: search only within a specific field.
     Field {
-        /// Field name (title, tags, body, path, tree).
+        /// Field name (e.g., title, tags, body, path, tree).
         name: String,
         /// Expression to match within that field.
         expr: Box<Self>,
+    },
+
+    /// Boosted query: multiplies the score of the inner expression.
+    Boost {
+        /// The expression to boost.
+        expr: Box<Self>,
+        /// The boost factor (e.g., 2.5 means 2.5x the normal score).
+        factor: f32,
     },
 }
 
@@ -66,6 +74,14 @@ impl QueryExpr {
         }
     }
 
+    /// Creates a boosted expression.
+    pub fn boost(expr: Self, factor: f32) -> Self {
+        Self::Boost {
+            expr: Box::new(expr),
+            factor,
+        }
+    }
+
     /// Formats the expression as a tree structure with the given indentation level.
     fn fmt_tree(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let prefix = "  ".repeat(indent);
@@ -93,6 +109,58 @@ impl QueryExpr {
             Self::Field { name, expr } => {
                 writeln!(f, "{prefix}Field({name:?})")?;
                 expr.fmt_tree(f, indent + 1)
+            }
+            Self::Boost { expr, factor } => {
+                writeln!(f, "{prefix}Boost({factor})")?;
+                expr.fmt_tree(f, indent + 1)
+            }
+        }
+    }
+
+    /// Formats the expression as a query string (human-readable form).
+    ///
+    /// This produces output like: `term^2.5 OR "phrase"^3.0`
+    pub fn to_query_string(&self) -> String {
+        self.fmt_query_string(false)
+    }
+
+    /// Internal helper for query string formatting.
+    fn fmt_query_string(&self, in_field: bool) -> String {
+        match self {
+            Self::Term(s) => s.clone(),
+            Self::Phrase(words) => format!("\"{}\"", words.join(" ")),
+            Self::Not(inner) => format!("-{}", inner.fmt_query_string(in_field)),
+            Self::And(exprs) => {
+                if exprs.is_empty() {
+                    String::new()
+                } else {
+                    let parts: Vec<String> =
+                        exprs.iter().map(|e| e.fmt_query_string(in_field)).collect();
+                    if in_field {
+                        format!("({})", parts.join(" "))
+                    } else {
+                        parts.join(" ")
+                    }
+                }
+            }
+            Self::Or(exprs) => {
+                if exprs.is_empty() {
+                    String::new()
+                } else {
+                    let parts: Vec<String> =
+                        exprs.iter().map(|e| e.fmt_query_string(in_field)).collect();
+                    if in_field || exprs.len() > 1 {
+                        format!("({})", parts.join(" OR "))
+                    } else {
+                        parts.join(" OR ")
+                    }
+                }
+            }
+            Self::Field { name, expr } => {
+                format!("{}:{}", name, expr.fmt_query_string(true))
+            }
+            Self::Boost { expr, factor } => {
+                format!("{}^{}", expr.fmt_query_string(in_field), factor)
             }
         }
     }
