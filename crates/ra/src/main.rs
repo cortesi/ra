@@ -187,6 +187,10 @@ EXAMPLES:
         #[arg(long)]
         explain: bool,
 
+        /// Verbosity level (-v for summary, -vv for full details)
+        #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+        verbose: u8,
+
         /// Limit results to specific trees (can be specified multiple times)
         #[arg(short = 't', long = "tree")]
         trees: Vec<String>,
@@ -344,9 +348,10 @@ fn main() -> ExitCode {
             list,
             json,
             explain,
+            verbose,
             trees,
         } => {
-            return cmd_context(&files, limit, terms, list, json, explain, &trees);
+            return cmd_context(&files, limit, terms, list, json, explain, verbose, &trees);
         }
         Commands::Get {
             id,
@@ -1360,6 +1365,7 @@ fn format_aggregated_result_matches(
 }
 
 /// Implements the `ra context` command.
+#[allow(clippy::too_many_arguments)]
 fn cmd_context(
     files: &[String],
     limit: usize,
@@ -1367,6 +1373,7 @@ fn cmd_context(
     list: bool,
     json: bool,
     explain: bool,
+    verbose: u8,
     trees: &[String],
 ) -> ExitCode {
     let cwd = match env::current_dir() {
@@ -1466,7 +1473,7 @@ fn cmd_context(
         aggregation_threshold: 0.5,
         disable_aggregation: false,
         trees: trees.to_vec(),
-        verbosity: 0,
+        verbosity: verbose,
     };
 
     let results = match searcher.search_aggregated_expr(&expr, &params) {
@@ -1479,7 +1486,15 @@ fn cmd_context(
 
     // Output results (use query string representation for display)
     let query_display = expr.to_query_string();
-    output_aggregated_results(&results, &query_display, list, false, json, 0, &searcher)
+    output_aggregated_results(
+        &results,
+        &query_display,
+        list,
+        false,
+        json,
+        verbose,
+        &searcher,
+    )
 }
 
 /// Builds a combined query expression from multiple file analyses.
