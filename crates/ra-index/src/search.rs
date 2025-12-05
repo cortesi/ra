@@ -1237,6 +1237,52 @@ impl Searcher {
         Ok(reader.searcher().num_docs())
     }
 
+    /// Computes the IDF (Inverse Document Frequency) for a term.
+    ///
+    /// Uses the formula: `ln((total_docs + 1) / (doc_freq + 1)) + 1.0`
+    ///
+    /// Terms not found in the index receive a high IDF value (maximally rare),
+    /// computed as if `doc_freq = 0`.
+    ///
+    /// The term is tokenized and stemmed using the index's analyzer before lookup,
+    /// so "running" will match documents containing "run", "runs", "running", etc.
+    pub fn term_idf(&self, term: &str) -> Result<f32, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+        let searcher = reader.searcher();
+
+        let total_docs = searcher.num_docs() as f32;
+
+        // Tokenize and stem the term using the same analyzer as indexing
+        let mut analyzer = self.analyzer.clone();
+        let mut stream = analyzer.token_stream(term);
+        let stemmed_term = if let Some(token) = stream.next() {
+            token.text.clone()
+        } else {
+            // If tokenization produces nothing, use the original term
+            term.to_string()
+        };
+
+        // Look up document frequency for the stemmed term in the body field
+        let mut doc_freq: u64 = 0;
+        for segment_reader in searcher.segment_readers() {
+            if let Ok(inverted_index) = segment_reader.inverted_index(self.schema.body) {
+                // The term dictionary expects bytes, not a Term object
+                if let Ok(Some(term_info)) = inverted_index.terms().get(stemmed_term.as_bytes()) {
+                    doc_freq += term_info.doc_freq as u64;
+                }
+            }
+        }
+
+        // IDF formula: ln((N + 1) / (df + 1)) + 1.0
+        // This ensures IDF is always positive and terms not in the index get high IDF
+        let idf = ((total_docs + 1.0) / (doc_freq as f32 + 1.0)).ln() + 1.0;
+
+        Ok(idf)
+    }
+
     /// Retrieves a chunk by its exact ID.
     ///
     /// # Arguments
@@ -2399,5 +2445,70 @@ mod test {
             .with_trees(vec!["nonexistent".to_string()]);
         let results = searcher.search_aggregated("rust", &params).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn term_idf_common_term() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        // 3 docs, all mention "rust"
+        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        let idf = searcher.term_idf("rust").unwrap();
+
+        // IDF formula: ln((N + 1) / (df + 1)) + 1.0
+        // With N=3, df=3: ln(4/4) + 1.0 = ln(1) + 1.0 = 0 + 1.0 = 1.0
+        assert!(
+            (idf - 1.0).abs() < 0.1,
+            "common term should have low IDF (got {idf})"
+        );
+    }
+
+    #[test]
+    fn term_idf_rare_term() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        // Only 1 doc mentions "async"
+        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        let idf = searcher.term_idf("async").unwrap();
+
+        // IDF formula: ln((N + 1) / (df + 1)) + 1.0
+        // With N=3, df=1: ln(4/2) + 1.0 = ln(2) + 1.0 ≈ 0.693 + 1.0 ≈ 1.693
+        assert!(idf > 1.5, "rare term should have higher IDF (got {idf})");
+    }
+
+    #[test]
+    fn term_idf_unknown_term() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        let idf = searcher.term_idf("zzzznonexistent").unwrap();
+
+        // IDF formula: ln((N + 1) / (df + 1)) + 1.0
+        // With N=3, df=0: ln(4/1) + 1.0 = ln(4) + 1.0 ≈ 1.386 + 1.0 ≈ 2.386
+        assert!(idf > 2.0, "unknown term should have high IDF (got {idf})");
+    }
+
+    #[test]
+    fn term_idf_applies_stemming() {
+        let temp = TempDir::new().unwrap();
+        create_test_index(&temp);
+
+        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+
+        // "programming" appears in the index, "programs" should stem to the same root
+        let idf_programming = searcher.term_idf("programming").unwrap();
+        let idf_programs = searcher.term_idf("programs").unwrap();
+
+        // Both should have similar IDF since they stem to the same term
+        assert!(
+            (idf_programming - idf_programs).abs() < 0.1,
+            "stemmed variants should have similar IDF (programming={idf_programming}, programs={idf_programs})"
+        );
     }
 }
