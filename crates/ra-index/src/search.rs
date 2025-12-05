@@ -629,8 +629,22 @@ impl Searcher {
     }
 
     /// Tokenizes a query string to extract individual search terms.
+    ///
+    /// Filters out query syntax elements (OR, AND, NOT, field prefixes) before
+    /// tokenizing to avoid treating keywords as search terms.
     fn tokenize_query(&mut self, query_str: &str) -> Vec<String> {
-        let mut stream = self.analyzer.token_stream(query_str);
+        // Pre-filter query syntax before tokenizing
+        let filtered: String = query_str
+            .split_whitespace()
+            .filter(|word| {
+                let upper = word.to_uppercase();
+                // Filter out boolean operators and field prefixes
+                upper != "OR" && upper != "AND" && upper != "NOT" && !word.contains(':')
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let mut stream = self.analyzer.token_stream(&filtered);
         let mut tokens = Vec::new();
         while let Some(token) = stream.next() {
             tokens.push(token.text.clone());

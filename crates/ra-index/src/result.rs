@@ -4,7 +4,7 @@
 //! - [`SearchCandidate`]: A single chunk match from the index
 //! - [`SearchResult`]: Either a single match or an aggregated parent with constituents
 
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 use super::search::MatchDetails;
 
@@ -229,12 +229,17 @@ impl SearchResult {
     /// Returns match details if available.
     ///
     /// For single results, returns the candidate's match details.
-    /// For aggregated results, returns the first constituent's details (if any).
+    /// For aggregated results, returns the highest-scoring constituent's details,
+    /// which is most likely to have the most comprehensive match information.
     pub fn match_details(&self) -> Option<&MatchDetails> {
         match self {
             Self::Single(candidate) => candidate.match_details.as_ref(),
             Self::Aggregated { constituents, .. } => {
-                constituents.first().and_then(|c| c.match_details.as_ref())
+                // Find the constituent with the highest score
+                constituents
+                    .iter()
+                    .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(Ordering::Equal))
+                    .and_then(|c| c.match_details.as_ref())
             }
         }
     }

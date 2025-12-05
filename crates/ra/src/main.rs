@@ -502,42 +502,38 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
     if let Some(details) = details {
         // Always show matched terms at verbosity >= 1
         if verbosity >= 1 {
-            // Show query terms and their stemmed forms
+            // Show each query term with stemming and fuzzy matches
             if !details.original_terms.is_empty() {
-                let terms_info: Vec<String> = details
+                output.push_str(&format!("{}\n", dim("terms:")));
+                for (orig, stemmed) in details
                     .original_terms
                     .iter()
                     .zip(details.stemmed_terms.iter())
-                    .map(|(orig, stemmed)| {
-                        if orig == stemmed {
-                            orig.clone()
-                        } else {
-                            format!("{orig} → {stemmed}")
-                        }
-                    })
-                    .collect();
-                output.push_str(&format!("{} {}\n", dim("terms:"), terms_info.join(", ")));
-            }
+                {
+                    // Term heading
+                    output.push_str(&format!("  {}\n", orig));
 
-            // Show term mappings (which document terms matched each query term)
-            if !details.term_mappings.is_empty() {
-                let mut mappings: Vec<String> = Vec::new();
-                for (query_term, matched_terms) in &details.term_mappings {
-                    if matched_terms.is_empty() {
-                        continue;
+                    // Show stemming if different from original
+                    if orig != stemmed {
+                        output.push_str(&format!("    {} {}\n", dim("stem:"), stemmed));
                     }
-                    if matched_terms.len() == 1 && &matched_terms[0] == query_term {
-                        // Exact match, no need to show mapping
-                        continue;
+
+                    // Show fuzzy matches if there are any beyond the exact term
+                    if let Some(matches) = details.term_mappings.get(stemmed) {
+                        let fuzzy: Vec<&String> =
+                            matches.iter().filter(|m| *m != stemmed).collect();
+                        if !fuzzy.is_empty() {
+                            output.push_str(&format!(
+                                "    {} {}\n",
+                                dim("fuzzy:"),
+                                fuzzy
+                                    .iter()
+                                    .map(|s| s.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                        }
                     }
-                    mappings.push(format!(
-                        "{} matched [{}]",
-                        query_term,
-                        matched_terms.join(", ")
-                    ));
-                }
-                if !mappings.is_empty() {
-                    output.push_str(&format!("{} {}\n", dim("mapped:"), mappings.join("; ")));
                 }
             }
         }
@@ -576,16 +572,19 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
                     if field_match.matched_terms.is_empty() {
                         continue;
                     }
-                    let freq_info: Vec<String> = field_match
-                        .term_frequencies
+                    // Show each term with its frequency
+                    let term_info: Vec<String> = field_match
+                        .matched_terms
                         .iter()
-                        .map(|(term, freq)| format!("{term}×{freq}"))
+                        .map(|term| {
+                            let freq = field_match.term_frequencies.get(term).unwrap_or(&1);
+                            format!("{term} x {freq}")
+                        })
                         .collect();
                     output.push_str(&format!(
-                        "  {} {} ({})\n",
+                        "  {} {}\n",
                         dim(&format!("{field}:")),
-                        field_match.matched_terms.join(", "),
-                        freq_info.join(", ")
+                        term_info.join(", ")
                     ));
                 }
             }
@@ -1033,7 +1032,7 @@ fn format_aggregated_result_full(
     {
         output.push_str(&format!(
             "{}\n",
-            dim(&format!("─ Constituent matches ({}) ─", constituents.len()))
+            dim(&format!("─ Child node matches ({}) ─", constituents.len()))
         ));
         for constituent in constituents {
             output.push_str(&format!(
@@ -1093,7 +1092,7 @@ fn format_aggregated_result_list(
     {
         output.push_str(&format!(
             "{}\n",
-            dim(&format!("─ Constituent matches ({}) ─", constituents.len()))
+            dim(&format!("─ Child node matches ({}) ─", constituents.len()))
         ));
         for constituent in constituents {
             output.push_str(&format!(
