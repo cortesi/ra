@@ -1251,7 +1251,7 @@ fn format_aggregated_result_full(
 
 /// Formats an aggregated search result for list mode output.
 ///
-/// The `full_body` parameter is the full content including all children.
+/// List mode shows only the document header and title - no content snippets.
 fn format_aggregated_result_list(
     result: &AggregatedSearchResult,
     verbose: u8,
@@ -1290,18 +1290,7 @@ fn format_aggregated_result_list(
         output.push_str(&format!("{}\n", dim(&stats)));
     }
 
-    // Show match details when verbose
-    if verbose > 0 {
-        output.push_str(&format_match_details(result, verbose));
-    }
-
-    let ranges = aggregated_match_ranges(result, full_body);
-    if !ranges.is_empty() {
-        let formatted = extract_matching_lines(full_body, &ranges);
-        output.push_str(&formatted);
-        output.push('\n');
-    }
-
+    // List mode: no content - just header and title
     output.push('\n');
     output
 }

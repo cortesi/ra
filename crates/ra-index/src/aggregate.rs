@@ -28,7 +28,10 @@
 //! Section 1 (now aggregated) doesn't aggregate with Section 2 (1/2 = 50% >= 50%),
 //! but Sub 2.1 alone (1/1 = 100%) could aggregate if Section 2 were a match.
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 use crate::result::{SearchCandidate, SearchResult};
 
@@ -239,6 +242,41 @@ where
         .into_values()
         .map(|(r, _)| r.into_result())
         .collect();
+
+    // Remove descendants whose ancestors appear in results.
+    // If a parent document appears, its children shouldn't appear separately.
+    let result_ids: HashSet<String> = results.iter().map(|r| r.id().to_string()).collect();
+
+    // Build a map from id -> parent_id for ancestor traversal
+    let parent_map: HashMap<String, Option<String>> = results
+        .iter()
+        .map(|r| (r.id().to_string(), r.parent_id().map(String::from)))
+        .collect();
+
+    results.retain(|r| {
+        // Check if any ancestor of this result is also in the results
+        let id = r.id();
+
+        // First check: document-level ancestor via ID prefix
+        if let Some(hash_pos) = id.find('#') {
+            let doc_id = &id[..hash_pos];
+            if result_ids.contains(doc_id) && id != doc_id {
+                return false;
+            }
+        }
+
+        // Second check: traverse parent chain to find any ancestor in results
+        let mut current_parent = r.parent_id().map(String::from);
+        while let Some(ref pid) = current_parent {
+            if result_ids.contains(pid) {
+                return false;
+            }
+            // Move to grandparent
+            current_parent = parent_map.get(pid).and_then(|p| p.clone());
+        }
+
+        true
+    });
 
     // Sort by score descending, then by ID for stability
     results.sort_by(|a, b| {
@@ -500,6 +538,8 @@ mod test {
         // After depth 1 processing:
         // - s1 (aggregated) is at depth 1, sibling_count=2
         // - s1 alone = 1/2 = 50% >= 50%, so it aggregates to doc!
+        //
+        // Finally: sub2_1 is filtered out because its ancestor doc is in results
 
         let sub1_1 = make_candidate("local:test.md#s1#sub1", Some("local:test.md#s1"), 5.0, 2, 2);
         let sub1_2 = make_candidate("local:test.md#s1#sub2", Some("local:test.md#s1"), 4.0, 2, 2);
@@ -516,22 +556,15 @@ mod test {
             _ => None,
         });
 
-        // Results:
-        // - s1 aggregates to doc (1/2 sections = 50% at threshold)
-        // - sub2_1 stays as single (1/3 < 50%)
-        assert_eq!(results.len(), 2);
+        // Results: Only doc remains - sub2_1 is filtered because doc is its ancestor
+        assert_eq!(results.len(), 1);
 
-        // Results sorted by score: doc (5.0 from s1's max) > sub2_1 (3.0)
-        let doc_result = results.iter().find(|r| r.id() == "local:test.md");
-        let sub2_1_result = results.iter().find(|r| r.id() == "local:test.md#s2#sub1");
-
-        assert!(doc_result.is_some(), "doc should be in results");
-        assert!(sub2_1_result.is_some(), "sub2_1 should be in results");
-        assert!(doc_result.unwrap().is_aggregated());
-        assert!(!sub2_1_result.unwrap().is_aggregated());
+        let doc_result = &results[0];
+        assert_eq!(doc_result.id(), "local:test.md");
+        assert!(doc_result.is_aggregated());
 
         // The doc result should have the original subsections as constituents
-        let constituents = doc_result.unwrap().constituents().unwrap();
+        let constituents = doc_result.constituents().unwrap();
         assert_eq!(constituents.len(), 2);
     }
 
