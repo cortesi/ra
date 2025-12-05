@@ -493,6 +493,73 @@ struct JsonSearchOutput {
     queries: Vec<JsonQueryResults>,
 }
 
+/// Converts byte ranges to JSON match ranges.
+fn json_match_ranges(ranges: &[Range<usize>]) -> Vec<JsonMatchRange> {
+    ranges
+        .iter()
+        .map(|range| JsonMatchRange {
+            offset: range.start,
+            length: range.end - range.start,
+        })
+        .collect()
+}
+
+/// Builds a JSON result from an aggregated search result.
+fn json_from_aggregated_result(result: &AggregatedSearchResult, list: bool) -> JsonSearchResult {
+    let constituents_count = result.constituents().map(|c| c.len()).unwrap_or(0);
+    let match_ranges = match result {
+        AggregatedSearchResult::Single(c) => Some(json_match_ranges(&c.match_ranges)),
+        AggregatedSearchResult::Aggregated { .. } => None,
+    };
+
+    let content_field = if list {
+        None
+    } else {
+        Some(format!("> {}\n\n{}", result.breadcrumb(), result.body()))
+    };
+
+    JsonSearchResult {
+        id: result.id().to_string(),
+        tree: result.tree().to_string(),
+        path: result.path().to_string(),
+        title: result.title().to_string(),
+        breadcrumb: result.breadcrumb().to_string(),
+        score: result.score(),
+        snippet: if result.is_aggregated() {
+            Some(format!("[Aggregated: {} matches]", constituents_count))
+        } else {
+            None
+        },
+        body: Some(result.body().to_string()),
+        content: content_field,
+        match_ranges,
+        title_match_ranges: Some(json_match_ranges(result.title_match_ranges())),
+        path_match_ranges: Some(json_match_ranges(result.path_match_ranges())),
+    }
+}
+
+/// Builds a JSON result from a single search result.
+fn json_from_search_result(result: &SearchResult, list: bool) -> JsonSearchResult {
+    JsonSearchResult {
+        id: result.id.clone(),
+        tree: result.tree.clone(),
+        path: result.path.clone(),
+        title: result.title.clone(),
+        breadcrumb: result.breadcrumb.clone(),
+        score: result.score,
+        snippet: None,
+        body: Some(result.body.clone()),
+        content: if list {
+            None
+        } else {
+            Some(format!("> {}\n\n{}", result.breadcrumb, result.body))
+        },
+        match_ranges: Some(json_match_ranges(&result.match_ranges)),
+        title_match_ranges: Some(json_match_ranges(&result.title_match_ranges)),
+        path_match_ranges: Some(json_match_ranges(&result.path_match_ranges)),
+    }
+}
+
 /// Rendering style for aggregated search results.
 #[derive(Clone, Copy)]
 enum DisplayMode {
@@ -1074,62 +1141,7 @@ fn output_aggregated_results(
                 total_matches: results.len(),
                 results: results
                     .iter()
-                    .map(|r| {
-                        let constituents_count = r.constituents().map(|c| c.len()).unwrap_or(0);
-                        let match_ranges = match r {
-                            AggregatedSearchResult::Single(c) => Some(
-                                c.match_ranges
-                                    .iter()
-                                    .map(|range| JsonMatchRange {
-                                        offset: range.start,
-                                        length: range.end - range.start,
-                                    })
-                                    .collect(),
-                            ),
-                            AggregatedSearchResult::Aggregated { .. } => None,
-                        };
-
-                        let body_field = Some(r.body().to_string());
-
-                        JsonSearchResult {
-                            id: r.id().to_string(),
-                            tree: r.tree().to_string(),
-                            path: r.path().to_string(),
-                            title: r.title().to_string(),
-                            breadcrumb: r.breadcrumb().to_string(),
-                            score: r.score(),
-                            snippet: if r.is_aggregated() {
-                                Some(format!("[Aggregated: {} matches]", constituents_count))
-                            } else {
-                                None
-                            },
-                            body: body_field,
-                            content: if list {
-                                None
-                            } else {
-                                Some(format!("> {}\n\n{}", r.breadcrumb(), r.body()))
-                            },
-                            match_ranges,
-                            title_match_ranges: Some(
-                                r.title_match_ranges()
-                                    .iter()
-                                    .map(|range| JsonMatchRange {
-                                        offset: range.start,
-                                        length: range.end - range.start,
-                                    })
-                                    .collect(),
-                            ),
-                            path_match_ranges: Some(
-                                r.path_match_ranges()
-                                    .iter()
-                                    .map(|range| JsonMatchRange {
-                                        offset: range.start,
-                                        length: range.end - range.start,
-                                    })
-                                    .collect(),
-                            ),
-                        }
-                    })
+                    .map(|r| json_from_aggregated_result(r, list))
                     .collect(),
             }],
         };
@@ -1644,44 +1656,7 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
                 total_matches: results.len(),
                 results: results
                     .iter()
-                    .map(|r| JsonSearchResult {
-                        id: r.id.clone(),
-                        tree: r.tree.clone(),
-                        path: r.path.clone(),
-                        title: r.title.clone(),
-                        breadcrumb: r.breadcrumb.clone(),
-                        score: r.score,
-                        snippet: None,
-                        body: Some(r.body.clone()),
-                        content: Some(format!("> {}\n\n{}", r.breadcrumb, r.body)),
-                        match_ranges: Some(
-                            r.match_ranges
-                                .iter()
-                                .map(|range| JsonMatchRange {
-                                    offset: range.start,
-                                    length: range.end - range.start,
-                                })
-                                .collect(),
-                        ),
-                        title_match_ranges: Some(
-                            r.title_match_ranges
-                                .iter()
-                                .map(|range| JsonMatchRange {
-                                    offset: range.start,
-                                    length: range.end - range.start,
-                                })
-                                .collect(),
-                        ),
-                        path_match_ranges: Some(
-                            r.path_match_ranges
-                                .iter()
-                                .map(|range| JsonMatchRange {
-                                    offset: range.start,
-                                    length: range.end - range.start,
-                                })
-                                .collect(),
-                        ),
-                    })
+                    .map(|r| json_from_search_result(r, false))
                     .collect(),
             }],
         };
