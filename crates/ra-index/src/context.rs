@@ -267,10 +267,10 @@ impl<'a> ContextSearch<'a> {
         Some(QueryExpr::or(exprs))
     }
 
-    /// Injects automatically included files from matched rules into the results.
+    /// Injects automatically included files from matched rules at the top of results.
     ///
-    /// Include paths are in the format "tree:path". Each matching document is added
-    /// to the results if not already present.
+    /// Include paths are in the format "tree:path". Each matching document is inserted
+    /// at the beginning of results (in order), ensuring they appear first.
     fn inject_includes(&self, results: &mut Vec<SearchResult>, includes: &[String], limit: usize) {
         if includes.is_empty() {
             return;
@@ -279,6 +279,9 @@ impl<'a> ContextSearch<'a> {
         // Track existing doc IDs to avoid duplicates
         let existing_doc_ids: HashSet<String> =
             results.iter().map(|r| r.doc_id().to_string()).collect();
+
+        // Collect includes to prepend (in reverse order since we'll insert at front)
+        let mut to_prepend: Vec<SearchResult> = Vec::new();
 
         // Parse and look up each include
         for include in includes {
@@ -301,16 +304,24 @@ impl<'a> ContextSearch<'a> {
                     continue; // Already in results
                 }
 
-                // Create an aggregated result for this included file
-                if results.len() < limit {
-                    // Convert the first result to a candidate with score 0 (manual inclusion)
-                    let first_result = search_results.into_iter().next().unwrap();
-                    let mut candidate: SearchCandidate = first_result.into();
-                    candidate.score = 0.0; // Manual inclusion gets score 0
+                // Convert the first result to a candidate with high score for priority
+                let first_result = search_results.into_iter().next().unwrap();
+                let mut candidate: SearchCandidate = first_result.into();
+                candidate.score = f32::MAX; // Manual inclusion gets max score to stay at top
 
-                    results.push(SearchResult::single(candidate));
-                }
+                to_prepend.push(SearchResult::single(candidate));
             }
+        }
+
+        // Prepend includes at the start of results, maintaining their order
+        if !to_prepend.is_empty() {
+            // Truncate results if needed to make room for includes
+            let max_search_results = limit.saturating_sub(to_prepend.len());
+            results.truncate(max_search_results);
+
+            // Prepend the includes
+            to_prepend.append(results);
+            *results = to_prepend;
         }
     }
 }
