@@ -1498,6 +1498,11 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
     if json {
         // JSON output for explain mode
         let json_output = JsonContextExplain {
+            merged_rules: JsonMatchedRules {
+                terms: analysis_result.merged_rules.terms.clone(),
+                trees: analysis_result.merged_rules.trees.clone(),
+                include: analysis_result.merged_rules.include.clone(),
+            },
             files: analysis_result
                 .files
                 .iter()
@@ -1535,13 +1540,40 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
         }
     } else {
         // Human-readable explain output
+
+        // Show merged rules at the top (final applied rules)
+        println!("{}", subheader("Applied context rules:"));
+        if analysis_result.merged_rules.is_empty() {
+            println!("  {}", dim("(none)"));
+        } else {
+            if !analysis_result.merged_rules.terms.is_empty() {
+                println!(
+                    "  Terms:   {}",
+                    analysis_result.merged_rules.terms.join(", ")
+                );
+            }
+            if !analysis_result.merged_rules.trees.is_empty() {
+                println!(
+                    "  Trees:   {}",
+                    analysis_result.merged_rules.trees.join(", ")
+                );
+            }
+            if !analysis_result.merged_rules.include.is_empty() {
+                println!(
+                    "  Include: {}",
+                    analysis_result.merged_rules.include.join(", ")
+                );
+            }
+        }
+        println!();
+
         for fa in &analysis_result.files {
             println!("{}", subheader(&format!("File: {}", fa.path)));
             println!();
 
-            // Show matched rules if any
+            // Show per-file matched rules if any (and different from merged)
             if !fa.matched_rules.is_empty() {
-                println!("{}", subheader("Matched rules:"));
+                println!("{}", dim("Matched rules:"));
                 if !fa.matched_rules.terms.is_empty() {
                     println!("  Terms:   {}", fa.matched_rules.terms.join(", "));
                 }
@@ -1599,6 +1631,8 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
 /// JSON output for context explain mode.
 #[derive(Serialize)]
 struct JsonContextExplain {
+    /// Merged context rules across all files.
+    merged_rules: JsonMatchedRules,
     /// Analysis results for each file.
     files: Vec<JsonFileAnalysis>,
 }
