@@ -26,16 +26,19 @@ use tantivy::schema::{
 use crate::analyzer::RA_TOKENIZER;
 
 /// Field boost weights for search ranking.
+///
+/// Title and path matches are weighted heavily since they indicate the document
+/// is specifically about the search term, not just mentioning it in passing.
 pub mod boost {
-    /// Title field boost (3.0x).
-    pub const TITLE: f32 = 3.0;
-    /// Tags field boost (2.5x).
-    pub const TAGS: f32 = 2.5;
-    /// Path field boost (2.0x).
-    pub const PATH: f32 = 2.0;
-    /// Path components field boost (2.0x).
-    pub const PATH_COMPONENTS: f32 = 2.0;
-    /// Body field boost (1.0x).
+    /// Title field boost - very strong signal that document is about this term.
+    pub const TITLE: f32 = 10.0;
+    /// Path field boost - filename matches are strong relevance signals.
+    pub const PATH: f32 = 8.0;
+    /// Path components field boost - directory/filename parts.
+    pub const PATH_COMPONENTS: f32 = 6.0;
+    /// Tags field boost - intentional metadata.
+    pub const TAGS: f32 = 5.0;
+    /// Body field boost - baseline for content matches.
     pub const BODY: f32 = 1.0;
 }
 
