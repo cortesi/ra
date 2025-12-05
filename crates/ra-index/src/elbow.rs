@@ -94,13 +94,6 @@ pub fn elbow_cutoff(
     candidates.into_iter().take(final_count).collect()
 }
 
-/// Finds the elbow cutoff point using default parameters.
-///
-/// Uses `DEFAULT_CUTOFF_RATIO` (0.5) and `DEFAULT_MAX_RESULTS` (20).
-pub fn elbow_cutoff_default(candidates: Vec<SearchCandidate>) -> Vec<SearchCandidate> {
-    elbow_cutoff(candidates, DEFAULT_CUTOFF_RATIO, DEFAULT_MAX_RESULTS)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -283,15 +276,6 @@ mod test {
 
         // 4.9/10.0 = 0.49 < 0.5, elbow at index 1
         assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn default_function_uses_defaults() {
-        let candidates = make_candidates(&[8.0, 7.5, 7.0, 3.2, 3.0, 2.8, 0.9]);
-        let result = elbow_cutoff_default(candidates);
-
-        // Same as spec example with default ratio 0.5
-        assert_eq!(result.len(), 3);
     }
 
     #[test]

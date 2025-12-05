@@ -27,11 +27,6 @@ impl ManifestDiff {
         self.added.is_empty() && self.modified.is_empty() && self.removed.is_empty()
     }
 
-    /// Returns the total number of files that need processing.
-    pub fn total_changes(&self) -> usize {
-        self.added.len() + self.modified.len() + self.removed.len()
-    }
-
     /// Returns all files that need indexing (both added and modified).
     pub fn files_to_index(&self) -> impl Iterator<Item = &DiscoveredFile> {
         self.added.iter().chain(self.modified.iter())
@@ -227,7 +222,6 @@ mod test {
         assert_eq!(diff.added.len(), 1);
         assert_eq!(diff.modified.len(), 1);
         assert_eq!(diff.removed.len(), 1);
-        assert_eq!(diff.total_changes(), 3);
     }
 
     #[test]

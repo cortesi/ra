@@ -6,9 +6,7 @@
 
 use std::{
     ffi::OsStr,
-    fs, io,
     path::{Path, PathBuf},
-    slice,
     time::SystemTime,
 };
 
@@ -104,14 +102,6 @@ pub fn discover_files(
     Ok(files)
 }
 
-/// Discovers files from a single tree.
-pub fn discover_tree_files(
-    tree: &Tree,
-    patterns: &CompiledPatterns,
-) -> Result<Vec<DiscoveredFile>, IndexError> {
-    discover_files(slice::from_ref(tree), patterns)
-}
-
 /// Checks if a filename represents a hidden file (starts with '.').
 fn is_hidden(name: &OsStr) -> bool {
     name.to_str().is_some_and(|s| s.starts_with('.'))
@@ -143,14 +133,9 @@ fn is_binary_file(path: &Path) -> bool {
         .is_some_and(|ext| BINARY_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
 }
 
-/// Reads the modification time of a file.
-pub fn file_mtime(path: &Path) -> io::Result<SystemTime> {
-    fs::metadata(path)?.modified()
-}
-
 #[cfg(test)]
 mod test {
-    use std::fs;
+    use std::{fs, slice};
 
     use tempfile::TempDir;
 

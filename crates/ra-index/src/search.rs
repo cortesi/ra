@@ -51,8 +51,8 @@ impl Automaton for LevenshteinDfa {
 }
 
 use crate::{
-    IndexError, ParentInfo,
-    aggregate::{DEFAULT_AGGREGATION_THRESHOLD, aggregate},
+    IndexError,
+    aggregate::{DEFAULT_AGGREGATION_THRESHOLD, ParentInfo, aggregate},
     analyzer::{RA_TOKENIZER, build_analyzer_from_name},
     elbow::{DEFAULT_CUTOFF_RATIO, DEFAULT_MAX_RESULTS, elbow_cutoff},
     query::{QueryCompiler, parse},
@@ -1462,7 +1462,7 @@ mod test {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{ChunkDocument, IndexWriter};
+    use crate::{document::ChunkDocument, writer::IndexWriter};
 
     fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
         let docs = vec![

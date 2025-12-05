@@ -251,14 +251,6 @@ where
     results
 }
 
-/// Aggregates using the default threshold.
-pub fn aggregate_default<F>(candidates: Vec<SearchCandidate>, parent_lookup: F) -> Vec<SearchResult>
-where
-    F: Fn(&str) -> Option<ParentInfo>,
-{
-    aggregate(candidates, DEFAULT_AGGREGATION_THRESHOLD, parent_lookup)
-}
-
 /// Internal enum to track candidates and results during aggregation.
 enum ResultOrCandidate {
     /// A single search candidate (not yet aggregated).
@@ -631,26 +623,6 @@ mod test {
 
         assert_eq!(results.len(), 1);
         assert!(!results[0].is_aggregated());
-    }
-
-    #[test]
-    fn default_threshold_function() {
-        let c1 = make_candidate("local:test.md#s1", Some("local:test.md"), 5.0, 1, 2);
-        let c2 = make_candidate("local:test.md#s2", Some("local:test.md"), 4.0, 1, 2);
-
-        let parent = make_parent_info("local:test.md", None, 0, 1);
-
-        let results = aggregate_default(vec![c1, c2], |id| {
-            if id == "local:test.md" {
-                Some(parent.clone())
-            } else {
-                None
-            }
-        });
-
-        // 2/2 = 100% >= 50% default threshold
-        assert_eq!(results.len(), 1);
-        assert!(results[0].is_aggregated());
     }
 
     #[test]

@@ -16,9 +16,15 @@ use std::{
 use ra_config::{CompiledPatterns, Config};
 
 use crate::{
-    ChunkDocument, DiscoveredFile, IndexError, IndexWriter, Manifest, ManifestDiff, apply_diff,
-    compute_config_hash, diff_manifest, discover_files, index_directory, manifest_path,
-    write_config_hash,
+    IndexError,
+    config_hash::compute_config_hash,
+    diff::{ManifestDiff, apply_diff, diff_manifest},
+    discovery::{DiscoveredFile, discover_files},
+    document::ChunkDocument,
+    location::{index_directory, manifest_path},
+    manifest::Manifest,
+    status::write_config_hash,
+    writer::IndexWriter,
 };
 
 /// Statistics from an indexing operation.

@@ -98,6 +98,7 @@ pub fn detect_index_status(config: &Config) -> IndexStatus {
 }
 
 /// Checks if an index exists at the given path.
+#[cfg(test)]
 pub fn index_exists(index_dir: &Path) -> bool {
     index_dir.join("meta.json").exists()
 }

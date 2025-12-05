@@ -102,18 +102,15 @@ impl Manifest {
     }
 
     /// Returns the number of entries in the manifest.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns true if the manifest is empty.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
-    }
-
-    /// Clears all entries from the manifest.
-    pub fn clear(&mut self) {
-        self.entries.clear();
     }
 }
 

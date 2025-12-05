@@ -21,7 +21,8 @@ const DEFAULT_HEAP_SIZE: usize = 50_000_000;
 /// The writer opens or creates an index at the specified path and provides
 /// methods to add, delete, and commit documents.
 pub struct IndexWriter {
-    /// The Tantivy index.
+    /// The Tantivy index (used by test-only `num_docs`).
+    #[allow(dead_code)]
     index: Index,
     /// The underlying Tantivy writer.
     writer: TantivyIndexWriter,
@@ -107,6 +108,7 @@ impl IndexWriter {
     /// Adds a chunk document to the index.
     ///
     /// The document is staged for writing but not committed until [`commit`] is called.
+    #[allow(clippy::needless_pass_by_ref_mut)] // Semantic mutability - Tantivy uses interior mutability
     pub fn add_document(&mut self, doc: &ChunkDocument) -> Result<(), IndexError> {
         let mut tantivy_doc = TantivyDocument::new();
 
@@ -165,6 +167,7 @@ impl IndexWriter {
     /// Deletes all documents with the given tree and path.
     ///
     /// This is used for incremental updates when a file is modified or removed.
+    #[allow(clippy::needless_pass_by_ref_mut)] // Semantic mutability - Tantivy uses interior mutability
     pub fn delete_by_path(&mut self, tree: &str, path: &str) {
         // Delete by term on the id field prefix
         // IDs are formatted as `{tree}:{path}#{slug}` or `{tree}:{path}`
@@ -189,12 +192,14 @@ impl IndexWriter {
     }
 
     /// Rolls back any uncommitted changes.
+    #[cfg(test)]
     pub fn rollback(&mut self) -> Result<(), IndexError> {
         self.writer.rollback().map_err(|e| IndexError::commit(&e))?;
         Ok(())
     }
 
     /// Deletes all documents from the index.
+    #[allow(clippy::needless_pass_by_ref_mut)] // Semantic mutability - Tantivy uses interior mutability
     pub fn delete_all(&mut self) -> Result<(), IndexError> {
         self.writer
             .delete_all_documents()
@@ -205,6 +210,7 @@ impl IndexWriter {
     /// Returns the number of documents in the index.
     ///
     /// Note: This requires creating a reader and may not reflect uncommitted changes.
+    #[cfg(test)]
     pub fn num_docs(&self) -> Result<u64, IndexError> {
         let reader = self
             .index
