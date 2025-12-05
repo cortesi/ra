@@ -104,7 +104,6 @@ mod test {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::TermSource;
 
     /// Mock IDF provider for testing.
     struct MockIdf {
@@ -136,7 +135,7 @@ mod test {
         let term = WeightedTerm {
             term: "test".to_string(),
             weight: 2.0,
-            source: TermSource::MarkdownH1,
+            source: "md:h1".to_string(),
             frequency: 3,
         };
 
@@ -150,9 +149,9 @@ mod test {
     #[test]
     fn rank_terms_sorts_by_score() {
         let terms = vec![
-            WeightedTerm::new("low".to_string(), TermSource::Body), // weight 1.0
-            WeightedTerm::new("high".to_string(), TermSource::MarkdownH1), // weight 3.0
-            WeightedTerm::new("medium".to_string(), TermSource::MarkdownH2H3), // weight 2.0
+            WeightedTerm::new("low".to_string(), "body", 1.0),
+            WeightedTerm::new("high".to_string(), "md:h1", 3.0),
+            WeightedTerm::new("medium".to_string(), "md:h2-h3", 2.0),
         ];
 
         // All terms have same IDF, so ranking is by weight
@@ -171,8 +170,8 @@ mod test {
     #[test]
     fn rank_terms_considers_idf() {
         let terms = vec![
-            WeightedTerm::new("common".to_string(), TermSource::Body), // weight 1.0
-            WeightedTerm::new("rare".to_string(), TermSource::Body),   // weight 1.0
+            WeightedTerm::new("common".to_string(), "body", 1.0),
+            WeightedTerm::new("rare".to_string(), "body", 1.0),
         ];
 
         // "rare" has higher IDF, so should rank higher despite same weight
@@ -188,10 +187,10 @@ mod test {
 
     #[test]
     fn rank_terms_considers_frequency() {
-        let mut frequent = WeightedTerm::new("frequent".to_string(), TermSource::Body);
+        let mut frequent = WeightedTerm::new("frequent".to_string(), "body", 1.0);
         frequent.frequency = 5;
 
-        let mut infrequent = WeightedTerm::new("infrequent".to_string(), TermSource::Body);
+        let mut infrequent = WeightedTerm::new("infrequent".to_string(), "body", 1.0);
         infrequent.frequency = 1;
 
         let terms = vec![infrequent, frequent];
@@ -210,8 +209,8 @@ mod test {
     fn rank_terms_stable_ordering() {
         // Two terms with identical scores should be ordered alphabetically
         let terms = vec![
-            WeightedTerm::new("zebra".to_string(), TermSource::Body),
-            WeightedTerm::new("alpha".to_string(), TermSource::Body),
+            WeightedTerm::new("zebra".to_string(), "body", 1.0),
+            WeightedTerm::new("alpha".to_string(), "body", 1.0),
         ];
 
         let idf = MockIdf::new()
@@ -228,11 +227,11 @@ mod test {
     #[test]
     fn top_terms_limits_results() {
         let terms = vec![
-            WeightedTerm::new("a".to_string(), TermSource::Body),
-            WeightedTerm::new("b".to_string(), TermSource::Body),
-            WeightedTerm::new("c".to_string(), TermSource::Body),
-            WeightedTerm::new("d".to_string(), TermSource::Body),
-            WeightedTerm::new("e".to_string(), TermSource::Body),
+            WeightedTerm::new("a".to_string(), "body", 1.0),
+            WeightedTerm::new("b".to_string(), "body", 1.0),
+            WeightedTerm::new("c".to_string(), "body", 1.0),
+            WeightedTerm::new("d".to_string(), "body", 1.0),
+            WeightedTerm::new("e".to_string(), "body", 1.0),
         ];
 
         let idf = MockIdf::new()
@@ -249,8 +248,8 @@ mod test {
     #[test]
     fn unknown_terms_are_filtered_out() {
         let terms = vec![
-            WeightedTerm::new("known".to_string(), TermSource::Body),
-            WeightedTerm::new("unknown".to_string(), TermSource::Body),
+            WeightedTerm::new("known".to_string(), "body", 1.0),
+            WeightedTerm::new("unknown".to_string(), "body", 1.0),
         ];
 
         // Only "known" is in the index
@@ -268,7 +267,7 @@ mod test {
         let original = WeightedTerm {
             term: "test".to_string(),
             weight: 3.0,
-            source: TermSource::MarkdownH1,
+            source: "md:h1".to_string(),
             frequency: 2,
         };
 
@@ -276,7 +275,7 @@ mod test {
 
         assert_eq!(ranked.term.term, "test");
         assert_eq!(ranked.term.weight, 3.0);
-        assert_eq!(ranked.term.source, TermSource::MarkdownH1);
+        assert_eq!(ranked.term.source, "md:h1");
         assert_eq!(ranked.term.frequency, 2);
         assert_eq!(ranked.idf, 1.5);
     }

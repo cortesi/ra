@@ -42,10 +42,16 @@ pub fn tokenize(text: &str, min_length: usize) -> impl Iterator<Item = String> +
 
 /// Extracts terms from text, filtering stopwords and aggregating by frequency.
 ///
-/// Returns a map of term -> (weight, frequency) for deduplication.
+/// # Arguments
+/// * `text` - The text to extract terms from
+/// * `source` - Human-readable source label (e.g., "body", "md:h1")
+/// * `weight` - Semantic weight for terms from this source
+/// * `stopwords` - Stopwords to filter out
+/// * `min_length` - Minimum term length
 pub fn extract_terms_from_text(
     text: &str,
-    source: crate::TermSource,
+    source: &str,
+    weight: f32,
     stopwords: &Stopwords,
     min_length: usize,
 ) -> Vec<WeightedTerm> {
@@ -62,7 +68,7 @@ pub fn extract_terms_from_text(
     term_counts
         .into_iter()
         .map(|(term, freq)| {
-            let mut wt = WeightedTerm::new(term, source);
+            let mut wt = WeightedTerm::new(term, source, weight);
             // Set frequency (we already counted, so set directly instead of incrementing)
             wt.frequency = freq;
             wt
@@ -73,7 +79,6 @@ pub fn extract_terms_from_text(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::TermSource;
 
     #[test]
     fn tokenize_basic() {
@@ -99,7 +104,7 @@ mod test {
     #[test]
     fn extract_terms_filters_stopwords() {
         let stopwords = Stopwords::new();
-        let terms = extract_terms_from_text("the quick brown fox", TermSource::Body, &stopwords, 2);
+        let terms = extract_terms_from_text("the quick brown fox", "body", 1.0, &stopwords, 2);
 
         let term_strings: Vec<_> = terms.iter().map(|t| t.term.as_str()).collect();
         assert!(!term_strings.contains(&"the"));
@@ -111,7 +116,7 @@ mod test {
     #[test]
     fn extract_terms_counts_frequency() {
         let stopwords = Stopwords::new();
-        let terms = extract_terms_from_text("rust rust rust code", TermSource::Body, &stopwords, 2);
+        let terms = extract_terms_from_text("rust rust rust code", "body", 1.0, &stopwords, 2);
 
         let rust_term = terms.iter().find(|t| t.term == "rust").unwrap();
         assert_eq!(rust_term.frequency, 3);

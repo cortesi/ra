@@ -6,7 +6,10 @@
 use std::path::Path;
 
 use super::ContentParser;
-use crate::{Stopwords, TermSource, WeightedTerm, parser::extract_terms_from_text};
+use crate::{Stopwords, WeightedTerm, parser::extract_terms_from_text};
+
+/// Weight for body text.
+const WEIGHT_BODY: f32 = 1.0;
 
 /// Parser for plain text files.
 ///
@@ -53,7 +56,8 @@ impl ContentParser for TextParser {
     fn parse(&self, _path: &Path, content: &str) -> Vec<WeightedTerm> {
         extract_terms_from_text(
             content,
-            TermSource::Body,
+            "body",
+            WEIGHT_BODY,
             &self.stopwords,
             self.min_term_length,
         )
@@ -108,7 +112,7 @@ mod test {
         let terms = parser.parse(Path::new("test.txt"), "encryption decryption");
 
         for term in &terms {
-            assert_eq!(term.source, TermSource::Body);
+            assert_eq!(term.source, "body");
             assert_eq!(term.weight, 1.0);
         }
     }

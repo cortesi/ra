@@ -85,11 +85,11 @@ pub fn build_query(terms: Vec<RankedTerm>, limit: usize) -> Option<ContextQuery>
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{TermSource, WeightedTerm};
+    use crate::WeightedTerm;
 
     fn make_ranked_term(term: &str, score: f32) -> RankedTerm {
         RankedTerm {
-            term: WeightedTerm::new(term.to_string(), TermSource::Body),
+            term: WeightedTerm::new(term.to_string(), "body", 1.0),
             idf: 1.0,
             score,
         }

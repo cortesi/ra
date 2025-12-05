@@ -168,7 +168,6 @@ mod test {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::TermSource;
 
     /// Mock IDF provider for testing.
     ///
@@ -342,13 +341,13 @@ mod test {
             WeightedTerm {
                 term: "test".to_string(),
                 weight: 1.0,
-                source: TermSource::Body,
+                source: "body".to_string(),
                 frequency: 1,
             },
             WeightedTerm {
                 term: "test".to_string(),
                 weight: 3.0,
-                source: TermSource::MarkdownH1,
+                source: "md:h1".to_string(),
                 frequency: 2,
             },
         ];
@@ -359,7 +358,7 @@ mod test {
         let term = &merged[0];
         assert_eq!(term.term, "test");
         assert_eq!(term.weight, 3.0);
-        assert_eq!(term.source, TermSource::MarkdownH1);
+        assert_eq!(term.source, "md:h1");
         assert_eq!(term.frequency, 3);
     }
 

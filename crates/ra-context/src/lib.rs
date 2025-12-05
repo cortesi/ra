@@ -28,7 +28,12 @@ use std::{
 pub use analyze::{AnalysisConfig, ContextAnalysis, analyze_context};
 use ra_config::{CompiledContextPatterns, ContextSettings};
 pub use stopwords::Stopwords;
-pub use term::{TermSource, WeightedTerm};
+pub use term::WeightedTerm;
+
+/// Weight for filename path components.
+const WEIGHT_PATH_FILENAME: f32 = 4.0;
+/// Weight for directory path components.
+const WEIGHT_PATH_DIRECTORY: f32 = 3.0;
 
 /// Maximum bytes to read for content sampling.
 const DEFAULT_SAMPLE_SIZE: usize = 50_000;
@@ -178,8 +183,8 @@ impl ContextAnalyzer {
 ///
 /// Path components are split on common delimiters and assigned weights based on
 /// their position:
-/// - Filename components: weight 4.0
-/// - Directory components: weight 3.0
+/// - Filename components: weight 4.0 (source: "path:filename")
+/// - Directory components: weight 3.0 (source: "path:dir")
 ///
 /// Terms are filtered against stopwords and deduplicated.
 pub fn extract_path_terms(
@@ -197,10 +202,10 @@ pub fn extract_path_terms(
         {
             // Last component is the filename
             let is_filename = idx == num_components - 1;
-            let source = if is_filename {
-                TermSource::PathFilename
+            let (source, weight) = if is_filename {
+                ("path:filename", WEIGHT_PATH_FILENAME)
             } else {
-                TermSource::PathDirectory
+                ("path:dir", WEIGHT_PATH_DIRECTORY)
             };
 
             // Split on common delimiters
@@ -217,12 +222,12 @@ pub fn extract_path_terms(
                     {
                         existing.increment();
                         // Keep the higher weight source
-                        if source.default_weight() > existing.source.default_weight() {
-                            existing.source = source;
-                            existing.weight = source.default_weight();
+                        if weight > existing.weight {
+                            existing.source = source.to_string();
+                            existing.weight = weight;
                         }
                     } else {
-                        terms.push(WeightedTerm::new(part, source));
+                        terms.push(WeightedTerm::new(part, source, weight));
                     }
                 }
             }
@@ -388,20 +393,20 @@ mod test {
 
         // Directory terms get directory weight
         let api = find_term("api").unwrap();
-        assert_eq!(api.source, TermSource::PathDirectory);
+        assert_eq!(api.source, "path:dir");
         assert_eq!(api.weight, 3.0);
 
         let auth = find_term("authentication").unwrap();
-        assert_eq!(auth.source, TermSource::PathDirectory);
+        assert_eq!(auth.source, "path:dir");
         assert_eq!(auth.weight, 3.0);
 
         // Filename terms get filename weight
         let oauth = find_term("oauth").unwrap();
-        assert_eq!(oauth.source, TermSource::PathFilename);
+        assert_eq!(oauth.source, "path:filename");
         assert_eq!(oauth.weight, 4.0);
 
         let handler = find_term("handler").unwrap();
-        assert_eq!(handler.source, TermSource::PathFilename);
+        assert_eq!(handler.source, "path:filename");
         assert_eq!(handler.weight, 4.0);
     }
 
@@ -436,7 +441,7 @@ mod test {
 
         // Should have filename weight (higher) and frequency 2
         let oauth = oauth_terms[0];
-        assert_eq!(oauth.source, TermSource::PathFilename);
+        assert_eq!(oauth.source, "path:filename");
         assert_eq!(oauth.weight, 4.0);
         assert_eq!(oauth.frequency, 2);
     }

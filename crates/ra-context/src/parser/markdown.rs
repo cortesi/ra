@@ -8,7 +8,16 @@ use std::path::Path;
 use ra_document::{HeadingInfo, extract_headings, parse_frontmatter};
 
 use super::ContentParser;
-use crate::{Stopwords, TermSource, WeightedTerm, parser::extract_terms_from_text};
+use crate::{Stopwords, WeightedTerm, parser::extract_terms_from_text};
+
+/// Weight for H1 headings.
+const WEIGHT_H1: f32 = 3.0;
+/// Weight for H2-H3 headings.
+const WEIGHT_H2_H3: f32 = 2.0;
+/// Weight for H4-H6 headings.
+const WEIGHT_H4_H6: f32 = 1.5;
+/// Weight for body text.
+const WEIGHT_BODY: f32 = 1.0;
 
 /// Parser for markdown files.
 ///
@@ -45,12 +54,12 @@ impl MarkdownParser {
         }
     }
 
-    /// Determines the term source based on heading level.
-    fn heading_source(level: u8) -> TermSource {
+    /// Returns the source label and weight for a heading level.
+    fn heading_weight(level: u8) -> (&'static str, f32) {
         match level {
-            1 => TermSource::MarkdownH1,
-            2 | 3 => TermSource::MarkdownH2H3,
-            _ => TermSource::MarkdownH4H6,
+            1 => ("md:h1", WEIGHT_H1),
+            2 | 3 => ("md:h2-h3", WEIGHT_H2_H3),
+            _ => ("md:h4-h6", WEIGHT_H4_H6),
         }
     }
 
@@ -59,10 +68,11 @@ impl MarkdownParser {
         let mut terms = Vec::new();
 
         for heading in headings {
-            let source = Self::heading_source(heading.level);
+            let (source, weight) = Self::heading_weight(heading.level);
             let heading_terms = extract_terms_from_text(
                 &heading.text,
                 source,
+                weight,
                 &self.stopwords,
                 self.min_term_length,
             );
@@ -125,7 +135,8 @@ impl ContentParser for MarkdownParser {
         // Extract terms from body
         let body_terms = extract_terms_from_text(
             &body,
-            TermSource::Body,
+            "body",
+            WEIGHT_BODY,
             &self.stopwords,
             self.min_term_length,
         );
@@ -159,7 +170,7 @@ mod test {
         assert!(auth_term.is_some());
 
         let auth = auth_term.unwrap();
-        assert_eq!(auth.source, TermSource::MarkdownH1);
+        assert_eq!(auth.source, "md:h1");
         assert_eq!(auth.weight, 3.0);
     }
 
@@ -176,19 +187,19 @@ mod test {
         let find_term = |name: &str| terms.iter().find(|t| t.term == name);
 
         let primary = find_term("primary").unwrap();
-        assert_eq!(primary.source, TermSource::MarkdownH1);
+        assert_eq!(primary.source, "md:h1");
         assert_eq!(primary.weight, 3.0);
 
         let secondary = find_term("secondary").unwrap();
-        assert_eq!(secondary.source, TermSource::MarkdownH2H3);
+        assert_eq!(secondary.source, "md:h2-h3");
         assert_eq!(secondary.weight, 2.0);
 
         let tertiary = find_term("tertiary").unwrap();
-        assert_eq!(tertiary.source, TermSource::MarkdownH2H3);
+        assert_eq!(tertiary.source, "md:h2-h3");
         assert_eq!(tertiary.weight, 2.0);
 
         let quaternary = find_term("quaternary").unwrap();
-        assert_eq!(quaternary.source, TermSource::MarkdownH4H6);
+        assert_eq!(quaternary.source, "md:h4-h6");
         assert_eq!(quaternary.weight, 1.5);
     }
 
@@ -202,7 +213,7 @@ mod test {
         assert!(k8s_term.is_some());
 
         let k8s = k8s_term.unwrap();
-        assert_eq!(k8s.source, TermSource::Body);
+        assert_eq!(k8s.source, "body");
         assert_eq!(k8s.weight, 1.0);
     }
 
@@ -244,12 +255,12 @@ Body text here.
     }
 
     #[test]
-    fn heading_source_classification() {
-        assert_eq!(MarkdownParser::heading_source(1), TermSource::MarkdownH1);
-        assert_eq!(MarkdownParser::heading_source(2), TermSource::MarkdownH2H3);
-        assert_eq!(MarkdownParser::heading_source(3), TermSource::MarkdownH2H3);
-        assert_eq!(MarkdownParser::heading_source(4), TermSource::MarkdownH4H6);
-        assert_eq!(MarkdownParser::heading_source(5), TermSource::MarkdownH4H6);
-        assert_eq!(MarkdownParser::heading_source(6), TermSource::MarkdownH4H6);
+    fn heading_weight_classification() {
+        assert_eq!(MarkdownParser::heading_weight(1), ("md:h1", 3.0));
+        assert_eq!(MarkdownParser::heading_weight(2), ("md:h2-h3", 2.0));
+        assert_eq!(MarkdownParser::heading_weight(3), ("md:h2-h3", 2.0));
+        assert_eq!(MarkdownParser::heading_weight(4), ("md:h4-h6", 1.5));
+        assert_eq!(MarkdownParser::heading_weight(5), ("md:h4-h6", 1.5));
+        assert_eq!(MarkdownParser::heading_weight(6), ("md:h4-h6", 1.5));
     }
 }
