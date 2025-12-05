@@ -25,7 +25,7 @@ pub use parse::{
     RawConfig, RawContextRule, RawContextSettings, RawSearchSettings, RawSettings, RawTree,
     is_root_config, parse_config, parse_config_file, parse_config_str,
 };
-pub use patterns::{CompiledContextPatterns, CompiledPatterns};
+pub use patterns::{CompiledContextPatterns, CompiledContextRules, CompiledPatterns, MatchedRules};
 pub use resolve::resolve_tree_path;
 use serde::{Deserialize, Serialize};
 pub use templates::{global_template, local_template};
