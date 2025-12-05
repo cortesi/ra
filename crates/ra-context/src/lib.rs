@@ -13,7 +13,6 @@
 
 mod analyze;
 pub mod parser;
-pub mod phrase;
 pub mod query;
 pub mod rank;
 mod stopwords;

@@ -17,7 +17,7 @@ use tantivy::{
     Index, TantivyDocument, Term,
     collector::{Count, TopDocs},
     directory::MmapDirectory,
-    query::{AllQuery, BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery},
+    query::{AllQuery, BooleanQuery, BoostQuery, Occur, Query, TermQuery},
     schema::{Field, IndexRecordOption, Value},
     snippet::SnippetGenerator,
     tokenizer::{TextAnalyzer, TokenStream},
@@ -1383,73 +1383,6 @@ impl Searcher {
         Ok(Some(idf))
     }
 
-    /// Checks if a phrase exists in the index.
-    ///
-    /// A phrase exists if all terms appear adjacent to each other in the body field
-    /// of at least one document. Terms are tokenized and stemmed using the index's
-    /// analyzer before lookup.
-    ///
-    /// # Arguments
-    /// * `phrase` - The words of the phrase in order
-    ///
-    /// # Returns
-    /// `true` if the phrase exists in at least one document, `false` otherwise.
-    pub fn phrase_exists(&self, phrase: &[&str]) -> Result<bool, IndexError> {
-        self.phrase_exists_in_trees(phrase, &[])
-    }
-
-    /// Checks if a phrase exists in the index, optionally filtered to specific trees.
-    ///
-    /// When `trees` is empty, searches the entire index.
-    /// When `trees` contains tree names, only searches documents in those trees.
-    pub fn phrase_exists_in_trees(
-        &self,
-        phrase: &[&str],
-        trees: &[String],
-    ) -> Result<bool, IndexError> {
-        if phrase.is_empty() {
-            return Ok(false);
-        }
-
-        if phrase.len() == 1 {
-            // Single word: check if it exists in the (filtered) index
-            return Ok(self.term_idf_in_trees(phrase[0], trees)?.is_some());
-        }
-
-        // Build a phrase query using Tantivy's PhraseQuery
-        let reader = self
-            .index
-            .reader()
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-        let searcher = reader.searcher();
-
-        // Tokenize and stem each word in the phrase
-        let mut stemmed_terms: Vec<Term> = Vec::new();
-        for word in phrase {
-            let mut analyzer = self.analyzer.clone();
-            let mut stream = analyzer.token_stream(word);
-            if let Some(token) = stream.next() {
-                stemmed_terms.push(Term::from_field_text(self.schema.body, &token.text));
-            } else {
-                // If a word doesn't tokenize, the phrase can't exist
-                return Ok(false);
-            }
-        }
-
-        // Create phrase query
-        let phrase_query: Box<dyn Query> = Box::new(PhraseQuery::new(stemmed_terms));
-
-        // Apply tree filter if specified
-        let query = self.apply_tree_filter(phrase_query, trees);
-
-        // Check if any documents match
-        let count = searcher
-            .search(&query, &Count)
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-
-        Ok(count > 0)
-    }
-
     /// Retrieves a chunk by its exact ID.
     ///
     /// # Arguments
@@ -1668,7 +1601,7 @@ pub fn open_searcher(config: &ra_config::Config) -> Result<Searcher, IndexError>
     Searcher::open_with_config(&index_dir, config)
 }
 
-use ra_context::{phrase::PhraseValidator, rank::IdfProvider};
+use ra_context::rank::IdfProvider;
 
 impl IdfProvider for Searcher {
     fn idf(&self, term: &str) -> Option<f32> {
@@ -1677,14 +1610,7 @@ impl IdfProvider for Searcher {
     }
 }
 
-impl PhraseValidator for Searcher {
-    fn phrase_exists(&self, phrase: &[&str]) -> bool {
-        // Use the Searcher's phrase_exists method, defaulting to false on error
-        Self::phrase_exists(self, phrase).unwrap_or(false)
-    }
-}
-
-/// A wrapper around `Searcher` that filters IDF and phrase lookups to specific trees.
+/// A wrapper around `Searcher` that filters IDF lookups to specific trees.
 ///
 /// Use this when you need to compute term relevance only within certain document trees,
 /// such as when running context analysis with `--tree` filters.
@@ -1708,14 +1634,6 @@ impl IdfProvider for TreeFilteredSearcher<'_> {
             .term_idf_in_trees(term, &self.trees)
             .ok()
             .flatten()
-    }
-}
-
-impl PhraseValidator for TreeFilteredSearcher<'_> {
-    fn phrase_exists(&self, phrase: &[&str]) -> bool {
-        self.searcher
-            .phrase_exists_in_trees(phrase, &self.trees)
-            .unwrap_or(false)
     }
 }
 
@@ -2739,83 +2657,5 @@ mod test {
             (idf_programming - idf_programs).abs() < 0.1,
             "stemmed variants should have similar IDF (programming={idf_programming}, programs={idf_programs})"
         );
-    }
-
-    #[test]
-    fn phrase_exists_finds_adjacent_terms() {
-        let temp = TempDir::new().unwrap();
-        create_test_index(&temp);
-
-        // "systems programming" appears in the test index
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
-
-        let exists = searcher.phrase_exists(&["systems", "programming"]).unwrap();
-        assert!(exists, "phrase 'systems programming' should exist");
-    }
-
-    #[test]
-    fn phrase_exists_rejects_nonadjacent_terms() {
-        let temp = TempDir::new().unwrap();
-        create_test_index(&temp);
-
-        // "rust" and "safety" both appear but not adjacent
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
-
-        let exists = searcher.phrase_exists(&["rust", "safety"]).unwrap();
-        assert!(
-            !exists,
-            "phrase 'rust safety' should not exist (not adjacent)"
-        );
-    }
-
-    #[test]
-    fn phrase_exists_handles_empty() {
-        let temp = TempDir::new().unwrap();
-        create_test_index(&temp);
-
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
-
-        let exists = searcher.phrase_exists(&[]).unwrap();
-        assert!(!exists, "empty phrase should not exist");
-    }
-
-    #[test]
-    fn phrase_exists_single_word() {
-        let temp = TempDir::new().unwrap();
-        create_test_index(&temp);
-
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
-
-        // "rust" exists in the index
-        let exists = searcher.phrase_exists(&["rust"]).unwrap();
-        assert!(exists, "single word 'rust' should exist");
-
-        // "zzzznonexistent" doesn't exist
-        let exists = searcher.phrase_exists(&["zzzznonexistent"]).unwrap();
-        assert!(!exists, "single word 'zzzznonexistent' should not exist");
-    }
-
-    #[test]
-    fn phrase_exists_applies_stemming() {
-        let temp = TempDir::new().unwrap();
-        create_test_index(&temp);
-
-        // "systems programming" with stemming variations
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
-
-        // "system" stems same as "systems"
-        let exists = searcher.phrase_exists(&["system", "programming"]).unwrap();
-        assert!(exists, "stemmed phrase should match");
-    }
-
-    #[test]
-    fn phrase_exists_unknown_phrase() {
-        let temp = TempDir::new().unwrap();
-        create_test_index(&temp);
-
-        let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
-
-        let exists = searcher.phrase_exists(&["quantum", "computing"]).unwrap();
-        assert!(!exists, "unknown phrase should not exist");
     }
 }

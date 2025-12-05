@@ -1391,11 +1391,9 @@ fn cmd_context(
     let analysis_config = AnalysisConfig {
         max_terms,
         min_term_length: 3,
-        max_phrase_candidates: 20,
-        max_phrases: 5,
     };
 
-    // Use tree-filtered searcher for IDF/phrase lookups when trees are specified
+    // Use tree-filtered searcher for IDF lookups when trees are specified
     let filtered_searcher = TreeFilteredSearcher::new(&searcher, trees.to_vec());
 
     let mut analyses: Vec<(String, ContextAnalysis)> = Vec::new();
@@ -1423,14 +1421,8 @@ fn cmd_context(
             }
         };
 
-        // Analyze using the tree-filtered searcher for IDF and phrase validation
-        let analysis = analyze_context(
-            path,
-            &content,
-            &filtered_searcher,
-            &filtered_searcher,
-            &analysis_config,
-        );
+        // Analyze using the tree-filtered searcher for IDF lookups
+        let analysis = analyze_context(path, &content, &filtered_searcher, &analysis_config);
 
         if !analysis.is_empty() {
             analyses.push((file_str.clone(), analysis));
@@ -1519,14 +1511,6 @@ fn output_context_explain(analyses: &[(String, ContextAnalysis)], json: bool) ->
                             score: rt.score,
                         })
                         .collect(),
-                    phrases: analysis
-                        .phrases
-                        .iter()
-                        .map(|p| JsonPhraseAnalysis {
-                            phrase: p.as_string(),
-                            score: p.score,
-                        })
-                        .collect(),
                     query: analysis.query_string().map(|s| s.to_string()),
                 })
                 .collect(),
@@ -1569,19 +1553,6 @@ fn output_context_explain(analyses: &[(String, ContextAnalysis)], json: bool) ->
             }
             println!();
 
-            // Show phrases
-            if !analysis.phrases.is_empty() {
-                println!("{}", subheader("Phrases:"));
-                for phrase in &analysis.phrases {
-                    println!(
-                        "  \"{}\" {}",
-                        phrase.as_string(),
-                        dim(&format!("(score: {:.2})", phrase.score))
-                    );
-                }
-                println!();
-            }
-
             // Show generated query as AST tree
             println!("{}", subheader("Generated query:"));
             if let Some(expr) = analysis.query_expr() {
@@ -1614,8 +1585,6 @@ struct JsonFileAnalysis {
     file: String,
     /// Ranked terms with scores.
     terms: Vec<JsonTermAnalysis>,
-    /// Validated phrases.
-    phrases: Vec<JsonPhraseAnalysis>,
     /// Generated query string.
     query: Option<String>,
 }
@@ -1634,15 +1603,6 @@ struct JsonTermAnalysis {
     /// IDF value from the index.
     idf: f32,
     /// Final TF-IDF score.
-    score: f32,
-}
-
-/// JSON output for a phrase analysis.
-#[derive(Serialize)]
-struct JsonPhraseAnalysis {
-    /// The phrase text.
-    phrase: String,
-    /// Combined score.
     score: f32,
 }
 

@@ -6,7 +6,6 @@
 //! - Path term extraction with source-based weights
 //! - Content parsing (markdown, text) with structural weights
 //! - TF-IDF ranking using the search index
-//! - Phrase detection and validation
 //! - Query construction with boosted terms
 
 use std::path::Path;
@@ -16,10 +15,6 @@ use ra_query::QueryExpr;
 use crate::{
     Stopwords, WeightedTerm, extract_path_terms,
     parser::{ContentParser, MarkdownParser, TextParser},
-    phrase::{
-        PhraseValidator, ValidatedPhrase, extract_bigrams, extract_trigrams, promote_phrases,
-        validate_phrases,
-    },
     query::{self, ContextQuery, DEFAULT_TERM_LIMIT},
     rank::{IdfProvider, RankedTerm, rank_terms},
 };
@@ -31,10 +26,6 @@ pub struct AnalysisConfig {
     pub max_terms: usize,
     /// Minimum term length for extraction.
     pub min_term_length: usize,
-    /// Maximum number of phrase candidates to consider.
-    pub max_phrase_candidates: usize,
-    /// Maximum number of phrases to include in the final query.
-    pub max_phrases: usize,
 }
 
 impl Default for AnalysisConfig {
@@ -42,8 +33,6 @@ impl Default for AnalysisConfig {
         Self {
             max_terms: DEFAULT_TERM_LIMIT,
             min_term_length: 3,
-            max_phrase_candidates: 20,
-            max_phrases: 5,
         }
     }
 }
@@ -55,8 +44,6 @@ pub struct ContextAnalysis {
     pub terms: Vec<WeightedTerm>,
     /// Ranked terms after TF-IDF scoring.
     pub ranked_terms: Vec<RankedTerm>,
-    /// Validated phrases found in the index.
-    pub phrases: Vec<ValidatedPhrase>,
     /// The constructed context query (if any terms were extracted).
     pub query: Option<ContextQuery>,
 }
@@ -84,28 +71,24 @@ impl ContextAnalysis {
 /// 1. Extracts weighted terms from the file path
 /// 2. Parses file content (markdown headings get higher weights)
 /// 3. Ranks terms using TF-IDF with IDF values from the search index
-/// 4. Detects and validates phrases against the index
-/// 5. Constructs a boosted OR query from the top terms/phrases
+/// 4. Constructs a boosted OR query from the top terms
 ///
 /// # Arguments
 /// * `path` - Path to the file being analyzed (used for path term extraction)
 /// * `content` - Content of the file
 /// * `idf_provider` - Source for IDF values (typically the search index)
-/// * `phrase_validator` - Validator for checking if phrases exist in the index
 /// * `config` - Analysis configuration
 ///
 /// # Returns
-/// A `ContextAnalysis` containing extracted terms, ranked terms, phrases, and the query.
-pub fn analyze_context<I, P>(
+/// A `ContextAnalysis` containing extracted terms, ranked terms, and the query.
+pub fn analyze_context<I>(
     path: &Path,
     content: &str,
     idf_provider: &I,
-    phrase_validator: &P,
     config: &AnalysisConfig,
 ) -> ContextAnalysis
 where
     I: IdfProvider,
-    P: PhraseValidator,
 {
     let stopwords = Stopwords::new();
 
@@ -123,7 +106,6 @@ where
         return ContextAnalysis {
             terms: Vec::new(),
             ranked_terms: Vec::new(),
-            phrases: Vec::new(),
             query: None,
         };
     }
@@ -131,29 +113,12 @@ where
     // Rank terms using TF-IDF
     let ranked_terms = rank_terms(terms.clone(), idf_provider);
 
-    // Extract and validate phrases
-    let bigrams = extract_bigrams(&ranked_terms, config.max_phrase_candidates);
-    let trigrams = extract_trigrams(&ranked_terms, config.max_phrase_candidates / 2);
-
-    let mut candidates = bigrams;
-    candidates.extend(trigrams);
-
-    let validated_phrases = validate_phrases(candidates, phrase_validator);
-
-    // Promote phrases (remove consumed terms)
-    let promoted = promote_phrases(ranked_terms.clone(), validated_phrases, config.max_phrases);
-
-    // Build the final query
-    let query = query::build_query(
-        promoted.remaining_terms,
-        promoted.phrases.clone(),
-        config.max_terms,
-    );
+    // Build the final query from ranked terms
+    let query = query::build_query(ranked_terms.clone(), config.max_terms);
 
     ContextAnalysis {
         terms,
         ranked_terms,
-        phrases: promoted.phrases,
         query,
     }
 }
@@ -231,40 +196,13 @@ mod test {
         }
     }
 
-    /// Mock phrase validator for testing.
-    struct MockValidator {
-        valid_phrases: Vec<Vec<String>>,
-    }
-
-    impl MockValidator {
-        fn new() -> Self {
-            Self {
-                valid_phrases: Vec::new(),
-            }
-        }
-
-        fn with_phrase(mut self, words: &[&str]) -> Self {
-            self.valid_phrases
-                .push(words.iter().map(|s| s.to_string()).collect());
-            self
-        }
-    }
-
-    impl PhraseValidator for MockValidator {
-        fn phrase_exists(&self, phrase: &[&str]) -> bool {
-            let phrase_vec: Vec<String> = phrase.iter().map(|s| s.to_string()).collect();
-            self.valid_phrases.contains(&phrase_vec)
-        }
-    }
-
     #[test]
     fn analyze_empty_content() {
         let idf = MockIdf::new();
-        let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
         // Use a path with only short components that get filtered
-        let analysis = analyze_context(Path::new("a.b"), "", &idf, &validator, &config);
+        let analysis = analyze_context(Path::new("a.b"), "", &idf, &config);
 
         assert!(analysis.is_empty());
         assert!(analysis.query.is_none());
@@ -273,14 +211,12 @@ mod test {
     #[test]
     fn analyze_extracts_path_terms() {
         let idf = MockIdf::new();
-        let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
         let analysis = analyze_context(
             Path::new("src/auth/oauth_handler.rs"),
             "// empty file",
             &idf,
-            &validator,
             &config,
         );
 
@@ -292,14 +228,12 @@ mod test {
     #[test]
     fn analyze_extracts_content_terms() {
         let idf = MockIdf::new();
-        let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
         let analysis = analyze_context(
             Path::new("doc.md"),
             "# Authentication Guide\n\nThis explains OAuth authentication.",
             &idf,
-            &validator,
             &config,
         );
 
@@ -313,14 +247,12 @@ mod test {
         let idf = MockIdf::new()
             .with_term("kubernetes", 5.0)
             .with_term("container", 1.0);
-        let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
         let analysis = analyze_context(
             Path::new("a.b"), // minimal path to avoid path term interference
             "kubernetes container container container",
             &idf,
-            &validator,
             &config,
         );
 
@@ -338,14 +270,12 @@ mod test {
             .with_term("login", 2.0)
             .with_term("authentication", 2.0)
             .with_term("logic", 2.0);
-        let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
         let analysis = analyze_context(
             Path::new("auth/login.rs"),
             "authentication logic here",
             &idf,
-            &validator,
             &config,
         );
 
@@ -356,47 +286,8 @@ mod test {
     }
 
     #[test]
-    fn analyze_detects_phrases() {
-        // Give both terms high IDF so they rank highly
-        let idf = MockIdf::new()
-            .with_term("kubernetes", 5.0)
-            .with_term("deployment", 5.0);
-        // Note: phrase order depends on ranking order, which is alphabetical for equal scores
-        // "deployment" comes before "kubernetes" alphabetically, so the phrase is ["deployment", "kubernetes"]
-        let validator = MockValidator::new().with_phrase(&["deployment", "kubernetes"]);
-        let config = AnalysisConfig {
-            max_phrase_candidates: 50,
-            ..Default::default()
-        };
-
-        // Use a minimal path (single char) to avoid path term extraction
-        let analysis = analyze_context(
-            Path::new("x"),
-            "kubernetes deployment strategies for kubernetes deployment",
-            &idf,
-            &validator,
-            &config,
-        );
-
-        // Debug output
-        let term_info: Vec<_> = analysis
-            .ranked_terms
-            .iter()
-            .map(|t| (&t.term.term, t.term.source, t.score))
-            .collect();
-
-        // Should have detected the phrase
-        assert!(
-            !analysis.phrases.is_empty(),
-            "expected phrases but got none. ranked_terms: {:?}",
-            term_info
-        );
-    }
-
-    #[test]
     fn analyze_merges_duplicate_terms() {
         let idf = MockIdf::new();
-        let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
         // "authentication" appears in both path and content
@@ -404,7 +295,6 @@ mod test {
             Path::new("authentication/service.rs"),
             "authentication service authentication",
             &idf,
-            &validator,
             &config,
         );
 
@@ -426,19 +316,15 @@ mod test {
     #[test]
     fn analyze_respects_config() {
         let idf = MockIdf::new();
-        let validator = MockValidator::new();
         let config = AnalysisConfig {
             max_terms: 2,
             min_term_length: 8, // 8 chars minimum
-            max_phrase_candidates: 10,
-            max_phrases: 2,
         };
 
         let analysis = analyze_context(
             Path::new("a.b"), // minimal path
             "short medium longerterm longest",
             &idf,
-            &validator,
             &config,
         );
 
@@ -484,14 +370,12 @@ mod test {
             .with_term("test", 2.0)
             .with_term("title", 2.0)
             .with_term("content", 2.0);
-        let validator = MockValidator::new();
         let config = AnalysisConfig::default();
 
         let analysis = analyze_context(
             Path::new("test.md"),
             "# Title\n\nContent here",
             &idf,
-            &validator,
             &config,
         );
 
