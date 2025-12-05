@@ -17,8 +17,7 @@ use ra_config::{
 };
 use ra_document::parse_file;
 use ra_highlight::{
-    Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader, theme,
-    warning,
+    Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader, theme, warning,
 };
 use ra_index::{
     AggregatedSearchResult, ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats,
@@ -492,6 +491,29 @@ struct JsonQueryResults {
 struct JsonSearchOutput {
     /// Results grouped by query.
     queries: Vec<JsonQueryResults>,
+}
+
+/// Rendering style for aggregated search results.
+#[derive(Clone, Copy)]
+enum DisplayMode {
+    /// Full content output.
+    Full,
+    /// Header-only listing output.
+    List,
+    /// Matches-only line output.
+    Matches,
+}
+
+/// Retrieves the full body for a search result, falling back to the indexed body.
+fn read_full_body(result: &AggregatedSearchResult, searcher: &Searcher) -> String {
+    searcher
+        .read_full_content(
+            result.tree(),
+            result.path(),
+            result.byte_start(),
+            result.byte_end(),
+        )
+        .unwrap_or_else(|_| result.body().to_string())
 }
 
 /// Ensures the index is fresh, triggering an update if needed.
@@ -1127,132 +1149,86 @@ fn output_aggregated_results(
             }
         }
     } else if list {
-        if results.is_empty() {
-            println!("{}", dim("No results found."));
-        } else {
-            let mut total_words = 0;
-            let mut total_chars = 0;
-            for result in results {
-                // Read full content from source file
-                let full_body = searcher
-                    .read_full_content(
-                        result.tree(),
-                        result.path(),
-                        result.byte_start(),
-                        result.byte_end(),
-                    )
-                    .unwrap_or_else(|_| result.body().to_string());
-                if verbose > 0 {
-                    total_words += full_body.split_whitespace().count();
-                    total_chars += full_body.len();
-                }
-                print!(
-                    "{}",
-                    format_aggregated_result_list(result, verbose, &full_body)
-                );
-            }
-            if verbose > 0 {
-                println!(
-                    "{}",
-                    dim(&format!(
-                        "─── Total: {} results, {} words, {} chars ───",
-                        results.len(),
-                        total_words,
-                        total_chars
-                    ))
-                );
-            }
-        }
-        println!();
+        return output_text_results(results, verbose, searcher, DisplayMode::List);
     } else if matches {
-        // Matches-only mode: show only lines containing matches
-        if results.is_empty() {
-            println!("{}", dim("No results found."));
-        } else {
-            for result in results {
-                let full_body = searcher
-                    .read_full_content(
-                        result.tree(),
-                        result.path(),
-                        result.byte_start(),
-                        result.byte_end(),
-                    )
-                    .unwrap_or_else(|_| result.body().to_string());
-
-                print!(
-                    "{}",
-                    format_aggregated_result_matches(result, verbose, &full_body)
-                );
-            }
-        }
+        return output_text_results(results, verbose, searcher, DisplayMode::Matches);
     } else {
-        // Full content mode
-        if results.is_empty() {
-            println!("{}", dim("No results found."));
-        } else {
-            let mut total_words = 0;
-            let mut total_chars = 0;
-            for result in results {
-                // Read full content from source file
-                let full_body = searcher
-                    .read_full_content(
-                        result.tree(),
-                        result.path(),
-                        result.byte_start(),
-                        result.byte_end(),
-                    )
-                    .unwrap_or_else(|_| result.body().to_string());
-                if verbose > 0 {
-                    total_words += full_body.split_whitespace().count();
-                    total_chars += full_body.len();
-                }
-                print!(
-                    "{}",
-                    format_aggregated_result_full(result, verbose, &full_body)
-                );
-                println!();
-            }
-            if verbose > 0 {
-                println!(
-                    "{}",
-                    dim(&format!(
-                        "─── Total: {} results, {} words, {} chars ───",
-                        results.len(),
-                        total_words,
-                        total_chars
-                    ))
-                );
-            }
-        }
+        return output_text_results(results, verbose, searcher, DisplayMode::Full);
     }
 
     ExitCode::SUCCESS
 }
 
-/// Formats an aggregated search result for full content output.
-///
-/// The `full_body` parameter contains the complete content from byte_start to byte_end,
-/// including all child nodes' content for parent nodes.
-///
-/// Verbosity levels:
-/// - 0: Basic output
-/// - 1 (-v): Add stats, constituents summary, and match term summary
-/// - 2 (-vv): Full match details including field breakdown and term frequencies
-/// - 3+ (-vvv): Adds raw Tantivy score explanation
-fn format_aggregated_result_full(
+/// Renders non-JSON search results for the selected display mode.
+fn output_text_results(
+    results: &[AggregatedSearchResult],
+    verbose: u8,
+    searcher: &Searcher,
+    mode: DisplayMode,
+) -> ExitCode {
+    if results.is_empty() {
+        println!("{}", dim("No results found."));
+        if matches!(mode, DisplayMode::List) {
+            println!();
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    let collect_totals = verbose > 0 && !matches!(mode, DisplayMode::Matches);
+    let mut total_words = 0;
+    let mut total_chars = 0;
+
+    for result in results {
+        let full_body = read_full_body(result, searcher);
+        if collect_totals {
+            total_words += full_body.split_whitespace().count();
+            total_chars += full_body.len();
+        }
+
+        let formatted = format_aggregated_result(result, verbose, &full_body, mode);
+        match mode {
+            DisplayMode::Full => {
+                print!("{formatted}");
+                println!();
+            }
+            _ => print!("{formatted}"),
+        }
+    }
+
+    if collect_totals {
+        println!(
+            "{}",
+            dim(&format!(
+                "─── Total: {} results, {} words, {} chars ───",
+                results.len(),
+                total_words,
+                total_chars
+            ))
+        );
+    }
+
+    if matches!(mode, DisplayMode::List) {
+        println!();
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Formats an aggregated search result for the given display mode.
+fn format_aggregated_result(
     result: &AggregatedSearchResult,
     verbose: u8,
     full_body: &str,
+    mode: DisplayMode,
 ) -> String {
     let mut output = String::new();
 
     let header_id = highlight_id_with_path(result.id(), result.path_match_ranges());
     if verbose > 0 && result.is_aggregated() {
-        let constituents = result.constituents().unwrap();
+        let count = result.constituents().unwrap().len();
         output.push_str(&format!(
             "─── {} [aggregated: {} matches] ───\n",
-            header_id,
-            constituents.len()
+            header_id, count
         ));
     } else {
         output.push_str(&format!("─── {} ───\n", header_id));
@@ -1263,10 +1239,13 @@ fn format_aggregated_result_full(
         result.title(),
         result.title_match_ranges(),
     );
-    output.push_str(&format!("{breadcrumb_line}\n"));
+    if matches!(mode, DisplayMode::Matches) {
+        output.push_str(&format!("{breadcrumb_line}\n\n"));
+    } else {
+        output.push_str(&format!("{breadcrumb_line}\n"));
+    }
 
-    // Show stats only in verbose mode
-    if verbose > 0 {
+    if verbose > 0 && !matches!(mode, DisplayMode::Matches) {
         let word_count = full_body.split_whitespace().count();
         let stats = format!(
             "{} words, {} chars, score {:.2}",
@@ -1277,107 +1256,31 @@ fn format_aggregated_result_full(
         output.push_str(&format!("{}\n", dim(&stats)));
     }
 
-    // Show match details when verbose
     if verbose > 0 {
         output.push_str(&format_match_details(result, verbose));
     }
 
-    if !full_body.is_empty() {
-        let ranges = aggregated_match_ranges(result, full_body);
-        output.push('\n');
-        output.push_str(&format_body(full_body, &ranges));
-        output.push('\n');
+    match mode {
+        DisplayMode::Full => {
+            if !full_body.is_empty() {
+                let ranges = aggregated_match_ranges(result, full_body);
+                output.push('\n');
+                output.push_str(&format_body(full_body, &ranges));
+                output.push('\n');
+            }
+        }
+        DisplayMode::List => output.push('\n'),
+        DisplayMode::Matches => {
+            let ranges = aggregated_match_ranges(result, full_body);
+            if !ranges.is_empty() {
+                let formatted = extract_matching_lines(full_body, &ranges);
+                output.push_str(&formatted);
+                output.push('\n');
+            }
+            output.push('\n');
+        }
     }
 
-    output
-}
-
-/// Formats an aggregated search result for list mode output.
-///
-/// List mode shows only the document header and title - no content snippets.
-fn format_aggregated_result_list(
-    result: &AggregatedSearchResult,
-    verbose: u8,
-    full_body: &str,
-) -> String {
-    let mut output = String::new();
-
-    let header_id = highlight_id_with_path(result.id(), result.path_match_ranges());
-    if verbose > 0 && result.is_aggregated() {
-        let constituents = result.constituents().unwrap();
-        output.push_str(&format!(
-            "─── {} [aggregated: {} matches] ───\n",
-            header_id,
-            constituents.len()
-        ));
-    } else {
-        output.push_str(&format!("─── {} ───\n", header_id));
-    }
-
-    let breadcrumb_line = highlight_breadcrumb_title(
-        result.breadcrumb(),
-        result.title(),
-        result.title_match_ranges(),
-    );
-    output.push_str(&format!("{breadcrumb_line}\n"));
-
-    // Show stats and match details in verbose mode
-    if verbose > 0 {
-        let word_count = full_body.split_whitespace().count();
-        let stats = format!(
-            "{} words, {} chars, score {:.2}",
-            word_count,
-            full_body.len(),
-            result.score()
-        );
-        output.push_str(&format!("{}\n", dim(&stats)));
-        output.push_str(&format_match_details(result, verbose));
-    }
-
-    // List mode: no content - just header and title
-    output.push('\n');
-    output
-}
-
-/// Formats an aggregated search result showing only lines that contain matches.
-fn format_aggregated_result_matches(
-    result: &AggregatedSearchResult,
-    verbose: u8,
-    full_body: &str,
-) -> String {
-    let mut output = String::new();
-
-    let header_id = highlight_id_with_path(result.id(), result.path_match_ranges());
-    if verbose > 0 && result.is_aggregated() {
-        let constituents = result.constituents().unwrap();
-        output.push_str(&format!(
-            "─── {} [aggregated: {} matches] ───\n",
-            header_id,
-            constituents.len()
-        ));
-    } else {
-        output.push_str(&format!("─── {} ───\n", header_id));
-    }
-    let breadcrumb_line = highlight_breadcrumb_title(
-        result.breadcrumb(),
-        result.title(),
-        result.title_match_ranges(),
-    );
-    output.push_str(&format!("{breadcrumb_line}\n\n"));
-
-    // Show match details when verbose
-    if verbose > 0 {
-        output.push_str(&format_match_details(result, verbose));
-    }
-
-    let ranges = aggregated_match_ranges(result, full_body);
-    if !ranges.is_empty() {
-        let formatted = extract_matching_lines(full_body, &ranges);
-        output.push_str(&formatted);
-        output.push('\n');
-    }
-
-    output.push('\n');
     output
 }
 
