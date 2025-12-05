@@ -6,6 +6,7 @@ description = "Context analysis for ra research assistant"
 
 [dependencies]
 ra-config = { path = "../ra-config" }
+stop-words = "0.9.0"
 
 [dev-dependencies]
 tempfile = "3"

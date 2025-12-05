@@ -11,6 +11,8 @@
 
 #![warn(missing_docs)]
 
+mod stopwords;
+
 use std::{
     collections::HashSet,
     fs::File,
@@ -19,6 +21,7 @@ use std::{
 };
 
 use ra_config::{CompiledContextPatterns, ContextSettings};
+pub use stopwords::Stopwords;
 
 /// Maximum bytes to read for content sampling.
 const DEFAULT_SAMPLE_SIZE: usize = 50_000;
