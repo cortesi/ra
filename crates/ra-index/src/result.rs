@@ -15,161 +15,95 @@ pub use super::search::{MatchDetails, SearchCandidate};
 /// represents both cases:
 /// - `Single`: An individual chunk match
 /// - `Aggregated`: A parent node that aggregates multiple child matches
-#[allow(clippy::large_enum_variant)] // Aggregated carries chunk bodies; boxing would add indirection
 #[derive(Debug, Clone)]
 pub enum SearchResult {
     /// A single chunk match.
     Single(SearchCandidate),
     /// An aggregated parent node with constituent matches.
     Aggregated {
-        /// Unique chunk identifier of the parent.
-        id: String,
-        /// Document identifier.
-        doc_id: String,
-        /// Parent chunk identifier (the parent's parent), or None.
-        parent_id: Option<String>,
-        /// Parent chunk title.
-        title: String,
-        /// Tree name.
-        tree: String,
-        /// File path within the tree.
-        path: String,
-        /// Parent chunk body content.
-        body: String,
-        /// Breadcrumb showing hierarchy path.
-        breadcrumb: String,
-        /// Hierarchy depth of the parent.
-        depth: u64,
-        /// Document order index.
-        position: u64,
-        /// Byte offset where content span starts.
-        byte_start: u64,
-        /// Byte offset where content span ends.
-        byte_end: u64,
-        /// Number of siblings including this node.
-        sibling_count: u64,
-        /// Aggregated score (max of constituent scores).
-        score: f32,
-        /// Title match ranges for the parent node.
-        title_match_ranges: Vec<Range<usize>>,
-        /// Path match ranges for the parent node.
-        path_match_ranges: Vec<Range<usize>>,
+        /// The parent node containing all metadata (id, title, body, score, etc.)
+        parent: SearchCandidate,
         /// The constituent matches that were aggregated.
         constituents: Vec<SearchCandidate>,
     },
 }
 
 impl SearchResult {
+    /// Returns the underlying candidate for this result.
+    fn candidate(&self) -> &SearchCandidate {
+        match self {
+            Self::Single(c) | Self::Aggregated { parent: c, .. } => c,
+        }
+    }
+
     /// Returns the unique identifier of this result.
     pub fn id(&self) -> &str {
-        match self {
-            Self::Single(candidate) => &candidate.id,
-            Self::Aggregated { id, .. } => id,
-        }
+        &self.candidate().id
     }
 
     /// Returns the search relevance score of this result.
     pub fn score(&self) -> f32 {
-        match self {
-            Self::Single(candidate) => candidate.score,
-            Self::Aggregated { score, .. } => *score,
-        }
+        self.candidate().score
     }
 
     /// Returns the document identifier.
     pub fn doc_id(&self) -> &str {
-        match self {
-            Self::Single(candidate) => &candidate.doc_id,
-            Self::Aggregated { doc_id, .. } => doc_id,
-        }
+        &self.candidate().doc_id
     }
 
     /// Returns the parent chunk identifier, if any.
     pub fn parent_id(&self) -> Option<&str> {
-        match self {
-            Self::Single(candidate) => candidate.parent_id.as_deref(),
-            Self::Aggregated { parent_id, .. } => parent_id.as_deref(),
-        }
+        self.candidate().parent_id.as_deref()
     }
 
     /// Returns the title.
     pub fn title(&self) -> &str {
-        match self {
-            Self::Single(candidate) => &candidate.title,
-            Self::Aggregated { title, .. } => title,
-        }
+        &self.candidate().title
     }
 
     /// Returns the tree name.
     pub fn tree(&self) -> &str {
-        match self {
-            Self::Single(candidate) => &candidate.tree,
-            Self::Aggregated { tree, .. } => tree,
-        }
+        &self.candidate().tree
     }
 
     /// Returns the file path.
     pub fn path(&self) -> &str {
-        match self {
-            Self::Single(candidate) => &candidate.path,
-            Self::Aggregated { path, .. } => path,
-        }
+        &self.candidate().path
     }
 
     /// Returns the body content.
     pub fn body(&self) -> &str {
-        match self {
-            Self::Single(candidate) => &candidate.body,
-            Self::Aggregated { body, .. } => body,
-        }
+        &self.candidate().body
     }
 
     /// Returns the breadcrumb.
     pub fn breadcrumb(&self) -> &str {
-        match self {
-            Self::Single(candidate) => &candidate.breadcrumb,
-            Self::Aggregated { breadcrumb, .. } => breadcrumb,
-        }
+        &self.candidate().breadcrumb
     }
 
     /// Returns the hierarchy depth.
     pub fn depth(&self) -> u64 {
-        match self {
-            Self::Single(candidate) => candidate.depth,
-            Self::Aggregated { depth, .. } => *depth,
-        }
+        self.candidate().depth
     }
 
     /// Returns the position in document order.
     pub fn position(&self) -> u64 {
-        match self {
-            Self::Single(candidate) => candidate.position,
-            Self::Aggregated { position, .. } => *position,
-        }
+        self.candidate().position
     }
 
     /// Returns the byte start offset.
     pub fn byte_start(&self) -> u64 {
-        match self {
-            Self::Single(candidate) => candidate.byte_start,
-            Self::Aggregated { byte_start, .. } => *byte_start,
-        }
+        self.candidate().byte_start
     }
 
     /// Returns the byte end offset.
     pub fn byte_end(&self) -> u64 {
-        match self {
-            Self::Single(candidate) => candidate.byte_end,
-            Self::Aggregated { byte_end, .. } => *byte_end,
-        }
+        self.candidate().byte_end
     }
 
     /// Returns the sibling count.
     pub fn sibling_count(&self) -> u64 {
-        match self {
-            Self::Single(candidate) => candidate.sibling_count,
-            Self::Aggregated { sibling_count, .. } => *sibling_count,
-        }
+        self.candidate().sibling_count
     }
 
     /// Returns true if this is an aggregated result.
@@ -205,22 +139,12 @@ impl SearchResult {
 
     /// Returns title match ranges.
     pub fn title_match_ranges(&self) -> &[Range<usize>] {
-        match self {
-            Self::Single(candidate) => &candidate.title_match_ranges,
-            Self::Aggregated {
-                title_match_ranges, ..
-            } => title_match_ranges,
-        }
+        &self.candidate().title_match_ranges
     }
 
     /// Returns path match ranges.
     pub fn path_match_ranges(&self) -> &[Range<usize>] {
-        match self {
-            Self::Single(candidate) => &candidate.path_match_ranges,
-            Self::Aggregated {
-                path_match_ranges, ..
-            } => path_match_ranges,
-        }
+        &self.candidate().path_match_ranges
     }
 
     /// Returns body match ranges.
@@ -239,29 +163,15 @@ impl SearchResult {
     /// Creates an aggregated result from a parent node and its constituent matches.
     ///
     /// The score is computed as the maximum score among all constituents.
-    pub fn aggregated(parent: SearchCandidate, constituents: Vec<SearchCandidate>) -> Self {
+    pub fn aggregated(mut parent: SearchCandidate, constituents: Vec<SearchCandidate>) -> Self {
         let max_score = constituents
             .iter()
             .map(|c| c.score)
             .fold(parent.score, f32::max);
+        parent.score = max_score;
 
         Self::Aggregated {
-            id: parent.id,
-            doc_id: parent.doc_id,
-            parent_id: parent.parent_id,
-            title: parent.title,
-            tree: parent.tree,
-            path: parent.path,
-            body: parent.body,
-            breadcrumb: parent.breadcrumb,
-            depth: parent.depth,
-            position: parent.position,
-            byte_start: parent.byte_start,
-            byte_end: parent.byte_end,
-            sibling_count: parent.sibling_count,
-            score: max_score,
-            title_match_ranges: parent.title_match_ranges,
-            path_match_ranges: parent.path_match_ranges,
+            parent,
             constituents,
         }
     }

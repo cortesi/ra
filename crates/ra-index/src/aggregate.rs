@@ -188,8 +188,8 @@ where
                         if let Some((result_or_candidate, _)) = current_results.remove(child_id) {
                             // Flatten: if it's already aggregated, include its constituents
                             match result_or_candidate {
-                                ResultOrCandidate::Candidate(c) => constituents.push(c),
-                                ResultOrCandidate::Result(SearchResult::Single(c)) => {
+                                ResultOrCandidate::Candidate(c)
+                                | ResultOrCandidate::Result(SearchResult::Single(c)) => {
                                     constituents.push(c)
                                 }
                                 ResultOrCandidate::Result(SearchResult::Aggregated {
@@ -208,8 +208,8 @@ where
                         if let Some((existing, _)) = current_results.remove(&parent_id) {
                             aggregated_ids.insert(parent_id.clone(), true);
                             match existing {
-                                ResultOrCandidate::Candidate(c) => c,
-                                ResultOrCandidate::Result(SearchResult::Single(c)) => c,
+                                ResultOrCandidate::Candidate(c)
+                                | ResultOrCandidate::Result(SearchResult::Single(c)) => c,
                                 ResultOrCandidate::Result(SearchResult::Aggregated {
                                     constituents: inner,
                                     ..

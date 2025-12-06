@@ -980,8 +980,11 @@ fn highlight_breadcrumb_title(
 fn aggregated_match_ranges(result: &AggregatedSearchResult, full_body: &str) -> Vec<Range<usize>> {
     match result {
         AggregatedSearchResult::Single(candidate) => candidate.match_ranges.clone(),
-        AggregatedSearchResult::Aggregated { constituents, .. } => {
-            let parent_start = result.byte_start() as usize;
+        AggregatedSearchResult::Aggregated {
+            parent,
+            constituents,
+        } => {
+            let parent_start = parent.byte_start as usize;
             let mut ranges = Vec::new();
             for child in constituents {
                 let shift = child.byte_start as usize;
