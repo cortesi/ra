@@ -5,8 +5,6 @@ use std::{collections::HashMap, ops::Range};
 /// Details about how a term matched in a specific field.
 #[derive(Debug, Clone, Default)]
 pub struct FieldMatch {
-    /// The indexed terms that matched in this field.
-    pub matched_terms: Vec<String>,
     /// Term frequency for each matched term in this field.
     pub term_frequencies: HashMap<String, u32>,
 }

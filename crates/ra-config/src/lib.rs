@@ -75,7 +75,7 @@ pub const DEFAULT_MAX_WORD_LENGTH: usize = 30;
 /// Default sample size for large files (ContextSettings.sample_size).
 pub const DEFAULT_SAMPLE_SIZE: usize = 50_000;
 pub use error::ConfigError;
-pub use patterns::{CompiledContextPatterns, CompiledContextRules, CompiledPatterns, MatchedRules};
+pub use patterns::{CompiledContextRules, CompiledPatterns, MatchedRules};
 use serde::{Deserialize, Serialize};
 pub use templates::{global_template, local_template};
 pub use validate::ConfigWarning;

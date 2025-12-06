@@ -313,41 +313,6 @@ impl CompiledContextRules {
     }
 }
 
-/// Compiled glob patterns for context analysis.
-///
-/// Maps glob patterns to search terms for the `ra context` command.
-/// When a file path matches a pattern, the associated terms are added
-/// to the context search query.
-///
-/// **Deprecated**: Use `CompiledContextRules` instead for full rule support.
-#[derive(Debug)]
-pub struct CompiledContextPatterns {
-    /// The underlying compiled rules.
-    inner: CompiledContextRules,
-}
-
-impl CompiledContextPatterns {
-    /// Compiles context patterns from settings.
-    pub fn compile(settings: &ContextSettings) -> Result<Self, ConfigError> {
-        Ok(Self {
-            inner: CompiledContextRules::compile(settings)?,
-        })
-    }
-
-    /// Returns all search terms that match a given file path.
-    ///
-    /// The path can be relative or absolute; matching is based on the filename
-    /// and path components.
-    pub fn match_terms(&self, path: &Path) -> Vec<String> {
-        self.inner.match_terms(path)
-    }
-
-    /// Returns true if no patterns are configured.
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -490,16 +455,16 @@ mod tests {
         #[test]
         fn test_compile_empty() {
             let settings = crate::ContextSettings::default();
-            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
-            assert!(patterns.is_empty());
+            let rules = CompiledContextRules::compile(&settings).unwrap();
+            assert!(rules.is_empty());
         }
 
         #[test]
         fn test_match_single_pattern() {
             let settings = make_context_settings(vec![(vec!["*.rs"], vec!["rust"])]);
-            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+            let rules = CompiledContextRules::compile(&settings).unwrap();
 
-            let terms = patterns.match_terms(Path::new("src/main.rs"));
+            let terms = rules.match_terms(Path::new("src/main.rs"));
             assert_eq!(terms, vec!["rust"]);
         }
 
@@ -507,9 +472,9 @@ mod tests {
         fn test_match_multiple_terms() {
             let settings =
                 make_context_settings(vec![(vec!["*.tsx"], vec!["typescript", "react"])]);
-            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+            let rules = CompiledContextRules::compile(&settings).unwrap();
 
-            let terms = patterns.match_terms(Path::new("components/Button.tsx"));
+            let terms = rules.match_terms(Path::new("components/Button.tsx"));
             assert!(terms.contains(&"typescript".to_string()));
             assert!(terms.contains(&"react".to_string()));
         }
@@ -520,14 +485,14 @@ mod tests {
                 (vec!["*.rs"], vec!["rust"]),
                 (vec!["src/api/**"], vec!["http", "handlers"]),
             ]);
-            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+            let rules = CompiledContextRules::compile(&settings).unwrap();
 
             // Matches only first rule
-            let terms = patterns.match_terms(Path::new("lib.rs"));
+            let terms = rules.match_terms(Path::new("lib.rs"));
             assert_eq!(terms, vec!["rust"]);
 
             // Matches both rules
-            let terms = patterns.match_terms(Path::new("src/api/handlers.rs"));
+            let terms = rules.match_terms(Path::new("src/api/handlers.rs"));
             assert!(terms.contains(&"rust".to_string()));
             assert!(terms.contains(&"http".to_string()));
             assert!(terms.contains(&"handlers".to_string()));
@@ -537,31 +502,31 @@ mod tests {
         fn test_match_multiple_patterns_in_rule() {
             // A single rule with multiple match patterns
             let settings = make_context_settings(vec![(vec!["*.tsx", "*.jsx"], vec!["react"])]);
-            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+            let rules = CompiledContextRules::compile(&settings).unwrap();
 
-            let terms = patterns.match_terms(Path::new("Button.tsx"));
+            let terms = rules.match_terms(Path::new("Button.tsx"));
             assert_eq!(terms, vec!["react"]);
 
-            let terms = patterns.match_terms(Path::new("Button.jsx"));
+            let terms = rules.match_terms(Path::new("Button.jsx"));
             assert_eq!(terms, vec!["react"]);
 
-            let terms = patterns.match_terms(Path::new("Button.ts"));
+            let terms = rules.match_terms(Path::new("Button.ts"));
             assert!(terms.is_empty());
         }
 
         #[test]
         fn test_no_match() {
             let settings = make_context_settings(vec![(vec!["*.rs"], vec!["rust"])]);
-            let patterns = CompiledContextPatterns::compile(&settings).unwrap();
+            let rules = CompiledContextRules::compile(&settings).unwrap();
 
-            let terms = patterns.match_terms(Path::new("main.py"));
+            let terms = rules.match_terms(Path::new("main.py"));
             assert!(terms.is_empty());
         }
 
         #[test]
         fn test_invalid_pattern() {
             let settings = make_context_settings(vec![(vec!["[invalid"], vec!["test"])]);
-            let result = CompiledContextPatterns::compile(&settings);
+            let result = CompiledContextRules::compile(&settings);
             assert!(result.is_err());
         }
     }

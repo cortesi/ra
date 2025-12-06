@@ -12,7 +12,7 @@ use std::{
 use clap::{Parser, Subcommand, error::ErrorKind};
 use comfy_table::{Cell, Table, presets::UTF8_FULL_CONDENSED};
 use ra_config::{
-    CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, SearchDefaults,
+    CONFIG_FILENAME, CompiledContextRules, Config, ConfigWarning, SearchDefaults,
     discover_config_files, format_path_for_display, global_config_path, global_template,
     local_template,
 };
@@ -780,29 +780,30 @@ fn json_from_aggregated_result(result: &AggregatedSearchResult, list: bool) -> J
         AggregatedSearchResult::Aggregated { .. } => None,
     };
 
+    let c = result.candidate();
     let content_field = if list {
         None
     } else {
-        Some(format!("> {}\n\n{}", result.breadcrumb(), result.body()))
+        Some(format!("> {}\n\n{}", c.breadcrumb, c.body))
     };
 
     JsonSearchResult {
-        id: result.id().to_string(),
-        tree: result.tree().to_string(),
-        path: result.path().to_string(),
-        title: result.title().to_string(),
-        breadcrumb: result.breadcrumb().to_string(),
-        score: result.score(),
+        id: c.id.clone(),
+        tree: c.tree.clone(),
+        path: c.path.clone(),
+        title: c.title.clone(),
+        breadcrumb: c.breadcrumb.clone(),
+        score: c.score,
         snippet: if result.is_aggregated() {
             Some(format!("[Aggregated: {} matches]", constituents_count))
         } else {
             None
         },
-        body: Some(result.body().to_string()),
+        body: Some(c.body.clone()),
         content: content_field,
         match_ranges,
-        title_match_ranges: Some(json_match_ranges(result.title_match_ranges())),
-        path_match_ranges: Some(json_match_ranges(result.path_match_ranges())),
+        title_match_ranges: Some(json_match_ranges(&c.title_match_ranges)),
+        path_match_ranges: Some(json_match_ranges(&c.path_match_ranges)),
     }
 }
 
@@ -820,14 +821,10 @@ enum DisplayMode {
 
 /// Retrieves the full body for a search result, falling back to the indexed body.
 fn read_full_body(result: &AggregatedSearchResult, searcher: &Searcher) -> String {
+    let c = result.candidate();
     searcher
-        .read_full_content(
-            result.tree(),
-            result.path(),
-            result.byte_start(),
-            result.byte_end(),
-        )
-        .unwrap_or_else(|_| result.body().to_string())
+        .read_full_content(&c.tree, &c.path, c.byte_start, c.byte_end)
+        .unwrap_or_else(|_| c.body.clone())
 }
 
 /// Ensures the index is fresh, triggering an update if needed.
@@ -906,7 +903,7 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
         let matched_in_doc: HashSet<&str> = details
             .field_matches
             .values()
-            .flat_map(|fm| fm.matched_terms.iter().map(String::as_str))
+            .flat_map(|fm| fm.term_frequencies.keys().map(String::as_str))
             .collect();
 
         // Always show matched terms at verbosity >= 1
@@ -992,17 +989,14 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
             // Show per-field match details with term frequencies
             if !details.field_matches.is_empty() {
                 for (field, field_match) in &details.field_matches {
-                    if field_match.matched_terms.is_empty() {
+                    if field_match.term_frequencies.is_empty() {
                         continue;
                     }
                     // Show each term with its frequency
                     let term_info: Vec<String> = field_match
-                        .matched_terms
+                        .term_frequencies
                         .iter()
-                        .map(|term| {
-                            let freq = field_match.term_frequencies.get(term).unwrap_or(&1);
-                            format!("{term} x {freq}")
-                        })
+                        .map(|(term, freq)| format!("{term} x {freq}"))
                         .collect();
                     output.push_str(&format!(
                         "  {} {}\n",
@@ -1434,7 +1428,8 @@ fn format_aggregated_result(
 ) -> String {
     let mut output = String::new();
 
-    let header_id = highlight_id_with_path(result.id(), result.path_match_ranges());
+    let c = result.candidate();
+    let header_id = highlight_id_with_path(&c.id, &c.path_match_ranges);
     if verbose > 0 && result.is_aggregated() {
         let count = result.constituents().unwrap().len();
         output.push_str(&format!(
@@ -1445,11 +1440,8 @@ fn format_aggregated_result(
         output.push_str(&format!("─── {} ───\n", header_id));
     }
 
-    let breadcrumb_line = highlight_breadcrumb_title(
-        result.breadcrumb(),
-        result.title(),
-        result.title_match_ranges(),
-    );
+    let breadcrumb_line =
+        highlight_breadcrumb_title(&c.breadcrumb, &c.title, &c.title_match_ranges);
     if matches!(mode, DisplayMode::Matches) {
         output.push_str(&format!("{breadcrumb_line}\n\n"));
     } else {
@@ -1462,7 +1454,7 @@ fn format_aggregated_result(
             "{} words, {} chars, score {:.2}",
             word_count,
             full_body.len(),
-            result.score()
+            c.score
         );
         output.push_str(&format!("{}\n", dim(&stats)));
     }
@@ -2960,9 +2952,9 @@ fn cmd_inspect_ctx(file: &str) -> ExitCode {
         Err(code) => return code,
     };
 
-    // Compile context patterns
-    let patterns = match CompiledContextPatterns::compile(&config.context) {
-        Ok(patterns) => patterns,
+    // Compile context rules
+    let rules = match CompiledContextRules::compile(&config.context) {
+        Ok(rules) => rules,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
@@ -2970,7 +2962,7 @@ fn cmd_inspect_ctx(file: &str) -> ExitCode {
     };
 
     // Create analyzer and analyze the file
-    let analyzer = ContextAnalyzer::new(&config.context, patterns);
+    let analyzer = ContextAnalyzer::new(&config.context, rules);
     let signals = match analyzer.analyze_file(path) {
         Ok(signals) => signals,
         Err(e) => {

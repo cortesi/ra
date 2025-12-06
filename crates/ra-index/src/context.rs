@@ -269,7 +269,7 @@ impl<'a> ContextSearch<'a> {
 
         // Filter out input files from results (self-exclusion)
         if !analysis.exclude_doc_ids.is_empty() {
-            results.retain(|r| !analysis.exclude_doc_ids.contains(r.doc_id()));
+            results.retain(|r| !analysis.exclude_doc_ids.contains(&r.candidate().doc_id));
         }
 
         // Inject auto-included files from rules
@@ -322,8 +322,10 @@ impl<'a> ContextSearch<'a> {
         }
 
         // Track existing doc IDs to avoid duplicates
-        let existing_doc_ids: HashSet<String> =
-            results.iter().map(|r| r.doc_id().to_string()).collect();
+        let existing_doc_ids: HashSet<String> = results
+            .iter()
+            .map(|r| r.candidate().doc_id.clone())
+            .collect();
 
         // Collect includes to prepend (in reverse order since we'll insert at front)
         let mut to_prepend: Vec<SearchResult> = Vec::new();
