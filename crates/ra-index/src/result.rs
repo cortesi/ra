@@ -30,80 +30,13 @@ pub enum SearchResult {
 
 impl SearchResult {
     /// Returns the underlying candidate for this result.
-    fn candidate(&self) -> &SearchCandidate {
+    ///
+    /// For `Single` results, returns the matched candidate.
+    /// For `Aggregated` results, returns the parent node.
+    pub fn candidate(&self) -> &SearchCandidate {
         match self {
             Self::Single(c) | Self::Aggregated { parent: c, .. } => c,
         }
-    }
-
-    /// Returns the unique identifier of this result.
-    pub fn id(&self) -> &str {
-        &self.candidate().id
-    }
-
-    /// Returns the search relevance score of this result.
-    pub fn score(&self) -> f32 {
-        self.candidate().score
-    }
-
-    /// Returns the document identifier.
-    pub fn doc_id(&self) -> &str {
-        &self.candidate().doc_id
-    }
-
-    /// Returns the parent chunk identifier, if any.
-    pub fn parent_id(&self) -> Option<&str> {
-        self.candidate().parent_id.as_deref()
-    }
-
-    /// Returns the title.
-    pub fn title(&self) -> &str {
-        &self.candidate().title
-    }
-
-    /// Returns the tree name.
-    pub fn tree(&self) -> &str {
-        &self.candidate().tree
-    }
-
-    /// Returns the file path.
-    pub fn path(&self) -> &str {
-        &self.candidate().path
-    }
-
-    /// Returns the body content.
-    pub fn body(&self) -> &str {
-        &self.candidate().body
-    }
-
-    /// Returns the breadcrumb.
-    pub fn breadcrumb(&self) -> &str {
-        &self.candidate().breadcrumb
-    }
-
-    /// Returns the hierarchy depth.
-    pub fn depth(&self) -> u64 {
-        self.candidate().depth
-    }
-
-    /// Returns the position in document order.
-    pub fn position(&self) -> u64 {
-        self.candidate().position
-    }
-
-    /// Returns the byte start offset.
-    pub fn byte_start(&self) -> u64 {
-        self.candidate().byte_start
-    }
-
-    /// Returns the byte end offset.
-    pub fn byte_end(&self) -> u64 {
-        self.candidate().byte_end
-    }
-
-    /// Returns the sibling count.
-    pub fn sibling_count(&self) -> u64 {
-        self.candidate().sibling_count
     }
 
     /// Returns true if this is an aggregated result.
@@ -214,14 +147,15 @@ mod test {
         let candidate = make_candidate("local:test.md#intro", 5.0, 1);
         let result = SearchResult::single(candidate);
 
-        assert_eq!(result.id(), "local:test.md#intro");
-        assert_eq!(result.score(), 5.0);
-        assert_eq!(result.doc_id(), "local:test.md");
-        assert_eq!(result.parent_id(), Some("local:test.md"));
-        assert_eq!(result.title(), "Title local:test.md#intro");
-        assert_eq!(result.tree(), "local");
-        assert_eq!(result.path(), "test.md");
-        assert_eq!(result.depth(), 1);
+        let c = result.candidate();
+        assert_eq!(c.id, "local:test.md#intro");
+        assert_eq!(c.score, 5.0);
+        assert_eq!(c.doc_id, "local:test.md");
+        assert_eq!(c.parent_id.as_deref(), Some("local:test.md"));
+        assert_eq!(c.title, "Title local:test.md#intro");
+        assert_eq!(c.tree, "local");
+        assert_eq!(c.path, "test.md");
+        assert_eq!(c.depth, 1);
         assert!(!result.is_aggregated());
         assert!(result.constituents().is_none());
     }
@@ -234,12 +168,13 @@ mod test {
 
         let result = SearchResult::aggregated(parent, vec![child1, child2]);
 
-        assert_eq!(result.id(), "local:test.md");
+        let c = result.candidate();
+        assert_eq!(c.id, "local:test.md");
         // Score should be max of constituents (8.0) since it's > parent score (2.0)
-        assert_eq!(result.score(), 8.0);
-        assert_eq!(result.doc_id(), "local:test.md");
-        assert!(result.parent_id().is_none()); // Document node has no parent
-        assert_eq!(result.depth(), 0);
+        assert_eq!(c.score, 8.0);
+        assert_eq!(c.doc_id, "local:test.md");
+        assert!(c.parent_id.is_none()); // Document node has no parent
+        assert_eq!(c.depth, 0);
         assert!(result.is_aggregated());
 
         let constituents = result.constituents().unwrap();
@@ -257,7 +192,7 @@ mod test {
         let result = SearchResult::aggregated(parent, vec![child1, child2]);
 
         // Parent score (10.0) is higher than max constituent (7.0)
-        assert_eq!(result.score(), 10.0);
+        assert_eq!(result.candidate().score, 10.0);
     }
 
     #[test]
@@ -266,7 +201,7 @@ mod test {
         let result = SearchResult::aggregated(parent, vec![]);
 
         // Score should be parent's score when no constituents
-        assert_eq!(result.score(), 5.0);
+        assert_eq!(result.candidate().score, 5.0);
         assert!(result.constituents().unwrap().is_empty());
     }
 
@@ -276,8 +211,8 @@ mod test {
         let result = SearchResult::single(candidate);
         let cloned = result.clone();
 
-        assert_eq!(result.id(), cloned.id());
-        assert_eq!(result.score(), cloned.score());
+        assert_eq!(result.candidate().id, cloned.candidate().id);
+        assert_eq!(result.candidate().score, cloned.candidate().score);
     }
 
     #[test]

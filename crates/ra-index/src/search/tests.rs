@@ -382,7 +382,7 @@ fn search_aggregated_filters_by_tree() {
         )
         .unwrap();
     assert_eq!(local.len(), 2);
-    assert!(local.iter().all(|r| r.tree() == "local"));
+    assert!(local.iter().all(|r| r.candidate().tree == "local"));
 
     let global = searcher
         .search_aggregated(
@@ -391,7 +391,7 @@ fn search_aggregated_filters_by_tree() {
         )
         .unwrap();
     assert_eq!(global.len(), 1);
-    assert_eq!(global[0].tree(), "global");
+    assert_eq!(global[0].candidate().tree, "global");
 }
 
 #[test]

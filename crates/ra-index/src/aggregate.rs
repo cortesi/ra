@@ -186,17 +186,17 @@ where
 
     // Remove descendants whose ancestors appear in results.
     // If a parent document appears, its children shouldn't appear separately.
-    let result_ids: HashSet<String> = results.iter().map(|r| r.id().to_string()).collect();
+    let result_ids: HashSet<String> = results.iter().map(|r| r.candidate().id.clone()).collect();
 
     // Build a map from id -> parent_id for ancestor traversal
     let parent_map: HashMap<String, Option<String>> = results
         .iter()
-        .map(|r| (r.id().to_string(), r.parent_id().map(String::from)))
+        .map(|r| (r.candidate().id.clone(), r.candidate().parent_id.clone()))
         .collect();
 
     results.retain(|r| {
         // Check if any ancestor of this result is also in the results
-        let id = r.id();
+        let id = &r.candidate().id;
 
         // First check: document-level ancestor via ID prefix
         if let Some(hash_pos) = id.find('#') {
@@ -207,7 +207,7 @@ where
         }
 
         // Second check: traverse parent chain to find any ancestor in results
-        let mut current_parent = r.parent_id().map(String::from);
+        let mut current_parent = r.candidate().parent_id.clone();
         while let Some(ref pid) = current_parent {
             if result_ids.contains(pid) {
                 return false;
@@ -221,10 +221,11 @@ where
 
     // Sort by score descending, then by ID for stability
     results.sort_by(|a, b| {
-        b.score()
-            .partial_cmp(&a.score())
+        b.candidate()
+            .score
+            .partial_cmp(&a.candidate().score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| a.id().cmp(b.id()))
+            .then_with(|| a.candidate().id.cmp(&b.candidate().id))
     });
 
     results
@@ -243,7 +244,7 @@ impl ResultOrCandidate {
     fn parent_id(&self) -> Option<&str> {
         match self {
             Self::Candidate(c) => c.parent_id.as_deref(),
-            Self::Result(r) => r.parent_id(),
+            Self::Result(r) => r.candidate().parent_id.as_deref(),
         }
     }
 
@@ -251,7 +252,7 @@ impl ResultOrCandidate {
     fn sibling_count(&self) -> u64 {
         match self {
             Self::Candidate(c) => c.sibling_count,
-            Self::Result(r) => r.sibling_count(),
+            Self::Result(r) => r.candidate().sibling_count,
         }
     }
 
@@ -311,7 +312,7 @@ mod test {
 
         assert_eq!(results.len(), 1);
         assert!(!results[0].is_aggregated());
-        assert_eq!(results[0].id(), "local:test.md#intro");
+        assert_eq!(results[0].candidate().id, "local:test.md#intro");
     }
 
     #[test]
@@ -345,7 +346,7 @@ mod test {
 
         assert_eq!(results.len(), 1);
         assert!(results[0].is_aggregated());
-        assert_eq!(results[0].id(), "local:test.md");
+        assert_eq!(results[0].candidate().id, "local:test.md");
         assert_eq!(results[0].constituents().unwrap().len(), 2);
     }
 
@@ -368,9 +369,9 @@ mod test {
 
         assert_eq!(results.len(), 1);
         assert!(results[0].is_aggregated());
-        assert_eq!(results[0].id(), "local:test.md");
+        assert_eq!(results[0].candidate().id, "local:test.md");
         // Score should be max of constituents = 8.0
-        assert_eq!(results[0].score(), 8.0);
+        assert_eq!(results[0].candidate().score, 8.0);
         assert_eq!(results[0].constituents().unwrap().len(), 3);
     }
 
@@ -394,7 +395,7 @@ mod test {
         assert_eq!(results.len(), 1);
         assert!(results[0].is_aggregated());
         // Score should be max of parent (10.0) and children (5.0, 4.0) = 10.0
-        assert_eq!(results[0].score(), 10.0);
+        assert_eq!(results[0].candidate().score, 10.0);
     }
 
     #[test]
@@ -432,7 +433,7 @@ mod test {
         // Should cascade: sub1+sub2 -> section -> doc
         assert_eq!(results.len(), 1);
         assert!(results[0].is_aggregated());
-        assert_eq!(results[0].id(), "local:test.md");
+        assert_eq!(results[0].candidate().id, "local:test.md");
         // Both original subsections should be in constituents
         assert_eq!(results[0].constituents().unwrap().len(), 2);
     }
@@ -478,7 +479,7 @@ mod test {
         assert_eq!(results.len(), 1);
 
         let doc_result = &results[0];
-        assert_eq!(doc_result.id(), "local:test.md");
+        assert_eq!(doc_result.candidate().id, "local:test.md");
         assert!(doc_result.is_aggregated());
 
         // The doc result should have the original subsections as constituents
@@ -532,9 +533,9 @@ mod test {
         let results = aggregate(vec![c1, c2, c3], 0.5, |_| None);
 
         assert_eq!(results.len(), 3);
-        assert_eq!(results[0].score(), 8.0);
-        assert_eq!(results[1].score(), 5.0);
-        assert_eq!(results[2].score(), 2.0);
+        assert_eq!(results[0].candidate().score, 8.0);
+        assert_eq!(results[1].candidate().score, 5.0);
+        assert_eq!(results[2].candidate().score, 2.0);
     }
 
     #[test]
