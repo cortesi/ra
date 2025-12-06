@@ -1481,3 +1481,351 @@ path = "./docs"
         assert!(stdout.contains("Configuration"));
     }
 }
+
+mod likethis {
+    use super::*;
+
+    fn setup_indexed_dir() -> tempfile::TempDir {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        fs::create_dir(&docs).unwrap();
+
+        // Create documents with varying similarity for MLT testing
+        fs::write(
+            docs.join("rust-intro.md"),
+            "# Introduction to Rust\n\n\
+             Rust is a systems programming language focused on safety, speed, and concurrency. \
+             It prevents memory errors without garbage collection. Rust's ownership system \
+             ensures memory safety at compile time.",
+        )
+        .unwrap();
+
+        fs::write(
+            docs.join("rust-ownership.md"),
+            "# Understanding Rust Ownership\n\n\
+             The ownership system is Rust's most unique feature. Each value in Rust has a \
+             variable that's its owner. Memory safety is guaranteed through the borrow checker. \
+             Rust prevents data races at compile time.",
+        )
+        .unwrap();
+
+        fs::write(
+            docs.join("python-intro.md"),
+            "# Introduction to Python\n\n\
+             Python is a high-level interpreted language known for readability. It uses \
+             dynamic typing and automatic garbage collection. Python is great for scripting, \
+             web development, and data science.",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+"#,
+        )
+        .unwrap();
+
+        // Index the content
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        dir
+    }
+
+    #[test]
+    fn fails_without_trees() {
+        let dir = temp_dir();
+        fs::write(dir.path().join(".ra.toml"), "# empty config\n").unwrap();
+
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "docs:test.md"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("no trees defined"));
+    }
+
+    #[test]
+    fn finds_similar_documents_by_id() {
+        let dir = setup_indexed_dir();
+
+        // Find documents similar to rust-intro
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "docs:rust-intro.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        // Should find rust-ownership as similar (both about Rust)
+        // The source document itself should NOT appear
+        assert!(
+            !stdout.contains("Introduction to Rust"),
+            "Source document should not appear in results"
+        );
+    }
+
+    #[test]
+    fn finds_similar_documents_by_file_path() {
+        let dir = setup_indexed_dir();
+
+        // Create an external file (not in the index)
+        fs::write(
+            dir.path().join("external.md"),
+            "# Rust Memory Safety\n\n\
+             Learn about ownership and borrowing in Rust. Memory safety without GC.",
+        )
+        .unwrap();
+
+        // Find documents similar to the external file
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "external.md"])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn fails_on_nonexistent_file() {
+        let dir = setup_indexed_dir();
+
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "nonexistent.md"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("file not found"));
+    }
+
+    #[test]
+    fn fails_on_nonexistent_chunk_id() {
+        let dir = setup_indexed_dir();
+
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "docs:nonexistent.md"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("document not found"));
+    }
+
+    #[test]
+    fn list_mode_shows_titles() {
+        let dir = setup_indexed_dir();
+
+        let assert = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "--list", "docs:rust-intro.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+        let plain = strip_ansi(&stdout);
+
+        // Should show titles in list mode
+        assert!(
+            plain.contains("docs:") || plain.contains("No results"),
+            "list output should contain results: {plain}"
+        );
+    }
+
+    #[test]
+    fn json_output_format() {
+        let dir = setup_indexed_dir();
+
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "--json", "docs:rust-intro.md"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("\"queries\""));
+    }
+
+    #[test]
+    fn respects_limit() {
+        let dir = setup_indexed_dir();
+
+        // With limit of 1
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "-n", "1", "--json", "docs:rust-intro.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let results = json["queries"][0]["results"].as_array().unwrap();
+        assert!(
+            results.len() <= 1,
+            "Expected at most 1 result, found {}",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn explain_shows_source_info() {
+        let dir = setup_indexed_dir();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "--explain", "docs:rust-intro.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let plain = strip_ansi(&stdout);
+
+        // Should show source info
+        assert!(
+            plain.contains("Source:") || plain.contains("source_id"),
+            "explain should show source info: {plain}"
+        );
+        // Should show MLT parameters
+        assert!(
+            plain.contains("MoreLikeThis") || plain.contains("min_doc_frequency"),
+            "explain should show MLT parameters: {plain}"
+        );
+    }
+
+    #[test]
+    fn explain_json_format() {
+        let dir = setup_indexed_dir();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "--explain", "--json", "docs:rust-intro.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        // Should have expected fields
+        assert!(json["source_id"].is_string(), "should have source_id");
+        assert!(json["source_title"].is_string(), "should have source_title");
+        assert!(json["mlt_params"].is_object(), "should have mlt_params");
+        assert!(
+            json["search_params"].is_object(),
+            "should have search_params"
+        );
+    }
+
+    #[test]
+    fn explain_file_path() {
+        let dir = setup_indexed_dir();
+
+        // Create an external file
+        fs::write(
+            dir.path().join("test.md"),
+            "# Test File\n\nSome content about Rust programming.",
+        )
+        .unwrap();
+
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "--explain", "test.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let plain = strip_ansi(&stdout);
+
+        // Should show file: prefix for file paths
+        assert!(
+            plain.contains("file:") || plain.contains("Source"),
+            "explain should show source info for file: {plain}"
+        );
+    }
+
+    #[test]
+    fn mlt_params_accepted() {
+        let dir = setup_indexed_dir();
+
+        // Test that MLT params are accepted (doesn't error)
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args([
+                "likethis",
+                "--max-terms",
+                "50",
+                "--min-word-len",
+                "4",
+                "--boost",
+                "2.0",
+                "docs:rust-intro.md",
+            ])
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn tree_filter_works() {
+        let dir = temp_dir();
+        let docs = dir.path().join("docs");
+        let examples = dir.path().join("examples");
+        fs::create_dir(&docs).unwrap();
+        fs::create_dir(&examples).unwrap();
+
+        fs::write(
+            docs.join("rust.md"),
+            "# Rust Guide\n\nRust programming guide.",
+        )
+        .unwrap();
+        fs::write(
+            examples.join("rust.md"),
+            "# Rust Examples\n\nRust code examples.",
+        )
+        .unwrap();
+
+        fs::write(
+            dir.path().join(".ra.toml"),
+            r#"[tree.docs]
+path = "./docs"
+
+[tree.examples]
+path = "./examples"
+"#,
+        )
+        .unwrap();
+
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .arg("update")
+            .assert()
+            .success();
+
+        // Search only in docs tree
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "-t", "docs", "--json", "examples:rust.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        // All results should be from docs tree (if any)
+        if let Some(results) = json["queries"][0]["results"].as_array() {
+            for result in results {
+                let tree = result["tree"].as_str().unwrap_or("");
+                assert_eq!(tree, "docs", "All results should be from docs tree");
+            }
+        }
+    }
+
+    #[test]
+    fn no_aggregation_flag() {
+        let dir = setup_indexed_dir();
+
+        // With --no-aggregation, results should not be aggregated
+        ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["likethis", "--no-aggregation", "docs:rust-intro.md"])
+            .assert()
+            .success();
+    }
+}

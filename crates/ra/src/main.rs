@@ -22,8 +22,9 @@ use ra_highlight::{
 };
 use ra_index::{
     AggregatedSearchResult, ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats,
-    IndexStatus, Indexer, ProgressReporter, SearchCandidate, SearchParams, Searcher,
-    SilentReporter, detect_index_status, index_directory, merge_ranges, open_searcher, parse_query,
+    IndexStatus, Indexer, MoreLikeThisExplanation, MoreLikeThisParams, ProgressReporter,
+    SearchCandidate, SearchParams, Searcher, SilentReporter, detect_index_status, index_directory,
+    merge_ranges, open_searcher, parse_query,
 };
 use serde::Serialize;
 
@@ -338,6 +339,111 @@ EXAMPLES:
         json: bool,
     },
 
+    /// Find documents similar to a source document or file
+    #[command(
+        name = "likethis",
+        after_help = "\
+SOURCE SPECIFICATION:
+  Chunk ID      tree:path#slug or tree:path - find similar to an indexed chunk
+  File path     ./path/to/file.md - find similar to a file (may not be indexed)
+
+MORELIKETHIS PARAMETERS:
+  These parameters control how Tantivy extracts terms from the source document
+  to build the similarity query:
+
+  --min-doc-freq     Ignore terms in fewer than N documents (filters rare terms)
+  --max-doc-freq     Ignore terms in more than N documents (filters common terms)
+  --min-term-freq    Ignore terms appearing less than N times in source
+  --max-terms        Maximum query terms to use (default: 25)
+  --min-word-len     Ignore words shorter than N characters (default: 3)
+  --max-word-len     Ignore words longer than N characters (default: 40)
+  --boost            Boost factor for term weights (default: 1.0)
+
+EXAMPLES:
+  ra likethis docs:api/auth.md              Find similar to entire document
+  ra likethis docs:api/auth.md#overview     Find similar to specific section
+  ra likethis ./notes/ideas.md              Find similar to external file
+  ra likethis docs:guide.md -t docs         Only search in 'docs' tree
+  ra likethis docs:guide.md --max-terms 50  Use more terms for broader matches"
+    )]
+    LikeThis {
+        /// Source: chunk ID (tree:path#slug) or file path
+        source: String,
+
+        /// Maximum results to return
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+
+        /// Output titles and snippets only
+        #[arg(long)]
+        list: bool,
+
+        /// Output only lines containing matches
+        #[arg(long)]
+        matches: bool,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+
+        /// Show extracted terms and generated query
+        #[arg(long)]
+        explain: bool,
+
+        /// Disable hierarchical aggregation
+        #[arg(long)]
+        no_aggregation: bool,
+
+        /// Maximum candidates to retrieve from index (Phase 1)
+        #[arg(long)]
+        candidate_limit: Option<usize>,
+
+        /// Score ratio threshold for relevance cutoff (Phase 2)
+        #[arg(long)]
+        cutoff_ratio: Option<f32>,
+
+        /// Sibling ratio threshold for aggregation (Phase 3)
+        #[arg(long)]
+        aggregation_threshold: Option<f32>,
+
+        /// Verbosity level (-v for summary, -vv for full details)
+        #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+        verbose: u8,
+
+        /// Limit results to specific trees (can be specified multiple times)
+        #[arg(short = 't', long = "tree")]
+        trees: Vec<String>,
+
+        // MoreLikeThis-specific parameters
+        /// Minimum document frequency for terms
+        #[arg(long, default_value = "1")]
+        min_doc_freq: u64,
+
+        /// Maximum document frequency for terms
+        #[arg(long)]
+        max_doc_freq: Option<u64>,
+
+        /// Minimum term frequency in source document
+        #[arg(long, default_value = "1")]
+        min_term_freq: usize,
+
+        /// Maximum query terms to use
+        #[arg(long, default_value = "25")]
+        max_terms: usize,
+
+        /// Minimum word length
+        #[arg(long, default_value = "3")]
+        min_word_len: usize,
+
+        /// Maximum word length
+        #[arg(long, default_value = "40")]
+        max_word_len: usize,
+
+        /// Boost factor for terms
+        #[arg(long, default_value = "1.0")]
+        boost: f32,
+    },
+
     /// Inspect documents or context signals
     Inspect {
         /// What to inspect
@@ -509,6 +615,49 @@ fn main() -> ExitCode {
             json,
         } => {
             return cmd_get(&id, full_document, json);
+        }
+        Commands::LikeThis {
+            source,
+            limit,
+            list,
+            matches,
+            json,
+            explain,
+            no_aggregation,
+            candidate_limit,
+            cutoff_ratio,
+            aggregation_threshold,
+            verbose,
+            trees,
+            min_doc_freq,
+            max_doc_freq,
+            min_term_freq,
+            max_terms,
+            min_word_len,
+            max_word_len,
+            boost,
+        } => {
+            return cmd_likethis(
+                &source,
+                limit,
+                list,
+                matches,
+                json,
+                explain,
+                no_aggregation,
+                candidate_limit,
+                cutoff_ratio,
+                aggregation_threshold,
+                verbose,
+                &trees,
+                min_doc_freq,
+                max_doc_freq,
+                min_term_freq,
+                max_terms,
+                min_word_len,
+                max_word_len,
+                boost,
+            );
         }
         Commands::Inspect { what } => {
             return cmd_inspect(what);
@@ -1782,6 +1931,459 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
         .collect();
 
     output_aggregated_results(&aggregated, id, false, false, json, 0, &searcher)
+}
+
+/// Implements the `ra likethis` command.
+#[allow(clippy::too_many_arguments)]
+fn cmd_likethis(
+    source: &str,
+    limit: Option<usize>,
+    list: bool,
+    matches: bool,
+    json: bool,
+    explain: bool,
+    no_aggregation: bool,
+    candidate_limit: Option<usize>,
+    cutoff_ratio: Option<f32>,
+    aggregation_threshold: Option<f32>,
+    verbose: u8,
+    trees: &[String],
+    min_doc_freq: u64,
+    max_doc_freq: Option<u64>,
+    min_term_freq: usize,
+    max_terms: usize,
+    min_word_len: usize,
+    max_word_len: usize,
+    boost: f32,
+) -> ExitCode {
+    let (_, config) = match load_config_with_cwd(true) {
+        Ok(res) => res,
+        Err(code) => return code,
+    };
+
+    // Build MLT parameters
+    let mlt_params = MoreLikeThisParams {
+        min_doc_frequency: min_doc_freq,
+        max_doc_frequency: max_doc_freq.unwrap_or(u64::MAX / 2),
+        min_term_frequency: min_term_freq,
+        max_query_terms: max_terms,
+        min_word_length: min_word_len,
+        max_word_length: max_word_len,
+        boost_factor: boost,
+        stop_words: Vec::new(),
+    };
+
+    // Build search parameters
+    let overrides = SearchParamsOverrides {
+        limit,
+        candidate_limit,
+        cutoff_ratio,
+        aggregation_threshold,
+        no_aggregation,
+        trees: trees.to_vec(),
+        verbose,
+    };
+    let search_params = overrides.build_params(&config.search);
+
+    // Ensure index is fresh
+    let mut searcher = match ensure_index_fresh(&config) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    // Determine if source is a chunk ID or file path
+    let is_chunk_id = is_chunk_id_format(source);
+
+    // Handle --explain mode
+    if explain {
+        return cmd_likethis_explain(
+            source,
+            is_chunk_id,
+            &mlt_params,
+            &search_params,
+            &searcher,
+            json,
+        );
+    }
+
+    // Execute the search
+    let results = if is_chunk_id {
+        // Search by chunk ID
+        match searcher.search_more_like_this_by_id(source, &mlt_params, &search_params) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        // Search by file path
+        match search_more_like_this_by_file(
+            source,
+            &mlt_params,
+            &search_params,
+            &mut searcher,
+            &config,
+        ) {
+            Ok(r) => r,
+            Err(code) => return code,
+        }
+    };
+
+    // Output results
+    let display_source = if is_chunk_id {
+        source.to_string()
+    } else {
+        format!("file:{source}")
+    };
+    output_aggregated_results(
+        &results,
+        &display_source,
+        list,
+        matches,
+        json,
+        verbose,
+        &searcher,
+    )
+}
+
+/// Determines if a source string looks like a chunk ID (contains ':').
+fn is_chunk_id_format(source: &str) -> bool {
+    // A chunk ID has format tree:path or tree:path#slug
+    // A file path might be ./foo.md, /abs/path.md, or relative/path.md
+    // Heuristic: if it contains ':' but doesn't look like a Windows path (C:\...)
+    // and doesn't start with './' or '/', treat it as a chunk ID
+    if source.contains(':') {
+        // Check for Windows absolute path like C:\
+        if source.len() >= 2 && source.chars().nth(1) == Some(':') {
+            return false;
+        }
+        return true;
+    }
+    false
+}
+
+/// Searches for similar documents using a file path as source.
+fn search_more_like_this_by_file(
+    file_path: &str,
+    mlt_params: &MoreLikeThisParams,
+    search_params: &SearchParams,
+    searcher: &mut Searcher,
+    config: &Config,
+) -> Result<Vec<AggregatedSearchResult>, ExitCode> {
+    let path = Path::new(file_path);
+
+    // Check file exists
+    if !path.exists() {
+        eprintln!("error: file not found: {file_path}");
+        return Err(ExitCode::FAILURE);
+    }
+
+    // Check not binary
+    if ra_index::is_binary_file(path) {
+        eprintln!("error: binary file not supported: {file_path}");
+        return Err(ExitCode::FAILURE);
+    }
+
+    // Parse the file to extract content
+    let parsed = match parse_file(path, "likethis") {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: failed to parse file: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+
+    let doc = &parsed.document;
+
+    // Extract fields for MLT query
+    let mut fields: Vec<(&str, String)> = Vec::new();
+
+    // Add title
+    if !doc.title.is_empty() {
+        fields.push(("title", doc.title.clone()));
+    }
+
+    // Add body from root chunk (concatenate all chunk bodies)
+    let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+    let body: String = chunks
+        .iter()
+        .map(|c| c.body.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if !body.is_empty() {
+        fields.push(("body", body));
+    }
+
+    // Add tags
+    if !doc.tags.is_empty() {
+        fields.push(("tags", doc.tags.join(" ")));
+    }
+
+    if fields.is_empty() {
+        eprintln!("error: no content extracted from file");
+        return Err(ExitCode::FAILURE);
+    }
+
+    // Compute exclude doc IDs (if this file is in a tree, exclude it from results)
+    let exclude_doc_ids = compute_exclude_doc_ids_for_file(path, config);
+
+    // Execute search
+    searcher
+        .search_more_like_this_by_fields(fields, mlt_params, search_params, &exclude_doc_ids)
+        .map_err(|e| {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        })
+}
+
+/// Computes doc IDs to exclude based on whether a file path is in a configured tree.
+fn compute_exclude_doc_ids_for_file(path: &Path, config: &Config) -> HashSet<String> {
+    let mut exclude = HashSet::new();
+
+    // Try to get absolute path
+    let abs_path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return exclude,
+    };
+
+    // Check if this path is within any configured tree
+    for tree in &config.trees {
+        let tree_path = match tree.path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        if let Ok(rel_path) = abs_path.strip_prefix(&tree_path) {
+            // This file is in this tree - compute doc_id
+            let doc_id = format!("{}:{}", tree.name, rel_path.display());
+            exclude.insert(doc_id);
+            break;
+        }
+    }
+
+    exclude
+}
+
+/// Handles --explain mode for likethis command.
+fn cmd_likethis_explain(
+    source: &str,
+    is_chunk_id: bool,
+    mlt_params: &MoreLikeThisParams,
+    search_params: &SearchParams,
+    searcher: &Searcher,
+    json: bool,
+) -> ExitCode {
+    if is_chunk_id {
+        // Explain for chunk ID
+        let explanation = match searcher.explain_more_like_this(source, mlt_params) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        output_likethis_explain(&explanation, search_params, json)
+    } else {
+        // Explain for file path
+        let path = Path::new(source);
+
+        if !path.exists() {
+            eprintln!("error: file not found: {source}");
+            return ExitCode::FAILURE;
+        }
+
+        if ra_index::is_binary_file(path) {
+            eprintln!("error: binary file not supported: {source}");
+            return ExitCode::FAILURE;
+        }
+
+        // Parse the file
+        let parsed = match parse_file(path, "likethis") {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: failed to parse file: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let doc = &parsed.document;
+        let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+        let body: String = chunks
+            .iter()
+            .map(|c| c.body.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Create a synthetic explanation
+        let explanation = MoreLikeThisExplanation {
+            source_id: format!("file:{source}"),
+            source_title: doc.title.clone(),
+            source_body_preview: body.chars().take(200).collect(),
+            mlt_params: mlt_params.clone(),
+            query_repr: "(query built from file content)".to_string(),
+        };
+
+        output_likethis_explain(&explanation, search_params, json)
+    }
+}
+
+/// Outputs the explain information for likethis command.
+fn output_likethis_explain(
+    explanation: &MoreLikeThisExplanation,
+    search_params: &SearchParams,
+    json: bool,
+) -> ExitCode {
+    if json {
+        let json_output = JsonLikeThisExplain {
+            source_id: explanation.source_id.clone(),
+            source_title: explanation.source_title.clone(),
+            source_body_preview: explanation.source_body_preview.clone(),
+            mlt_params: JsonMltParams {
+                min_doc_frequency: explanation.mlt_params.min_doc_frequency,
+                max_doc_frequency: explanation.mlt_params.max_doc_frequency,
+                min_term_frequency: explanation.mlt_params.min_term_frequency,
+                max_query_terms: explanation.mlt_params.max_query_terms,
+                min_word_length: explanation.mlt_params.min_word_length,
+                max_word_length: explanation.mlt_params.max_word_length,
+                boost_factor: explanation.mlt_params.boost_factor,
+            },
+            search_params: JsonSearchParams {
+                candidate_limit: search_params.candidate_limit,
+                cutoff_ratio: search_params.cutoff_ratio,
+                max_results: search_params.max_results,
+                aggregation_threshold: search_params.aggregation_threshold,
+                disable_aggregation: search_params.disable_aggregation,
+                trees: search_params.trees.clone(),
+            },
+        };
+
+        match serde_json::to_string_pretty(&json_output) {
+            Ok(json_str) => println!("{json_str}"),
+            Err(e) => {
+                eprintln!("error: failed to serialize JSON: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        // Human-readable output
+        println!("{}", subheader("Source:"));
+        println!("   ID:    {}", explanation.source_id);
+        println!("   Title: {}", explanation.source_title);
+        println!();
+
+        println!("{}", subheader("Content preview:"));
+        println!("   {}...", explanation.source_body_preview);
+        println!();
+
+        println!("{}", subheader("MoreLikeThis Parameters:"));
+        println!(
+            "   min_doc_frequency:  {}",
+            explanation.mlt_params.min_doc_frequency
+        );
+        println!(
+            "   max_doc_frequency:  {}",
+            explanation.mlt_params.max_doc_frequency
+        );
+        println!(
+            "   min_term_frequency: {}",
+            explanation.mlt_params.min_term_frequency
+        );
+        println!(
+            "   max_query_terms:    {}",
+            explanation.mlt_params.max_query_terms
+        );
+        println!(
+            "   min_word_length:    {}",
+            explanation.mlt_params.min_word_length
+        );
+        println!(
+            "   max_word_length:    {}",
+            explanation.mlt_params.max_word_length
+        );
+        println!(
+            "   boost_factor:       {}",
+            explanation.mlt_params.boost_factor
+        );
+        println!();
+
+        println!("{}", subheader("Search Parameters:"));
+        println!(
+            "   Phase 1: candidate_limit = {}",
+            search_params.candidate_limit
+        );
+        println!("   Phase 2: cutoff_ratio = {}", search_params.cutoff_ratio);
+        println!("   Phase 2: max_results = {}", search_params.max_results);
+        println!(
+            "   Phase 3: aggregation_threshold = {}",
+            search_params.aggregation_threshold
+        );
+        println!(
+            "   Phase 3: aggregation = {}",
+            if search_params.disable_aggregation {
+                "disabled"
+            } else {
+                "enabled"
+            }
+        );
+        if !search_params.trees.is_empty() {
+            println!("   Trees: {}", search_params.trees.join(", "));
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// JSON output for likethis explain mode.
+#[derive(Serialize)]
+struct JsonLikeThisExplain {
+    /// Source document or file ID.
+    source_id: String,
+    /// Title of the source document.
+    source_title: String,
+    /// Preview of the source body content.
+    source_body_preview: String,
+    /// MoreLikeThis parameters used.
+    mlt_params: JsonMltParams,
+    /// Search parameters used.
+    search_params: JsonSearchParams,
+}
+
+/// JSON output for MLT parameters.
+#[derive(Serialize)]
+struct JsonMltParams {
+    /// Minimum document frequency for terms.
+    min_doc_frequency: u64,
+    /// Maximum document frequency for terms.
+    max_doc_frequency: u64,
+    /// Minimum term frequency in source.
+    min_term_frequency: usize,
+    /// Maximum query terms to use.
+    max_query_terms: usize,
+    /// Minimum word length.
+    min_word_length: usize,
+    /// Maximum word length.
+    max_word_length: usize,
+    /// Boost factor for terms.
+    boost_factor: f32,
+}
+
+/// JSON output for search parameters.
+#[derive(Serialize)]
+struct JsonSearchParams {
+    /// Maximum candidates from index.
+    candidate_limit: usize,
+    /// Score ratio threshold for cutoff.
+    cutoff_ratio: f32,
+    /// Maximum results to return.
+    max_results: usize,
+    /// Sibling ratio threshold for aggregation.
+    aggregation_threshold: f32,
+    /// Whether aggregation is disabled.
+    disable_aggregation: bool,
+    /// Trees to limit results to.
+    trees: Vec<String>,
 }
 
 /// Implements the `ra init` command.
