@@ -13,6 +13,8 @@ mod parse;
 mod patterns;
 mod resolve;
 mod templates;
+#[cfg(test)]
+mod test_support;
 mod validate;
 
 use std::path::{Component, Path, PathBuf};

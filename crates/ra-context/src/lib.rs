@@ -32,6 +32,15 @@ pub use rank::{IdfProvider, RankedTerm};
 pub use stopwords::Stopwords;
 pub use term::WeightedTerm;
 
+/// Token extracted from a path component with filename flag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PathToken {
+    /// Lowercased token text split from a path component.
+    term: String,
+    /// True when the token originated from the file name component.
+    is_filename: bool,
+}
+
 /// Weight for filename path components.
 const WEIGHT_PATH_FILENAME: f32 = 4.0;
 /// Weight for directory path components.
@@ -114,25 +123,13 @@ impl ContextAnalyzer {
     fn extract_path_terms(&self, path: &Path) -> Vec<String> {
         let mut terms = Vec::new();
 
-        for component in path.components() {
-            if let Component::Normal(os_str) = component
-                && let Some(s) = os_str.to_str()
-            {
-                // Split on common delimiters and filter
-                for part in s.split(['_', '-', '.']) {
-                    let part = part.to_lowercase();
-                    if self.is_meaningful_term(&part) {
-                        terms.push(part);
-                    }
-                }
+        for token in tokenize_path(path) {
+            if self.is_meaningful_term(&token.term) {
+                terms.push(token.term);
             }
         }
 
-        // Deduplicate while preserving order
-        let mut seen = HashSet::new();
-        terms.retain(|t| seen.insert(t.clone()));
-
-        terms
+        dedup_preserve_order(terms)
     }
 
     /// Checks if a term is meaningful enough to include.
@@ -194,48 +191,69 @@ pub fn extract_path_terms(
     stopwords: &Stopwords,
     min_length: usize,
 ) -> Vec<WeightedTerm> {
-    let mut terms = Vec::new();
+    let mut terms: Vec<WeightedTerm> = Vec::new();
+
+    for token in tokenize_path(path) {
+        if token.term.len() < min_length {
+            continue;
+        }
+        if !token.term.chars().all(|c| c.is_alphanumeric()) {
+            continue;
+        }
+        if stopwords.contains(&token.term) {
+            continue;
+        }
+
+        let (source, weight) = if token.is_filename {
+            ("path:filename", WEIGHT_PATH_FILENAME)
+        } else {
+            ("path:dir", WEIGHT_PATH_DIRECTORY)
+        };
+
+        if let Some(existing) = terms.iter_mut().find(|t| t.term == token.term) {
+            existing.increment();
+            if weight > existing.weight {
+                existing.source = source.to_string();
+                existing.weight = weight;
+            }
+        } else {
+            terms.push(WeightedTerm::new(token.term, source, weight));
+        }
+    }
+
+    terms
+}
+
+/// Splits a path into lowercase tokens, tagging whether they came from the filename.
+fn tokenize_path(path: &Path) -> Vec<PathToken> {
     let components: Vec<_> = path.components().collect();
     let num_components = components.len();
+    let mut tokens = Vec::new();
 
     for (idx, component) in components.into_iter().enumerate() {
         if let Component::Normal(os_str) = component
             && let Some(s) = os_str.to_str()
         {
-            // Last component is the filename
-            let is_filename = idx == num_components - 1;
-            let (source, weight) = if is_filename {
-                ("path:filename", WEIGHT_PATH_FILENAME)
-            } else {
-                ("path:dir", WEIGHT_PATH_DIRECTORY)
-            };
-
-            // Split on common delimiters
+            let is_filename = idx == num_components.saturating_sub(1);
             for part in s.split(['_', '-', '.']) {
-                let part = part.to_ascii_lowercase();
-                if part.len() >= min_length
-                    && part.chars().all(|c| c.is_alphanumeric())
-                    && !stopwords.contains(&part)
-                {
-                    // Check if we already have this term
-                    if let Some(existing) = terms
-                        .iter_mut()
-                        .find(|t: &&mut WeightedTerm| t.term == part)
-                    {
-                        existing.increment();
-                        // Keep the higher weight source
-                        if weight > existing.weight {
-                            existing.source = source.to_string();
-                            existing.weight = weight;
-                        }
-                    } else {
-                        terms.push(WeightedTerm::new(part, source, weight));
-                    }
+                if part.is_empty() {
+                    continue;
                 }
+                tokens.push(PathToken {
+                    term: part.to_ascii_lowercase(),
+                    is_filename,
+                });
             }
         }
     }
 
+    tokens
+}
+
+/// Deduplicates strings while preserving original order.
+fn dedup_preserve_order(mut terms: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    terms.retain(|t| seen.insert(t.clone()));
     terms
 }
 

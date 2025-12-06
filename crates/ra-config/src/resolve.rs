@@ -71,37 +71,7 @@ mod tests {
     use std::{fs, process};
 
     use super::*;
-
-    struct TestDir {
-        root: tempfile::TempDir,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            Self {
-                root: tempfile::tempdir().unwrap(),
-            }
-        }
-
-        fn path(&self) -> &Path {
-            self.root.path()
-        }
-
-        fn create_dir(&self, rel_path: &str) -> PathBuf {
-            let path = self.root.path().join(rel_path);
-            fs::create_dir_all(&path).unwrap();
-            path
-        }
-
-        fn create_file(&self, rel_path: &str) -> PathBuf {
-            let path = self.root.path().join(rel_path);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).unwrap();
-            }
-            fs::write(&path, "test").unwrap();
-            path
-        }
-    }
+    use crate::test_support::TestDir;
 
     #[test]
     fn test_resolve_relative_path() {
