@@ -59,7 +59,7 @@ pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::is_binary_file;
 pub use result::SearchResult as AggregatedSearchResult;
 pub use search::{
-    MatchDetails, SearchCandidate, SearchParams, Searcher, TreeFilteredSearcher, merge_ranges,
-    open_searcher,
+    MatchDetails, MoreLikeThisExplanation, MoreLikeThisParams, SearchCandidate, SearchParams,
+    Searcher, TreeFilteredSearcher, merge_ranges, open_searcher,
 };
 pub use status::{IndexStatus, detect_index_status};

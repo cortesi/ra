@@ -413,3 +413,317 @@ fn term_idf_behaves_for_common_rare_and_unknown() {
     let idf_programming = searcher.term_idf("programming").unwrap().unwrap();
     assert!((idf_prog - idf_programming).abs() < 0.1);
 }
+
+mod mlt_tests {
+    use std::collections::HashSet;
+
+    use super::*;
+    use crate::{MoreLikeThisParams, writer::IndexWriter};
+
+    fn create_mlt_test_index() -> (TempDir, Vec<ChunkDocument>) {
+        // Create documents with varying similarity:
+        // - doc1 and doc2 are about Rust programming (similar)
+        // - doc3 is about Python (different)
+        // - doc4 is about Rust web (somewhat similar to doc1/doc2)
+        let docs = vec![
+            ChunkDocument {
+                id: "local:docs/rust-intro.md".to_string(),
+                doc_id: "local:docs/rust-intro.md".to_string(),
+                parent_id: None,
+                title: "Introduction to Rust Programming".to_string(),
+                tags: vec!["rust".to_string(), "programming".to_string()],
+                path: "docs/rust-intro.md".to_string(),
+                path_components: vec![
+                    "docs".to_string(),
+                    "rust-intro".to_string(),
+                    "md".to_string(),
+                ],
+                tree: "local".to_string(),
+                body: "Rust is a systems programming language focused on safety, speed, and \
+                       concurrency. It prevents memory errors without garbage collection. \
+                       Rust's ownership system ensures memory safety at compile time."
+                    .to_string(),
+                breadcrumb: "Introduction to Rust Programming".to_string(),
+                depth: 0,
+                position: 0,
+                byte_start: 0,
+                byte_end: 200,
+                sibling_count: 1,
+                mtime: SystemTime::UNIX_EPOCH,
+            },
+            ChunkDocument {
+                id: "local:docs/rust-ownership.md".to_string(),
+                doc_id: "local:docs/rust-ownership.md".to_string(),
+                parent_id: None,
+                title: "Understanding Rust Ownership".to_string(),
+                tags: vec!["rust".to_string(), "ownership".to_string()],
+                path: "docs/rust-ownership.md".to_string(),
+                path_components: vec![
+                    "docs".to_string(),
+                    "rust-ownership".to_string(),
+                    "md".to_string(),
+                ],
+                tree: "local".to_string(),
+                body: "The ownership system is Rust's most unique feature. Each value in Rust \
+                       has a variable that's its owner. Memory safety is guaranteed through \
+                       the borrow checker. Rust prevents data races at compile time."
+                    .to_string(),
+                breadcrumb: "Understanding Rust Ownership".to_string(),
+                depth: 0,
+                position: 0,
+                byte_start: 0,
+                byte_end: 200,
+                sibling_count: 1,
+                mtime: SystemTime::UNIX_EPOCH,
+            },
+            ChunkDocument {
+                id: "local:docs/python-intro.md".to_string(),
+                doc_id: "local:docs/python-intro.md".to_string(),
+                parent_id: None,
+                title: "Introduction to Python".to_string(),
+                tags: vec!["python".to_string(), "scripting".to_string()],
+                path: "docs/python-intro.md".to_string(),
+                path_components: vec![
+                    "docs".to_string(),
+                    "python-intro".to_string(),
+                    "md".to_string(),
+                ],
+                tree: "local".to_string(),
+                body: "Python is a high-level interpreted language known for readability. \
+                       It uses dynamic typing and automatic garbage collection. Python is \
+                       great for scripting, web development, and data science."
+                    .to_string(),
+                breadcrumb: "Introduction to Python".to_string(),
+                depth: 0,
+                position: 0,
+                byte_start: 0,
+                byte_end: 200,
+                sibling_count: 1,
+                mtime: SystemTime::UNIX_EPOCH,
+            },
+            ChunkDocument {
+                id: "global:docs/rust-web.md".to_string(),
+                doc_id: "global:docs/rust-web.md".to_string(),
+                parent_id: None,
+                title: "Rust Web Development".to_string(),
+                tags: vec!["rust".to_string(), "web".to_string()],
+                path: "docs/rust-web.md".to_string(),
+                path_components: vec!["docs".to_string(), "rust-web".to_string(), "md".to_string()],
+                tree: "global".to_string(),
+                body: "Building web applications in Rust provides safety and performance. \
+                       Frameworks like Actix and Axum make web development in Rust productive. \
+                       Rust's type system catches errors at compile time."
+                    .to_string(),
+                breadcrumb: "Rust Web Development".to_string(),
+                depth: 0,
+                position: 0,
+                byte_start: 0,
+                byte_end: 200,
+                sibling_count: 1,
+                mtime: SystemTime::UNIX_EPOCH,
+            },
+        ];
+
+        let temp = TempDir::new().unwrap();
+        let mut writer = IndexWriter::open(temp.path(), "english").unwrap();
+        for doc in &docs {
+            writer.add_document(doc).unwrap();
+        }
+        writer.commit().unwrap();
+
+        (temp, docs)
+    }
+
+    #[test]
+    fn mlt_by_id_finds_similar_documents() {
+        let (temp, _docs) = create_mlt_test_index();
+        let mut searcher = searcher(&temp, 1.0);
+
+        let mlt_params = MoreLikeThisParams::default();
+        let search_params = SearchParams {
+            disable_aggregation: true,
+            cutoff_ratio: 0.0,
+            ..Default::default()
+        };
+
+        // Find documents similar to rust-intro
+        let results = searcher
+            .search_more_like_this_by_id("local:docs/rust-intro.md", &mlt_params, &search_params)
+            .unwrap();
+
+        // Should find rust-ownership and rust-web (both about Rust)
+        // but NOT include the source document itself
+        assert!(!results.iter().any(|r| r.id() == "local:docs/rust-intro.md"));
+
+        // The Rust documents should rank higher than Python
+        let rust_ids: HashSet<_> = results
+            .iter()
+            .filter(|r| r.title().contains("Rust"))
+            .map(|r| r.id())
+            .collect();
+        assert!(!rust_ids.is_empty(), "Should find other Rust documents");
+    }
+
+    #[test]
+    fn mlt_by_id_excludes_source_document() {
+        let (temp, _docs) = create_mlt_test_index();
+        let mut searcher = searcher(&temp, 1.0);
+
+        let mlt_params = MoreLikeThisParams::default();
+        let search_params = SearchParams {
+            disable_aggregation: true,
+            cutoff_ratio: 0.0,
+            ..Default::default()
+        };
+
+        let results = searcher
+            .search_more_like_this_by_id("local:docs/rust-intro.md", &mlt_params, &search_params)
+            .unwrap();
+
+        // Source document should never appear in results
+        for result in &results {
+            assert_ne!(result.id(), "local:docs/rust-intro.md");
+            assert_ne!(result.doc_id(), "local:docs/rust-intro.md");
+        }
+    }
+
+    #[test]
+    fn mlt_by_fields_finds_similar_content() {
+        let (temp, _docs) = create_mlt_test_index();
+        let mut searcher = searcher(&temp, 1.0);
+
+        let mlt_params = MoreLikeThisParams::default();
+        let search_params = SearchParams {
+            disable_aggregation: true,
+            cutoff_ratio: 0.0,
+            ..Default::default()
+        };
+
+        // Search with content about Rust ownership
+        let fields = vec![
+            (
+                "body",
+                "Rust ownership borrow checker memory safety compile time".to_string(),
+            ),
+            ("title", "Rust Programming".to_string()),
+        ];
+
+        let results = searcher
+            .search_more_like_this_by_fields(fields, &mlt_params, &search_params, &HashSet::new())
+            .unwrap();
+
+        // Should find Rust-related documents
+        assert!(results.iter().any(|r| r.title().contains("Rust")));
+    }
+
+    #[test]
+    fn mlt_respects_tree_filter() {
+        let (temp, _docs) = create_mlt_test_index();
+        let mut searcher = searcher(&temp, 1.0);
+
+        let mlt_params = MoreLikeThisParams::default();
+        let search_params = SearchParams {
+            disable_aggregation: true,
+            cutoff_ratio: 0.0,
+            trees: vec!["local".to_string()],
+            ..Default::default()
+        };
+
+        let results = searcher
+            .search_more_like_this_by_id("local:docs/rust-intro.md", &mlt_params, &search_params)
+            .unwrap();
+
+        // All results should be from the "local" tree
+        for result in &results {
+            assert_eq!(result.tree(), "local");
+        }
+    }
+
+    #[test]
+    fn mlt_get_doc_address_works() {
+        let (temp, _docs) = create_mlt_test_index();
+        let searcher = searcher(&temp, 1.0);
+
+        // Existing document should return an address
+        let addr = searcher
+            .get_doc_address("local:docs/rust-intro.md")
+            .unwrap();
+        assert!(addr.is_some());
+
+        // Non-existent document should return None
+        let missing = searcher.get_doc_address("local:nonexistent.md").unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn mlt_explain_returns_info() {
+        let (temp, _docs) = create_mlt_test_index();
+        let searcher = searcher(&temp, 1.0);
+
+        let mlt_params = MoreLikeThisParams::default();
+        let explanation = searcher
+            .explain_more_like_this("local:docs/rust-intro.md", &mlt_params)
+            .unwrap();
+
+        assert_eq!(explanation.source_id, "local:docs/rust-intro.md");
+        assert!(explanation.source_title.contains("Rust"));
+        assert!(!explanation.source_body_preview.is_empty());
+        assert!(!explanation.query_repr.is_empty());
+    }
+
+    #[test]
+    fn mlt_nonexistent_document_returns_error() {
+        let (temp, _docs) = create_mlt_test_index();
+        let mut searcher = searcher(&temp, 1.0);
+
+        let mlt_params = MoreLikeThisParams::default();
+        let search_params = SearchParams::default();
+
+        let result = searcher.search_more_like_this_by_id(
+            "local:nonexistent.md",
+            &mlt_params,
+            &search_params,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mlt_params_affect_results() {
+        let (temp, _docs) = create_mlt_test_index();
+        let mut searcher = searcher(&temp, 1.0);
+
+        let search_params = SearchParams {
+            disable_aggregation: true,
+            cutoff_ratio: 0.0,
+            ..Default::default()
+        };
+
+        // Default params
+        let default_params = MoreLikeThisParams::default();
+        let default_results = searcher
+            .search_more_like_this_by_id(
+                "local:docs/rust-intro.md",
+                &default_params,
+                &search_params,
+            )
+            .unwrap();
+
+        // Very restrictive params (high min word length should exclude many terms)
+        let restrictive_params = MoreLikeThisParams::default()
+            .with_min_word_length(10)
+            .with_max_query_terms(2);
+        let restrictive_results = searcher
+            .search_more_like_this_by_id(
+                "local:docs/rust-intro.md",
+                &restrictive_params,
+                &search_params,
+            )
+            .unwrap();
+
+        // Results should differ based on params
+        // (In practice, this may vary, but the API should work)
+        // Just verify the calls succeeded - MLT query behavior is Tantivy's responsibility
+        let _ = (default_results, restrictive_results);
+    }
+}

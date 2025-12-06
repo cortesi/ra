@@ -27,6 +27,7 @@ mod aggregate_api;
 mod execute;
 mod fuzzy;
 mod idf;
+mod mlt;
 mod normalize;
 mod open;
 mod params;
@@ -40,6 +41,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 pub use idf::TreeFilteredSearcher;
 use levenshtein_automata::LevenshteinAutomatonBuilder;
+pub use mlt::{MoreLikeThisExplanation, MoreLikeThisParams};
 pub use open::open_searcher;
 #[allow(unused_imports)]
 pub use params::{DEFAULT_CANDIDATE_LIMIT, SearchParams};

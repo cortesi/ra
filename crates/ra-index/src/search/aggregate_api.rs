@@ -130,7 +130,7 @@ impl Searcher {
     ///
     /// Returns a `SearchCandidate` with zero score and empty match data, suitable
     /// for use as a parent node during hierarchical aggregation.
-    fn lookup_parent(&self, parent_id: &str) -> Option<SearchCandidate> {
+    pub(super) fn lookup_parent(&self, parent_id: &str) -> Option<SearchCandidate> {
         let reader = self.index.reader().ok()?;
         let searcher = reader.searcher();
 
