@@ -50,9 +50,6 @@ pub use types::{MatchDetails, SearchCandidate};
 
 use crate::{query::QueryCompiler, schema::IndexSchema};
 
-/// Default fuzzy edit distance used when compiling queries.
-pub const DEFAULT_FUZZY_DISTANCE: u8 = 1;
-
 /// Primary search entry point for the index.
 #[allow(clippy::multiple_inherent_impl)]
 pub struct Searcher {

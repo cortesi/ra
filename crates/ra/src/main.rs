@@ -266,6 +266,10 @@ EXAMPLES:
         #[arg(long)]
         aggregation_threshold: Option<f32>,
 
+        /// Fuzzy matching edit distance (0=exact, 1-2=fuzzy) [default: 1]
+        #[arg(short = 'f', long)]
+        fuzzy: Option<u8>,
+
         /// Verbosity level (-v for summary, -vv for full details)
         #[arg(short = 'v', long, action = clap::ArgAction::Count)]
         verbose: u8,
@@ -320,6 +324,10 @@ EXAMPLES:
         /// Sibling ratio threshold for aggregation [default: 0.5]
         #[arg(long)]
         aggregation_threshold: Option<f32>,
+
+        /// Fuzzy matching edit distance (0=exact, 1-2=fuzzy) [default: 1]
+        #[arg(short = 'f', long)]
+        fuzzy: Option<u8>,
 
         /// Verbosity level (-v for summary, -vv for full details)
         #[arg(short = 'v', long, action = clap::ArgAction::Count)]
@@ -563,6 +571,7 @@ fn main() -> ExitCode {
             max_candidates,
             cutoff_ratio,
             aggregation_threshold,
+            fuzzy,
             verbose,
             trees,
         } => {
@@ -581,7 +590,9 @@ fn main() -> ExitCode {
                 verbose,
             };
             let params = overrides.build_params(&config.search);
-            return cmd_search(&queries, &params, list, matches, json, explain, verbose);
+            return cmd_search(
+                &queries, &params, list, matches, json, explain, verbose, fuzzy,
+            );
         }
         Commands::Context {
             files,
@@ -595,6 +606,7 @@ fn main() -> ExitCode {
             max_candidates,
             cutoff_ratio,
             aggregation_threshold,
+            fuzzy,
             verbose,
             trees,
         } => {
@@ -610,6 +622,7 @@ fn main() -> ExitCode {
                 max_candidates,
                 cutoff_ratio,
                 aggregation_threshold,
+                fuzzy,
                 verbose,
                 &trees,
             );
@@ -831,13 +844,17 @@ fn read_full_body(result: &AggregatedSearchResult, searcher: &Searcher) -> Strin
 
 /// Ensures the index is fresh, triggering an update if needed.
 /// Returns the searcher if successful.
-fn ensure_index_fresh(config: &Config) -> Result<Searcher, ExitCode> {
+///
+/// If `fuzzy_override` is provided, it overrides the config's fuzzy_distance setting.
+fn ensure_index_fresh(config: &Config, fuzzy_override: Option<u8>) -> Result<Searcher, ExitCode> {
     match detect_index_status(config) {
-        IndexStatus::Current => open_searcher_or_failure(config),
+        IndexStatus::Current => open_searcher_or_failure(config, fuzzy_override),
         IndexStatus::Missing | IndexStatus::ConfigChanged => {
-            rebuild_index_and_open(config, IndexRefresh::Full)
+            rebuild_index_and_open(config, IndexRefresh::Full, fuzzy_override)
         }
-        IndexStatus::Stale => rebuild_index_and_open(config, IndexRefresh::Incremental),
+        IndexStatus::Stale => {
+            rebuild_index_and_open(config, IndexRefresh::Incremental, fuzzy_override)
+        }
     }
 }
 
@@ -851,8 +868,11 @@ enum IndexRefresh {
 }
 
 /// Opens the searcher, exiting with a consistent error on failure.
-fn open_searcher_or_failure(config: &Config) -> Result<Searcher, ExitCode> {
-    match open_searcher(config) {
+fn open_searcher_or_failure(
+    config: &Config,
+    fuzzy_override: Option<u8>,
+) -> Result<Searcher, ExitCode> {
+    match open_searcher(config, fuzzy_override) {
         Ok(searcher) => Ok(searcher),
         Err(e) => {
             eprintln!("error: failed to open index: {e}");
@@ -862,7 +882,11 @@ fn open_searcher_or_failure(config: &Config) -> Result<Searcher, ExitCode> {
 }
 
 /// Rebuilds or updates the index, then opens the searcher.
-fn rebuild_index_and_open(config: &Config, mode: IndexRefresh) -> Result<Searcher, ExitCode> {
+fn rebuild_index_and_open(
+    config: &Config,
+    mode: IndexRefresh,
+    fuzzy_override: Option<u8>,
+) -> Result<Searcher, ExitCode> {
     if matches!(mode, IndexRefresh::Full) {
         eprintln!("Index needs rebuild, updating...");
     }
@@ -886,7 +910,7 @@ fn rebuild_index_and_open(config: &Config, mode: IndexRefresh) -> Result<Searche
         return Err(ExitCode::FAILURE);
     }
 
-    open_searcher_or_failure(config)
+    open_searcher_or_failure(config, fuzzy_override)
 }
 
 /// Formats match details for verbose output.
@@ -1231,6 +1255,7 @@ fn extract_matching_lines(body: &str, match_ranges: &[Range<usize>]) -> String {
 }
 
 /// Implements the `ra search` command.
+#[allow(clippy::too_many_arguments)]
 fn cmd_search(
     queries: &[String],
     params: &SearchParams,
@@ -1239,6 +1264,7 @@ fn cmd_search(
     json: bool,
     explain: bool,
     verbose: u8,
+    fuzzy: Option<u8>,
 ) -> ExitCode {
     // Handle --explain mode: parse and display AST without executing search
     if explain {
@@ -1295,7 +1321,7 @@ fn cmd_search(
     };
 
     // Ensure index is fresh
-    let mut searcher = match ensure_index_fresh(&config) {
+    let mut searcher = match ensure_index_fresh(&config, fuzzy) {
         Ok(s) => s,
         Err(code) => return code,
     };
@@ -1538,6 +1564,7 @@ fn cmd_context(
     max_candidates: Option<usize>,
     cutoff_ratio: Option<f32>,
     aggregation_threshold: Option<f32>,
+    fuzzy: Option<u8>,
     verbose: u8,
     trees: &[String],
 ) -> ExitCode {
@@ -1550,7 +1577,7 @@ fn cmd_context(
     let max_terms = max_terms.unwrap_or(config.context.terms);
 
     // Ensure index is fresh (needed for both explain and search modes)
-    let mut searcher = match ensure_index_fresh(&config) {
+    let mut searcher = match ensure_index_fresh(&config, fuzzy) {
         Ok(s) => s,
         Err(code) => return code,
     };
@@ -1896,7 +1923,7 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
     };
 
     // Ensure index is fresh
-    let searcher = match ensure_index_fresh(&config) {
+    let searcher = match ensure_index_fresh(&config, None) {
         Ok(s) => s,
         Err(code) => return code,
     };
@@ -1987,7 +2014,7 @@ fn cmd_likethis(
     let search_params = overrides.build_params(&config.search);
 
     // Ensure index is fresh
-    let mut searcher = match ensure_index_fresh(&config) {
+    let mut searcher = match ensure_index_fresh(&config, None) {
         Ok(s) => s,
         Err(code) => return code,
     };
@@ -2705,7 +2732,7 @@ fn cmd_ls_docs(long: bool) -> ExitCode {
     };
 
     // Ensure index is fresh
-    let searcher = match ensure_index_fresh(&config) {
+    let searcher = match ensure_index_fresh(&config, None) {
         Ok(s) => s,
         Err(code) => return code,
     };
@@ -2775,7 +2802,7 @@ fn cmd_ls_chunks(long: bool) -> ExitCode {
     };
 
     // Ensure index is fresh
-    let searcher = match ensure_index_fresh(&config) {
+    let searcher = match ensure_index_fresh(&config, None) {
         Ok(s) => s,
         Err(code) => return code,
     };

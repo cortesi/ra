@@ -98,7 +98,7 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
 }
 
 fn searcher(temp: &TempDir, local_boost: f32) -> Searcher {
-    Searcher::open(temp.path(), "english", &make_trees(), local_boost).unwrap()
+    Searcher::open(temp.path(), "english", &make_trees(), local_boost, 1).unwrap()
 }
 
 fn build_index_with_docs(docs: &[ChunkDocument]) -> (TempDir, Searcher) {
@@ -109,7 +109,7 @@ fn build_index_with_docs(docs: &[ChunkDocument]) -> (TempDir, Searcher) {
     }
     writer.commit().unwrap();
 
-    let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5).unwrap();
+    let searcher = Searcher::open(temp.path(), "english", &make_trees(), 1.5, 1).unwrap();
     (temp, searcher)
 }
 

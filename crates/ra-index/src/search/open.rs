@@ -24,6 +24,7 @@ impl Searcher {
         language: &str,
         trees: &[ra_config::Tree],
         local_boost: f32,
+        fuzzy_distance: u8,
     ) -> Result<Self, IndexError> {
         if !path.exists() {
             return Err(IndexError::OpenIndex {
@@ -44,7 +45,6 @@ impl Searcher {
         let analyzer = build_analyzer_from_name(language)?;
         index.tokenizers().register(RA_TOKENIZER, analyzer.clone());
 
-        let fuzzy_distance = super::DEFAULT_FUZZY_DISTANCE;
         let query_compiler = QueryCompiler::new(schema.clone(), language, fuzzy_distance)?;
 
         let lev_builder = LevenshteinAutomatonBuilder::new(fuzzy_distance, true);
@@ -78,6 +78,7 @@ impl Searcher {
             &config.search.stemmer,
             &config.trees,
             config.settings.local_boost,
+            config.search.fuzzy_distance,
         )
     }
 
@@ -114,11 +115,23 @@ impl Searcher {
 }
 
 /// Creates an index directory path and opens it for searching.
-pub fn open_searcher(config: &ra_config::Config) -> Result<Searcher, IndexError> {
+///
+/// If `fuzzy_override` is provided, it overrides the config's fuzzy_distance setting.
+pub fn open_searcher(
+    config: &ra_config::Config,
+    fuzzy_override: Option<u8>,
+) -> Result<Searcher, IndexError> {
     let index_dir = crate::index_directory(config).ok_or_else(|| IndexError::OpenIndex {
         path: PathBuf::new(),
         message: "no configuration found".to_string(),
     })?;
 
-    Searcher::open_with_config(&index_dir, config)
+    let fuzzy_distance = fuzzy_override.unwrap_or(config.search.fuzzy_distance);
+    Searcher::open(
+        &index_dir,
+        &config.search.stemmer,
+        &config.trees,
+        config.settings.local_boost,
+        fuzzy_distance,
+    )
 }

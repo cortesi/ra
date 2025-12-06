@@ -407,7 +407,7 @@ mod tests {
             exclude: Vec::new(),
         }];
 
-        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
+        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0, 1).unwrap();
         let settings = ContextSettings::default();
         let context_search = ContextSearch::new(&mut searcher, &settings, 10).unwrap();
 
@@ -444,7 +444,7 @@ mod tests {
             exclude: Vec::new(),
         }];
 
-        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
+        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0, 1).unwrap();
         let settings = ContextSettings::default();
         let context_search = ContextSearch::new(&mut searcher, &settings, 10).unwrap();
 
@@ -477,7 +477,7 @@ mod tests {
             exclude: Vec::new(),
         }];
 
-        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
+        let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0, 1).unwrap();
         let settings = ContextSettings::default();
         let context_search = ContextSearch::new(&mut searcher, &settings, 10).unwrap();
 
