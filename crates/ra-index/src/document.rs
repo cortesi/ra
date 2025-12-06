@@ -4,7 +4,7 @@
 //! chunk-level data with document-level metadata (tags, path, tree) and
 //! hierarchical information (depth, position, parent_id, etc.).
 
-use std::{path::Path, time::SystemTime};
+use std::time::SystemTime;
 
 use ra_document::{Document, TreeChunk};
 
@@ -29,8 +29,6 @@ pub struct ChunkDocument {
     pub tags: Vec<String>,
     /// File path within the tree.
     pub path: String,
-    /// Path split into components for partial matching.
-    pub path_components: Vec<String>,
     /// Tree name this chunk belongs to.
     pub tree: String,
     /// Chunk body content.
@@ -60,7 +58,6 @@ impl ChunkDocument {
     /// * `mtime` - File modification time
     pub fn from_tree_chunk(chunk: &TreeChunk, document: &Document, mtime: SystemTime) -> Self {
         let path_str = document.path.to_string_lossy().to_string();
-        let path_components = extract_path_components(&document.path);
 
         Self {
             id: chunk.id.clone(),
@@ -69,7 +66,6 @@ impl ChunkDocument {
             title: chunk.title.clone(),
             tags: document.tags.clone(),
             path: path_str,
-            path_components,
             tree: document.tree.clone(),
             body: chunk.body.clone(),
             breadcrumb: chunk.breadcrumb.clone(),
@@ -97,30 +93,6 @@ impl ChunkDocument {
             .map(|chunk| Self::from_tree_chunk(chunk, document, mtime))
             .collect()
     }
-}
-
-/// Extracts individual path components for indexing.
-///
-/// Splits the path on separators and filters out empty components.
-/// For example, `docs/api/handlers.md` becomes `["docs", "api", "handlers", "md"]`.
-fn extract_path_components(path: &Path) -> Vec<String> {
-    path.iter()
-        .filter_map(|c| {
-            let s = c.to_string_lossy();
-            if s.is_empty() {
-                None
-            } else {
-                // Also split on dots for file extensions
-                Some(
-                    s.split('.')
-                        .filter(|part| !part.is_empty())
-                        .map(String::from)
-                        .collect::<Vec<_>>(),
-                )
-            }
-        })
-        .flatten()
-        .collect()
 }
 
 #[cfg(test)]
@@ -193,21 +165,5 @@ How to handle errors in API handlers."#;
             Some("local:docs/api/handlers.md".to_string())
         );
         assert_eq!(chunk_docs[1].doc_id, "local:docs/api/handlers.md");
-    }
-
-    #[test]
-    fn path_components_extracted_correctly() {
-        let path = PathBuf::from("docs/api/handlers.md");
-        let components = extract_path_components(&path);
-
-        assert_eq!(components, vec!["docs", "api", "handlers", "md"]);
-    }
-
-    #[test]
-    fn path_components_handles_nested_paths() {
-        let path = PathBuf::from("src/core/auth/oauth.rs");
-        let components = extract_path_components(&path);
-
-        assert_eq!(components, vec!["src", "core", "auth", "oauth", "rs"]);
     }
 }

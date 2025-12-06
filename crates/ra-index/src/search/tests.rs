@@ -33,7 +33,6 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
             title: "Introduction to Rust".to_string(),
             tags: vec!["rust".to_string(), "programming".to_string()],
             path: "docs/rust.md".to_string(),
-            path_components: vec!["docs".to_string(), "rust".to_string(), "md".to_string()],
             tree: "local".to_string(),
             body: "Rust is a systems programming language focused on safety and performance."
                 .to_string(),
@@ -52,7 +51,6 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
             title: "Async Programming".to_string(),
             tags: vec!["rust".to_string(), "async".to_string()],
             path: "docs/async.md".to_string(),
-            path_components: vec!["docs".to_string(), "async".to_string(), "md".to_string()],
             tree: "local".to_string(),
             body: "Asynchronous programming in Rust uses futures and the async/await syntax."
                 .to_string(),
@@ -71,11 +69,6 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
             title: "Error Handling".to_string(),
             tags: vec!["rust".to_string(), "errors".to_string()],
             path: "reference/errors.md".to_string(),
-            path_components: vec![
-                "reference".to_string(),
-                "errors".to_string(),
-                "md".to_string(),
-            ],
             tree: "global".to_string(),
             body: "Rust error handling uses Result and Option types for safety.".to_string(),
             breadcrumb: "Reference › Error Handling".to_string(),
@@ -231,7 +224,6 @@ fn fuzzy_typos_match_and_highlight_actual_terms() {
         title: "Test".to_string(),
         tags: vec![],
         path: "docs/test.md".to_string(),
-        path_components: vec!["docs".to_string(), "test".to_string(), "md".to_string()],
         tree: "local".to_string(),
         body: "The quick brown fox jumps over the lazy dog.".to_string(),
         breadcrumb: "Test".to_string(),
@@ -267,7 +259,6 @@ fn fuzzy_stemming_ranges_cover_variants() {
         title: "Stems".to_string(),
         tags: vec![],
         path: "docs/stems.md".to_string(),
-        path_components: vec!["docs".to_string(), "stems".to_string(), "md".to_string()],
         tree: "local".to_string(),
         body: "Handling handled handles".to_string(),
         breadcrumb: "Stems".to_string(),
@@ -303,7 +294,6 @@ fn hierarchical_fields_roundtrip() {
             title: "Guide".to_string(),
             tags: vec![],
             path: "docs/guide.md".to_string(),
-            path_components: vec!["docs".to_string(), "guide".to_string(), "md".to_string()],
             tree: "local".to_string(),
             body: "This is the preamble content.".to_string(),
             breadcrumb: "> Guide".to_string(),
@@ -321,7 +311,6 @@ fn hierarchical_fields_roundtrip() {
             title: "Section One".to_string(),
             tags: vec![],
             path: "docs/guide.md".to_string(),
-            path_components: vec!["docs".to_string(), "guide".to_string(), "md".to_string()],
             tree: "local".to_string(),
             body: "Section one unique content here.".to_string(),
             breadcrumb: "> Guide › Section One".to_string(),
@@ -433,11 +422,6 @@ mod mlt_tests {
                 title: "Introduction to Rust Programming".to_string(),
                 tags: vec!["rust".to_string(), "programming".to_string()],
                 path: "docs/rust-intro.md".to_string(),
-                path_components: vec![
-                    "docs".to_string(),
-                    "rust-intro".to_string(),
-                    "md".to_string(),
-                ],
                 tree: "local".to_string(),
                 body: "Rust is a systems programming language focused on safety, speed, and \
                        concurrency. It prevents memory errors without garbage collection. \
@@ -458,11 +442,6 @@ mod mlt_tests {
                 title: "Understanding Rust Ownership".to_string(),
                 tags: vec!["rust".to_string(), "ownership".to_string()],
                 path: "docs/rust-ownership.md".to_string(),
-                path_components: vec![
-                    "docs".to_string(),
-                    "rust-ownership".to_string(),
-                    "md".to_string(),
-                ],
                 tree: "local".to_string(),
                 body: "The ownership system is Rust's most unique feature. Each value in Rust \
                        has a variable that's its owner. Memory safety is guaranteed through \
@@ -483,11 +462,6 @@ mod mlt_tests {
                 title: "Introduction to Python".to_string(),
                 tags: vec!["python".to_string(), "scripting".to_string()],
                 path: "docs/python-intro.md".to_string(),
-                path_components: vec![
-                    "docs".to_string(),
-                    "python-intro".to_string(),
-                    "md".to_string(),
-                ],
                 tree: "local".to_string(),
                 body: "Python is a high-level interpreted language known for readability. \
                        It uses dynamic typing and automatic garbage collection. Python is \
@@ -508,7 +482,6 @@ mod mlt_tests {
                 title: "Rust Web Development".to_string(),
                 tags: vec!["rust".to_string(), "web".to_string()],
                 path: "docs/rust-web.md".to_string(),
-                path_components: vec!["docs".to_string(), "rust-web".to_string(), "md".to_string()],
                 tree: "global".to_string(),
                 body: "Building web applications in Rust provides safety and performance. \
                        Frameworks like Actix and Axum make web development in Rust productive. \

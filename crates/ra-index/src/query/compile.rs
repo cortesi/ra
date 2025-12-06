@@ -121,7 +121,7 @@ impl QueryCompiler {
             return self.build_multi_field_term_query(&tokens[0]);
         }
 
-        // Build phrase queries for each searchable field (excluding path_components)
+        // Build phrase queries for each searchable field
         let fields_with_boosts: [(Field, f32); 4] = [
             (self.schema.title, boost::TITLE),
             (self.schema.tags, boost::TAGS),
@@ -395,11 +395,10 @@ impl QueryCompiler {
 
     /// Builds a multi-field term query with boosts and optional fuzzy matching.
     fn build_multi_field_term_query(&self, term_text: &str) -> Option<Box<dyn Query>> {
-        let fields_with_boosts: [(Field, f32); 5] = [
+        let fields_with_boosts: [(Field, f32); 4] = [
             (self.schema.title, boost::TITLE),
             (self.schema.tags, boost::TAGS),
             (self.schema.path, boost::PATH),
-            (self.schema.path_components, boost::PATH_COMPONENTS),
             (self.schema.body, boost::BODY),
         ];
 

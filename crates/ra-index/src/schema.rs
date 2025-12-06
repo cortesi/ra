@@ -4,10 +4,9 @@
 //! - `id`: Unique chunk identifier (stored only)
 //! - `doc_id`: Document identifier (stored)
 //! - `parent_id`: Parent chunk identifier (stored, optional)
-//! - `title`: Chunk title (text, stored, boosted 3.0x)
-//! - `tags`: Document tags (text, stored, boosted 2.5x)
-//! - `path`: File path within tree (text, stored, boosted 2.0x)
-//! - `path_components`: Path segments for partial matching (text, boosted 2.0x)
+//! - `title`: Chunk title (text, stored, boosted 10x)
+//! - `tags`: Document tags (text, stored, boosted 5x)
+//! - `path`: File path within tree (text, stored, boosted 8x)
 //! - `tree`: Tree name (string, stored, fast)
 //! - `body`: Chunk content (text, stored)
 //! - `breadcrumb`: Hierarchy path for display (stored)
@@ -34,8 +33,6 @@ pub mod boost {
     pub const TITLE: f32 = 10.0;
     /// Path field boost - filename matches are strong relevance signals.
     pub const PATH: f32 = 8.0;
-    /// Path components field boost - directory/filename parts.
-    pub const PATH_COMPONENTS: f32 = 6.0;
     /// Tags field boost - intentional metadata.
     pub const TAGS: f32 = 5.0;
     /// Body field boost - baseline for content matches.
@@ -59,8 +56,6 @@ pub struct IndexSchema {
     pub tags: Field,
     /// File path within the tree.
     pub path: Field,
-    /// Path split into components for partial matching.
-    pub path_components: Field,
     /// Tree name this chunk belongs to.
     pub tree: Field,
     /// Chunk body content.
@@ -115,7 +110,7 @@ impl IndexSchema {
             .set_stored();
         let tags = builder.add_text_field("tags", tags_options);
 
-        // Path field: text with positions, stored, boosted 2.0x
+        // Path field: text with positions, stored
         let path_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
@@ -124,14 +119,6 @@ impl IndexSchema {
             )
             .set_stored();
         let path = builder.add_text_field("path", path_options);
-
-        // Path components field: text with positions, NOT stored (just for searching)
-        let path_components_options = TextOptions::default().set_indexing_options(
-            TextFieldIndexing::default()
-                .set_tokenizer(RA_TOKENIZER)
-                .set_index_option(IndexRecordOption::WithFreqsAndPositions),
-        );
-        let path_components = builder.add_text_field("path_components", path_components_options);
 
         // Tree field: string (single token), stored, fast for filtering
         let tree = builder.add_text_field("tree", STRING | STORED | FAST);
@@ -176,7 +163,6 @@ impl IndexSchema {
             title,
             tags,
             path,
-            path_components,
             tree,
             body,
             breadcrumb,
@@ -219,7 +205,6 @@ mod test {
         assert!(tantivy_schema.get_field("title").is_ok());
         assert!(tantivy_schema.get_field("tags").is_ok());
         assert!(tantivy_schema.get_field("path").is_ok());
-        assert!(tantivy_schema.get_field("path_components").is_ok());
         assert!(tantivy_schema.get_field("tree").is_ok());
         assert!(tantivy_schema.get_field("body").is_ok());
         assert!(tantivy_schema.get_field("breadcrumb").is_ok());
@@ -273,15 +258,6 @@ mod test {
                 panic!("{name} field should be text type");
             }
         }
-    }
-
-    #[test]
-    fn path_components_not_stored() {
-        let schema = IndexSchema::new();
-        let entry = schema.schema().get_field_entry(schema.path_components);
-
-        assert!(entry.is_indexed());
-        assert!(!entry.is_stored());
     }
 
     #[test]

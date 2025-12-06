@@ -44,15 +44,13 @@ Each chunk is indexed with these fields:
 | `title` | Chunk/document title | Full-text | Yes |
 | `tags` | Frontmatter tags | Full-text | Yes |
 | `path` | Relative file path | Full-text | Yes |
-| `path_components` | Path segments | Full-text | No |
 | `tree` | Tree name | Exact match | Yes |
 | `body` | Chunk content | Full-text | Yes |
 | `breadcrumb` | Hierarchy path | No | Yes |
 | `mtime` | Modification time | Filter/sort | No |
 
-The `path_components` field splits paths for partial matching. For `docs/api/handlers.md`,
-this indexes `["docs", "api", "handlers", "md"]`, allowing "api" to match files in the api
-directory.
+The `path` field is tokenized on path separators and dots. For `docs/api/handlers.md`, this
+indexes `["docs", "api", "handlers", "md"]`, allowing "api" to match files in the api directory.
 
 
 ## Query Processing
@@ -61,24 +59,22 @@ ra supports a rich query syntax. See [query.md](query.md) for the complete refer
 
 ### Query Structure
 
-For each term, ra builds a multi-field query searching across title, tags, path,
-path_components, and body simultaneously. Terms within a query are combined with AND.
+For each term, ra builds a multi-field query searching across title, tags, path, and body
+simultaneously. Terms within a query are combined with AND.
 
 **Example: `rust async`**
 
 ```
 BooleanQuery(MUST):
 ├── MultiFieldQuery("rust")
-│   ├── title:"rust" (boosted 3.0×)
-│   ├── tags:"rust" (boosted 2.5×)
-│   ├── path:"rust" (boosted 2.0×)
-│   ├── path_components:"rust" (boosted 2.0×)
+│   ├── title:"rust" (boosted 10.0×)
+│   ├── tags:"rust" (boosted 5.0×)
+│   ├── path:"rust" (boosted 8.0×)
 │   └── body:"rust" (boosted 1.0×)
 └── MultiFieldQuery("async")
-    ├── title:"async" (boosted 3.0×)
-    ├── tags:"async" (boosted 2.5×)
-    ├── path:"async" (boosted 2.0×)
-    ├── path_components:"async" (boosted 2.0×)
+    ├── title:"async" (boosted 10.0×)
+    ├── tags:"async" (boosted 5.0×)
+    ├── path:"async" (boosted 8.0×)
     └── body:"async" (boosted 1.0×)
 ```
 
@@ -112,13 +108,12 @@ considers:
 
 | Field | Boost |
 |-------|-------|
-| title | 3.0× |
-| tags | 2.5× |
-| path | 2.0× |
-| path_components | 2.0× |
+| title | 10.0× |
+| path | 8.0× |
+| tags | 5.0× |
 | body | 1.0× |
 
-A match in the title contributes 3× as much to the score as the same match in the body.
+A match in the title contributes 10× as much to the score as the same match in the body.
 
 ### Tree Locality Boost
 

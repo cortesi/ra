@@ -124,10 +124,9 @@ ra uses Tantivy for full-text search with:
 | Field | Searchable | Stored | Boost |
 |-------|------------|--------|-------|
 | id | Exact match | Yes | — |
-| title | Full-text | Yes | 3.0× |
-| tags | Full-text | Yes | 2.5× |
-| path | Full-text | Yes | 2.0× |
-| path_components | Full-text | No | 2.0× |
+| title | Full-text | Yes | 10.0× |
+| tags | Full-text | Yes | 5.0× |
+| path | Full-text | Yes | 8.0× |
 | tree | Exact match | Yes | — |
 | body | Full-text | Yes | 1.0× |
 | breadcrumb | No | Yes | — |
