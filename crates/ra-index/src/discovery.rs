@@ -4,13 +4,10 @@
 //! applying include/exclude patterns and filtering out binaries and
 //! directory symlinks.
 
-use std::{
-    ffi::OsStr,
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::{ffi::OsStr, path::PathBuf, time::SystemTime};
 
 use ra_config::{CompiledPatterns, Tree};
+use ra_context::is_binary_file;
 use walkdir::WalkDir;
 
 use crate::IndexError;
@@ -105,32 +102,6 @@ pub fn discover_files(
 /// Checks if a filename represents a hidden file (starts with '.').
 fn is_hidden(name: &OsStr) -> bool {
     name.to_str().is_some_and(|s| s.starts_with('.'))
-}
-
-/// Checks if a file is likely binary based on extension.
-///
-/// This is a heuristic check - files with known binary extensions are skipped.
-/// Unknown extensions are assumed to be text files.
-fn is_binary_file(path: &Path) -> bool {
-    const BINARY_EXTENSIONS: &[&str] = &[
-        // Images
-        "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg", "tiff", "tif", "psd", "raw",
-        "heic", "heif", // Audio
-        "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a", "opus", // Video
-        "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg",
-        // Archives
-        "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "iso", "dmg", // Executables
-        "exe", "dll", "so", "dylib", "bin", "app", // Documents (binary)
-        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
-        // Fonts
-        "ttf", "otf", "woff", "woff2", "eot", // Database
-        "db", "sqlite", "sqlite3", "mdb", // Other binary
-        "class", "pyc", "pyo", "o", "a", "lib", "obj", "wasm",
-    ];
-
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| BINARY_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
 }
 
 #[cfg(test)]
@@ -245,19 +216,6 @@ mod test {
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, PathBuf::from("published.md"));
-    }
-
-    #[test]
-    fn is_binary_file_detects_binary_extensions() {
-        assert!(is_binary_file(Path::new("image.png")));
-        assert!(is_binary_file(Path::new("archive.ZIP")));
-        assert!(is_binary_file(Path::new("video.mp4")));
-        assert!(is_binary_file(Path::new("doc.pdf")));
-
-        assert!(!is_binary_file(Path::new("readme.md")));
-        assert!(!is_binary_file(Path::new("notes.txt")));
-        assert!(!is_binary_file(Path::new("code.rs")));
-        assert!(!is_binary_file(Path::new("no_extension")));
     }
 
     #[test]
