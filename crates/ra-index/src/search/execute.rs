@@ -323,7 +323,6 @@ impl Searcher {
                 field_matches.insert(
                     field_name.to_string(),
                     FieldMatch {
-                        matched_terms: freqs.keys().cloned().collect(),
                         term_frequencies: freqs,
                     },
                 );

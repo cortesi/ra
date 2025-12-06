@@ -900,7 +900,7 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
         let matched_in_doc: HashSet<&str> = details
             .field_matches
             .values()
-            .flat_map(|fm| fm.matched_terms.iter().map(String::as_str))
+            .flat_map(|fm| fm.term_frequencies.keys().map(String::as_str))
             .collect();
 
         // Always show matched terms at verbosity >= 1
@@ -986,17 +986,14 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
             // Show per-field match details with term frequencies
             if !details.field_matches.is_empty() {
                 for (field, field_match) in &details.field_matches {
-                    if field_match.matched_terms.is_empty() {
+                    if field_match.term_frequencies.is_empty() {
                         continue;
                     }
                     // Show each term with its frequency
                     let term_info: Vec<String> = field_match
-                        .matched_terms
+                        .term_frequencies
                         .iter()
-                        .map(|term| {
-                            let freq = field_match.term_frequencies.get(term).unwrap_or(&1);
-                            format!("{term} x {freq}")
-                        })
+                        .map(|(term, freq)| format!("{term} x {freq}"))
                         .collect();
                     output.push_str(&format!(
                         "  {} {}\n",
