@@ -47,26 +47,29 @@ impl MatchDetails {
     }
 }
 
-/// Search result with optional snippet and match metadata.
+/// A single search candidate from the index.
+///
+/// This represents a chunk that matched a search query, with all the metadata
+/// needed for display, scoring, and hierarchical aggregation.
 #[derive(Debug, Clone)]
-pub struct SearchResult {
-    /// Unique chunk identifier (`{tree}:{path}#slug` or `{tree}:{path}`).
+pub struct SearchCandidate {
+    /// Unique chunk identifier: `{tree}:{path}#{slug}` or `{tree}:{path}`.
     pub id: String,
-    /// Document identifier (`{tree}:{path}`).
+    /// Document identifier: `{tree}:{path}` (same for all chunks in a file).
     pub doc_id: String,
     /// Parent chunk identifier, or None for document nodes.
     pub parent_id: Option<String>,
     /// Chunk title.
     pub title: String,
-    /// Tree name the chunk belongs to.
+    /// Tree name this chunk belongs to.
     pub tree: String,
     /// File path within the tree.
     pub path: String,
     /// Chunk body content.
     pub body: String,
-    /// Hierarchy breadcrumb.
+    /// Breadcrumb showing hierarchy path.
     pub breadcrumb: String,
-    /// Hierarchy depth (0 = document, 1-6 = heading).
+    /// Hierarchy depth: 0 for document, 1-6 for h1-h6.
     pub depth: u64,
     /// Document order index (0-based pre-order traversal).
     pub position: u64,
@@ -76,16 +79,21 @@ pub struct SearchResult {
     pub byte_end: u64,
     /// Number of siblings including this node.
     pub sibling_count: u64,
-    /// Relevance score (after local boost).
+    /// Search relevance score (after boosting).
     pub score: f32,
-    /// Optional HTML snippet with highlights.
+    /// Optional snippet with query terms highlighted.
     pub snippet: Option<String>,
-    /// Byte ranges for matched terms in the body.
+    /// Byte ranges within `body` where search terms match.
+    ///
+    /// Offsets are byte positions into the returned `body` text, already sorted and merged
+    /// (no overlaps). Each range aligns to a token produced by the index analyzer after
+    /// lowercasing/stemming/fuzzy expansion, so consumers can safely highlight the original
+    /// substrings using these offsets.
     pub match_ranges: Vec<Range<usize>>,
-    /// Byte ranges for matched terms in the title.
+    /// Byte ranges within `title` where search terms match.
     pub title_match_ranges: Vec<Range<usize>>,
-    /// Byte ranges for matched terms in the path.
+    /// Byte ranges within `path` where search terms match.
     pub path_match_ranges: Vec<Range<usize>>,
-    /// Optional per-field match details and explanations.
+    /// Detailed match information for verbose output.
     pub match_details: Option<MatchDetails>,
 }

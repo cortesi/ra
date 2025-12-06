@@ -57,9 +57,9 @@ pub use indexer::{IndexStats, Indexer, ProgressReporter, SilentReporter};
 pub use location::index_directory;
 pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::is_binary_file;
-pub use result::{SearchCandidate, SearchResult as AggregatedSearchResult};
+pub use result::SearchResult as AggregatedSearchResult;
 pub use search::{
-    MatchDetails, SearchParams, SearchResult, Searcher, TreeFilteredSearcher, merge_ranges,
+    MatchDetails, SearchCandidate, SearchParams, Searcher, TreeFilteredSearcher, merge_ranges,
     open_searcher,
 };
 pub use status::{IndexStatus, detect_index_status};

@@ -1,63 +1,12 @@
 //! Search result types for the hierarchical search algorithm.
 //!
 //! This module defines the result types used by the three-phase search algorithm:
-//! - [`SearchCandidate`]: A single chunk match from the index
+//! - [`SearchCandidate`]: A single chunk match from the index (re-exported from search)
 //! - [`SearchResult`]: Either a single match or an aggregated parent with constituents
 
 use std::{cmp::Ordering, ops::Range};
 
-use super::search::MatchDetails;
-
-/// A single search candidate from the index.
-///
-/// This represents a chunk that matched a search query, with all the metadata
-/// needed for display, scoring, and hierarchical aggregation.
-#[derive(Debug, Clone)]
-pub struct SearchCandidate {
-    /// Unique chunk identifier: `{tree}:{path}#{slug}` or `{tree}:{path}`.
-    pub id: String,
-    /// Document identifier: `{tree}:{path}` (same for all chunks in a file).
-    pub doc_id: String,
-    /// Parent chunk identifier, or None for document nodes.
-    pub parent_id: Option<String>,
-    /// Chunk title.
-    pub title: String,
-    /// Tree name this chunk belongs to.
-    pub tree: String,
-    /// File path within the tree.
-    pub path: String,
-    /// Chunk body content.
-    pub body: String,
-    /// Breadcrumb showing hierarchy path.
-    pub breadcrumb: String,
-    /// Hierarchy depth: 0 for document, 1-6 for h1-h6.
-    pub depth: u64,
-    /// Document order index (0-based pre-order traversal).
-    pub position: u64,
-    /// Byte offset where content span starts.
-    pub byte_start: u64,
-    /// Byte offset where content span ends.
-    pub byte_end: u64,
-    /// Number of siblings including this node.
-    pub sibling_count: u64,
-    /// Search relevance score (after boosting).
-    pub score: f32,
-    /// Optional snippet with query terms highlighted.
-    pub snippet: Option<String>,
-    /// Byte ranges within `body` where search terms match.
-    ///
-    /// Offsets are byte positions into the returned `body` text, already sorted and merged
-    /// (no overlaps). Each range aligns to a token produced by the index analyzer after
-    /// lowercasing/stemming/fuzzy expansion, so consumers can safely highlight the original
-    /// substrings using these offsets.
-    pub match_ranges: Vec<Range<usize>>,
-    /// Byte ranges within `title` where search terms match.
-    pub title_match_ranges: Vec<Range<usize>>,
-    /// Byte ranges within `path` where search terms match.
-    pub path_match_ranges: Vec<Range<usize>>,
-    /// Detailed match information for verbose output.
-    pub match_details: Option<MatchDetails>,
-}
+pub use super::search::{MatchDetails, SearchCandidate};
 
 /// A search result, either a single match or an aggregated parent.
 ///
@@ -314,36 +263,6 @@ impl SearchResult {
             title_match_ranges: parent.title_match_ranges,
             path_match_ranges: parent.path_match_ranges,
             constituents,
-        }
-    }
-}
-
-/// Converts from the internal search::SearchResult to a SearchCandidate.
-///
-/// This is used to bridge between the legacy search result type and the new
-/// hierarchical search algorithm types.
-impl From<super::search::SearchResult> for SearchCandidate {
-    fn from(r: super::search::SearchResult) -> Self {
-        Self {
-            id: r.id,
-            doc_id: r.doc_id,
-            parent_id: r.parent_id,
-            title: r.title,
-            tree: r.tree,
-            path: r.path,
-            body: r.body,
-            breadcrumb: r.breadcrumb,
-            depth: r.depth,
-            position: r.position,
-            byte_start: r.byte_start,
-            byte_end: r.byte_end,
-            sibling_count: r.sibling_count,
-            score: r.score,
-            snippet: r.snippet,
-            match_ranges: r.match_ranges,
-            title_match_ranges: r.title_match_ranges,
-            path_match_ranges: r.path_match_ranges,
-            match_details: r.match_details,
         }
     }
 }

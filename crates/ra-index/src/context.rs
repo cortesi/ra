@@ -351,7 +351,7 @@ impl<'a> ContextSearch<'a> {
 
                 // Convert the first result to a candidate with high score for priority
                 let first_result = search_results.into_iter().next().unwrap();
-                let mut candidate: SearchCandidate = first_result.into();
+                let mut candidate: SearchCandidate = first_result;
                 candidate.score = f32::MAX; // Manual inclusion gets max score to stay at top
 
                 to_prepend.push(SearchResult::single(candidate));

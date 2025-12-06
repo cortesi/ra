@@ -16,7 +16,7 @@
 //!
 //! The function returns the first 3 results (indices 0, 1, 2).
 
-use crate::result::SearchCandidate;
+use crate::SearchCandidate;
 
 /// Default cutoff ratio for elbow detection.
 ///

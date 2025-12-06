@@ -33,7 +33,7 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-use crate::result::{SearchCandidate, SearchResult};
+use crate::{SearchCandidate, result::SearchResult};
 
 /// Default aggregation threshold.
 ///

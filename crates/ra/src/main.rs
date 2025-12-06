@@ -22,7 +22,7 @@ use ra_highlight::{
 };
 use ra_index::{
     AggregatedSearchResult, ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats,
-    IndexStatus, Indexer, ProgressReporter, SearchCandidate, SearchParams, SearchResult, Searcher,
+    IndexStatus, Indexer, ProgressReporter, SearchCandidate, SearchParams, Searcher,
     SilentReporter, detect_index_status, index_directory, merge_ranges, open_searcher, parse_query,
 };
 use serde::Serialize;
@@ -1749,7 +1749,7 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
     };
 
     // Get results
-    let results: Vec<SearchResult> = if full_document || slug.is_none() {
+    let results: Vec<SearchCandidate> = if full_document || slug.is_none() {
         match searcher.get_by_path(&tree, &path) {
             Ok(r) => r,
             Err(e) => {
@@ -1775,7 +1775,7 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
 
     let aggregated: Vec<AggregatedSearchResult> = results
         .into_iter()
-        .map(|r| AggregatedSearchResult::Single(SearchCandidate::from(r)))
+        .map(AggregatedSearchResult::Single)
         .collect();
 
     output_aggregated_results(&aggregated, id, false, false, json, 0, &searcher)

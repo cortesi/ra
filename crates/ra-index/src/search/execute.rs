@@ -17,13 +17,13 @@ use tantivy::{
 use super::{
     Searcher,
     ranges::{extract_match_ranges, merge_ranges},
-    types::{FieldMatch, MatchDetails, SearchResult},
+    types::{FieldMatch, MatchDetails, SearchCandidate},
 };
 use crate::{
     IndexError,
     aggregate::{ParentInfo, aggregate},
     elbow::elbow_cutoff,
-    result::{SearchCandidate, SearchResult as AggregatedSearchResult},
+    result::SearchResult as AggregatedSearchResult,
     schema::boost,
 };
 
@@ -36,7 +36,7 @@ impl Searcher {
         &mut self,
         query_str: &str,
         limit: usize,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
         let query = match self.build_query(query_str)? {
             Some(q) => q,
             None => return Ok(Vec::new()),
@@ -56,12 +56,12 @@ impl Searcher {
         &mut self,
         topics: &[&str],
         limit: usize,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
         if topics.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut results_by_id: HashMap<String, SearchResult> = HashMap::new();
+        let mut results_by_id: HashMap<String, SearchCandidate> = HashMap::new();
 
         for topic in topics {
             let topic_results = self.search(topic, limit)?;
@@ -99,7 +99,7 @@ impl Searcher {
             }
         }
 
-        let mut results: Vec<SearchResult> = results_by_id.into_values().collect();
+        let mut results: Vec<SearchCandidate> = results_by_id.into_values().collect();
         results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -117,7 +117,7 @@ impl Searcher {
         &mut self,
         query_str: &str,
         limit: usize,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
         let query = match self.build_query(query_str)? {
             Some(q) => q,
             None => return Ok(Vec::new()),
@@ -134,7 +134,7 @@ impl Searcher {
         query: &dyn Query,
         query_terms: &[String],
         limit: usize,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
         self.execute_query_core(query, query_terms, limit, true)
     }
 
@@ -144,7 +144,7 @@ impl Searcher {
         query: &dyn Query,
         query_terms: &[String],
         limit: usize,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
         self.execute_query_core(query, query_terms, limit, false)
     }
 
@@ -157,7 +157,7 @@ impl Searcher {
         query_terms: &[String],
         limit: usize,
         include_explanation: bool,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
         let reader = self
             .index
             .reader()
@@ -227,7 +227,7 @@ impl Searcher {
         query_terms: &[String],
         limit: usize,
         with_snippets: bool,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
         let reader = self
             .index
             .reader()
@@ -437,14 +437,14 @@ impl Searcher {
         freqs
     }
 
-    /// Converts a Tantivy document plus scoring context into a `SearchResult`.
+    /// Converts a Tantivy document plus scoring context into a `SearchCandidate`.
     pub(crate) fn doc_to_result(
         &self,
         doc: &TantivyDocument,
         base_score: f32,
         snippet_generator: &Option<SnippetGenerator>,
         matched_terms: &HashSet<String>,
-    ) -> SearchResult {
+    ) -> SearchCandidate {
         let id = self.get_text_field(doc, self.schema.id);
         let doc_id = self.get_text_field(doc, self.schema.doc_id);
         let parent_id_str = self.get_text_field(doc, self.schema.parent_id);
@@ -480,7 +480,7 @@ impl Searcher {
         let title_match_ranges = extract_match_ranges(&self.analyzer, &title, matched_terms);
         let path_match_ranges = extract_match_ranges(&self.analyzer, &path, matched_terms);
 
-        SearchResult {
+        SearchCandidate {
             id,
             doc_id,
             parent_id,

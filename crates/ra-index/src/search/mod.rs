@@ -45,8 +45,7 @@ pub use open::open_searcher;
 pub use params::{DEFAULT_CANDIDATE_LIMIT, SearchParams};
 pub use ranges::merge_ranges;
 use tantivy::{Index, tokenizer::TextAnalyzer};
-#[allow(unused_imports)]
-pub use types::{FieldMatch, MatchDetails, SearchResult};
+pub use types::{MatchDetails, SearchCandidate};
 
 use crate::{query::QueryCompiler, schema::IndexSchema};
 

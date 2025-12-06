@@ -22,11 +22,7 @@ use super::{
     execute::{aggregate_candidates, apply_elbow, single_results_from_candidates},
     normalize::normalize_scores_across_trees,
 };
-use crate::{
-    IndexError,
-    aggregate::ParentInfo,
-    result::{SearchCandidate, SearchResult as AggregatedSearchResult},
-};
+use crate::{IndexError, aggregate::ParentInfo, result::SearchResult as AggregatedSearchResult};
 
 impl Searcher {
     /// Searches using the hierarchical algorithm with per-tree score normalization.
@@ -108,8 +104,8 @@ impl Searcher {
             self.execute_query_with_highlights(&*query, query_terms, params.candidate_limit)?
         };
 
-        let candidates: Vec<SearchCandidate> =
-            raw_results.into_iter().map(SearchCandidate::from).collect();
+        // raw_results are already SearchCandidates
+        let candidates = raw_results;
 
         // Phase 2: Normalize scores across trees (only for multi-tree searches)
         // This ensures fair comparison when trees have different content densities.

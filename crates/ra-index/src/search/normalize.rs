@@ -42,7 +42,7 @@
 
 use std::{cmp::Ordering, collections::HashMap};
 
-use crate::result::SearchCandidate;
+use super::SearchCandidate;
 
 /// Normalizes scores across multiple trees using top-score normalization.
 ///

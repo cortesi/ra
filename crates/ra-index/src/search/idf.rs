@@ -10,7 +10,7 @@ use tantivy::{
     schema::IndexRecordOption,
 };
 
-use super::{Searcher, types::SearchResult};
+use super::{SearchCandidate, Searcher};
 use crate::IndexError;
 
 impl Searcher {
@@ -82,7 +82,7 @@ impl Searcher {
     }
 
     /// Retrieves a chunk by its exact ID.
-    pub fn get_by_id(&self, id: &str) -> Result<Option<SearchResult>, IndexError> {
+    pub fn get_by_id(&self, id: &str) -> Result<Option<SearchCandidate>, IndexError> {
         let reader = self
             .index
             .reader()
@@ -111,7 +111,7 @@ impl Searcher {
     }
 
     /// Lists all chunks in the index, ordered by ID.
-    pub fn list_all(&self) -> Result<Vec<SearchResult>, IndexError> {
+    pub fn list_all(&self) -> Result<Vec<SearchCandidate>, IndexError> {
         let reader = self
             .index
             .reader()
@@ -123,7 +123,7 @@ impl Searcher {
             .search(&AllQuery, &TopDocs::with_limit(100_000))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        let mut results: Vec<SearchResult> = all_docs
+        let mut results: Vec<SearchCandidate> = all_docs
             .into_iter()
             .filter_map(|(score, doc_address)| {
                 let doc: tantivy::TantivyDocument = searcher.doc(doc_address).ok()?;
@@ -138,7 +138,7 @@ impl Searcher {
     }
 
     /// Retrieves all chunks from a document by path.
-    pub fn get_by_path(&self, tree: &str, path: &str) -> Result<Vec<SearchResult>, IndexError> {
+    pub fn get_by_path(&self, tree: &str, path: &str) -> Result<Vec<SearchCandidate>, IndexError> {
         let reader = self
             .index
             .reader()
@@ -152,7 +152,7 @@ impl Searcher {
             .search(&AllQuery, &TopDocs::with_limit(10000))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        let mut results: Vec<SearchResult> = all_docs
+        let mut results: Vec<SearchCandidate> = all_docs
             .into_iter()
             .filter_map(|(score, doc_address)| {
                 let doc: tantivy::TantivyDocument = searcher.doc(doc_address).ok()?;
