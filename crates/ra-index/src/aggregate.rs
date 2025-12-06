@@ -41,67 +41,6 @@ use crate::{SearchCandidate, result::SearchResult};
 /// this threshold, the matches are aggregated into their parent.
 pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
 
-/// Information about a parent node needed for aggregation.
-///
-/// This is used to look up parent nodes that may not have matched the query
-/// directly but are needed to aggregate their matching children.
-#[derive(Debug, Clone)]
-pub struct ParentInfo {
-    /// Unique chunk identifier.
-    pub id: String,
-    /// Document identifier.
-    pub doc_id: String,
-    /// Parent's parent identifier, or None.
-    pub parent_id: Option<String>,
-    /// Title of the parent node.
-    pub title: String,
-    /// Tree name.
-    pub tree: String,
-    /// File path.
-    pub path: String,
-    /// Body content of the parent.
-    pub body: String,
-    /// Breadcrumb.
-    pub breadcrumb: String,
-    /// Hierarchy depth.
-    pub depth: u64,
-    /// Position in document order.
-    pub position: u64,
-    /// Byte start offset.
-    pub byte_start: u64,
-    /// Byte end offset.
-    pub byte_end: u64,
-    /// Number of siblings (including this node).
-    pub sibling_count: u64,
-}
-
-impl ParentInfo {
-    /// Converts this info into a SearchCandidate with zero score.
-    fn to_candidate(&self) -> SearchCandidate {
-        SearchCandidate {
-            id: self.id.clone(),
-            doc_id: self.doc_id.clone(),
-            parent_id: self.parent_id.clone(),
-            title: self.title.clone(),
-            tree: self.tree.clone(),
-            path: self.path.clone(),
-            body: self.body.clone(),
-            breadcrumb: self.breadcrumb.clone(),
-            depth: self.depth,
-            position: self.position,
-            byte_start: self.byte_start,
-            byte_end: self.byte_end,
-            sibling_count: self.sibling_count,
-            score: 0.0,
-            snippet: None,
-            match_ranges: vec![],
-            title_match_ranges: vec![],
-            path_match_ranges: vec![],
-            match_details: None,
-        }
-    }
-}
-
 /// Aggregates search candidates based on hierarchical relationships.
 ///
 /// This implements Phase 3 of the search algorithm. Candidates are processed
@@ -111,7 +50,8 @@ impl ParentInfo {
 /// # Arguments
 /// * `candidates` - Search candidates to potentially aggregate
 /// * `threshold` - Minimum ratio of matching/total siblings to trigger aggregation (0.0 to 1.0)
-/// * `parent_lookup` - Function to look up parent node information by ID
+/// * `parent_lookup` - Function to look up parent node by ID, returning a `SearchCandidate`
+///   with zero score and empty match data for nodes that didn't match directly
 ///
 /// # Returns
 /// A vector of SearchResults, where some may be aggregated and others single matches.
@@ -121,7 +61,7 @@ pub fn aggregate<F>(
     parent_lookup: F,
 ) -> Vec<SearchResult>
 where
-    F: Fn(&str) -> Option<ParentInfo>,
+    F: Fn(&str) -> Option<SearchCandidate>,
 {
     if candidates.is_empty() {
         return Vec::new();
@@ -180,8 +120,10 @@ where
 
             // Check if we should aggregate
             if ratio >= threshold {
-                // Look up parent info
-                if let Some(parent_info) = parent_lookup(&parent_id) {
+                // Look up parent as a SearchCandidate
+                if let Some(parent_from_lookup) = parent_lookup(&parent_id) {
+                    let parent_depth = parent_from_lookup.depth;
+
                     // Collect constituents
                     let mut constituents: Vec<SearchCandidate> = Vec::new();
                     for child_id in &child_ids {
@@ -216,16 +158,15 @@ where
                                 }) => {
                                     // Parent was already aggregated - merge constituents
                                     constituents.extend(inner);
-                                    parent_info.to_candidate()
+                                    parent_from_lookup.clone()
                                 }
                             }
                         } else {
-                            parent_info.to_candidate()
+                            parent_from_lookup
                         };
 
                     // Create aggregated result
                     let aggregated = SearchResult::aggregated(parent_candidate, constituents);
-                    let parent_depth = parent_info.depth;
 
                     current_results.insert(
                         parent_id.clone(),
@@ -357,29 +298,6 @@ mod test {
         }
     }
 
-    fn make_parent_info(
-        id: &str,
-        parent_id: Option<&str>,
-        depth: u64,
-        sibling_count: u64,
-    ) -> ParentInfo {
-        ParentInfo {
-            id: id.to_string(),
-            doc_id: "local:test.md".to_string(),
-            parent_id: parent_id.map(String::from),
-            title: format!("Title {id}"),
-            tree: "local".to_string(),
-            path: "test.md".to_string(),
-            body: format!("Body of {id}"),
-            breadcrumb: format!("> {id}"),
-            depth,
-            position: 0,
-            byte_start: 0,
-            byte_end: 100,
-            sibling_count,
-        }
-    }
-
     #[test]
     fn empty_input() {
         let results = aggregate(vec![], 0.5, |_| None);
@@ -415,7 +333,7 @@ mod test {
         let c1 = make_candidate("local:test.md#s1", Some("local:test.md"), 5.0, 1, 4);
         let c2 = make_candidate("local:test.md#s2", Some("local:test.md"), 4.0, 1, 4);
 
-        let parent = make_parent_info("local:test.md", None, 0, 1);
+        let parent = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![c1, c2], 0.5, |id| {
             if id == "local:test.md" {
@@ -438,7 +356,7 @@ mod test {
         let c2 = make_candidate("local:test.md#s2", Some("local:test.md"), 6.0, 1, 3);
         let c3 = make_candidate("local:test.md#s3", Some("local:test.md"), 4.0, 1, 3);
 
-        let parent = make_parent_info("local:test.md", None, 0, 1);
+        let parent = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![c1, c2, c3], 0.5, |id| {
             if id == "local:test.md" {
@@ -463,11 +381,11 @@ mod test {
         let c1 = make_candidate("local:test.md#s1", Some("local:test.md"), 5.0, 1, 2);
         let c2 = make_candidate("local:test.md#s2", Some("local:test.md"), 4.0, 1, 2);
 
-        let parent_info = make_parent_info("local:test.md", None, 0, 1);
+        let parent_lookup = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![parent_match, c1, c2], 0.5, |id| {
             if id == "local:test.md" {
-                Some(parent_info.clone())
+                Some(parent_lookup.clone())
             } else {
                 None
             }
@@ -502,12 +420,12 @@ mod test {
             2,
         );
 
-        let section_info = make_parent_info("local:test.md#section", Some("local:test.md"), 1, 1);
-        let doc_info = make_parent_info("local:test.md", None, 0, 1);
+        let section = make_candidate("local:test.md#section", Some("local:test.md"), 0.0, 1, 1);
+        let doc = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![sub1, sub2], 0.5, |id| match id {
-            "local:test.md#section" => Some(section_info.clone()),
-            "local:test.md" => Some(doc_info.clone()),
+            "local:test.md#section" => Some(section.clone()),
+            "local:test.md" => Some(doc.clone()),
             _ => None,
         });
 
@@ -545,14 +463,14 @@ mod test {
         let sub1_2 = make_candidate("local:test.md#s1#sub2", Some("local:test.md#s1"), 4.0, 2, 2);
         let sub2_1 = make_candidate("local:test.md#s2#sub1", Some("local:test.md#s2"), 3.0, 2, 3);
 
-        let section1_info = make_parent_info("local:test.md#s1", Some("local:test.md"), 1, 2);
-        let section2_info = make_parent_info("local:test.md#s2", Some("local:test.md"), 1, 2);
-        let doc_info = make_parent_info("local:test.md", None, 0, 1);
+        let section1 = make_candidate("local:test.md#s1", Some("local:test.md"), 0.0, 1, 2);
+        let section2 = make_candidate("local:test.md#s2", Some("local:test.md"), 0.0, 1, 2);
+        let doc = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![sub1_1, sub1_2, sub2_1], 0.5, |id| match id {
-            "local:test.md#s1" => Some(section1_info.clone()),
-            "local:test.md#s2" => Some(section2_info.clone()),
-            "local:test.md" => Some(doc_info.clone()),
+            "local:test.md#s1" => Some(section1.clone()),
+            "local:test.md#s2" => Some(section2.clone()),
+            "local:test.md" => Some(doc.clone()),
             _ => None,
         });
 
@@ -587,8 +505,8 @@ mod test {
         let c1 = make_candidate("local:a.md#s1", Some("local:a.md"), 5.0, 1, 2);
         let c2 = make_candidate("local:b.md#s1", Some("local:b.md"), 4.0, 1, 2);
 
-        let parent_a = make_parent_info("local:a.md", None, 0, 1);
-        let parent_b = make_parent_info("local:b.md", None, 0, 1);
+        let parent_a = make_candidate("local:a.md", None, 0.0, 0, 1);
+        let parent_b = make_candidate("local:b.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![c1, c2], 0.5, |id| match id {
             "local:a.md" => Some(parent_a.clone()),
@@ -624,7 +542,7 @@ mod test {
         // With threshold 0, even 1 match out of many should aggregate
         let c1 = make_candidate("local:test.md#s1", Some("local:test.md"), 5.0, 1, 100);
 
-        let parent = make_parent_info("local:test.md", None, 0, 1);
+        let parent = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![c1], 0.0, |id| {
             if id == "local:test.md" {
@@ -643,7 +561,7 @@ mod test {
         // With threshold 1.0, need all siblings to match
         let c1 = make_candidate("local:test.md#s1", Some("local:test.md"), 5.0, 1, 2);
 
-        let parent = make_parent_info("local:test.md", None, 0, 1);
+        let parent = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         // Only 1 out of 2 siblings = 50% < 100%
         let results = aggregate(vec![c1], 1.0, |id| {
@@ -666,7 +584,7 @@ mod test {
 
         let c2 = make_candidate("local:test.md#s2", Some("local:test.md"), 4.0, 1, 2);
 
-        let parent = make_parent_info("local:test.md", None, 0, 1);
+        let parent = make_candidate("local:test.md", None, 0.0, 0, 1);
 
         let results = aggregate(vec![c1, c2], 0.5, |id| {
             if id == "local:test.md" {

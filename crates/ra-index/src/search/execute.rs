@@ -20,11 +20,8 @@ use super::{
     types::{FieldMatch, MatchDetails, SearchCandidate},
 };
 use crate::{
-    IndexError,
-    aggregate::{ParentInfo, aggregate},
-    elbow::elbow_cutoff,
-    result::SearchResult as AggregatedSearchResult,
-    schema::boost,
+    IndexError, aggregate::aggregate, elbow::elbow_cutoff,
+    result::SearchResult as AggregatedSearchResult, schema::boost,
 };
 
 /// Default maximum number of characters in a snippet.
@@ -521,7 +518,7 @@ impl Searcher {
 pub fn aggregate_candidates(
     candidates: Vec<SearchCandidate>,
     aggregation_threshold: f32,
-    lookup: impl Fn(&str) -> Option<ParentInfo>,
+    lookup: impl Fn(&str) -> Option<SearchCandidate>,
 ) -> Vec<AggregatedSearchResult> {
     aggregate(candidates, aggregation_threshold, lookup)
 }

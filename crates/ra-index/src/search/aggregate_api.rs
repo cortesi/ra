@@ -22,7 +22,7 @@ use super::{
     execute::{aggregate_candidates, apply_elbow, single_results_from_candidates},
     normalize::normalize_scores_across_trees,
 };
-use crate::{IndexError, aggregate::ParentInfo, result::SearchResult as AggregatedSearchResult};
+use crate::{IndexError, SearchCandidate, result::SearchResult as AggregatedSearchResult};
 
 impl Searcher {
     /// Searches using the hierarchical algorithm with per-tree score normalization.
@@ -127,7 +127,10 @@ impl Searcher {
     }
 
     /// Looks up a parent node by ID for aggregation.
-    fn lookup_parent(&self, parent_id: &str) -> Option<ParentInfo> {
+    ///
+    /// Returns a `SearchCandidate` with zero score and empty match data, suitable
+    /// for use as a parent node during hierarchical aggregation.
+    fn lookup_parent(&self, parent_id: &str) -> Option<SearchCandidate> {
         let reader = self.index.reader().ok()?;
         let searcher = reader.searcher();
 
@@ -158,7 +161,7 @@ impl Searcher {
             let byte_end = self.get_u64_field(&doc, self.schema.byte_end);
             let sibling_count = self.get_u64_field(&doc, self.schema.sibling_count);
 
-            Some(ParentInfo {
+            Some(SearchCandidate {
                 id,
                 doc_id,
                 parent_id,
@@ -172,6 +175,12 @@ impl Searcher {
                 byte_start,
                 byte_end,
                 sibling_count,
+                score: 0.0,
+                snippet: None,
+                match_ranges: vec![],
+                title_match_ranges: vec![],
+                path_match_ranges: vec![],
+                match_details: None,
             })
         } else {
             None
