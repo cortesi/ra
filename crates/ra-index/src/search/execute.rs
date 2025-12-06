@@ -300,71 +300,34 @@ impl Searcher {
 
         let title = self.get_text_field(doc, self.schema.title);
         let body = self.get_text_field(doc, self.schema.body);
-        let tags: Vec<String> = doc
+        let tags_text: String = doc
             .get_all(self.schema.tags)
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         let path = self.get_text_field(doc, self.schema.path);
 
         let mut field_matches: HashMap<String, FieldMatch> = HashMap::new();
         let mut field_scores: HashMap<String, f32> = HashMap::new();
 
-        let title_freqs = self.count_term_frequency_in_text(&title, &all_matched_terms);
-        if !title_freqs.is_empty() {
-            let matched: Vec<String> = title_freqs.keys().cloned().collect();
-            let title_score: f32 =
-                title_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::TITLE;
-            field_scores.insert("title".to_string(), title_score);
-            field_matches.insert(
-                "title".to_string(),
-                FieldMatch {
-                    matched_terms: matched,
-                    term_frequencies: title_freqs,
-                },
-            );
-        }
-
-        let body_freqs = self.count_term_frequency_in_text(&body, &all_matched_terms);
-        if !body_freqs.is_empty() {
-            let matched: Vec<String> = body_freqs.keys().cloned().collect();
-            let body_score: f32 = body_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::BODY;
-            field_scores.insert("body".to_string(), body_score);
-            field_matches.insert(
-                "body".to_string(),
-                FieldMatch {
-                    matched_terms: matched,
-                    term_frequencies: body_freqs,
-                },
-            );
-        }
-
-        let tags_text = tags.join(" ");
-        let tags_freqs = self.count_term_frequency_in_text(&tags_text, &all_matched_terms);
-        if !tags_freqs.is_empty() {
-            let matched: Vec<String> = tags_freqs.keys().cloned().collect();
-            let tags_score: f32 = tags_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::TAGS;
-            field_scores.insert("tags".to_string(), tags_score);
-            field_matches.insert(
-                "tags".to_string(),
-                FieldMatch {
-                    matched_terms: matched,
-                    term_frequencies: tags_freqs,
-                },
-            );
-        }
-
-        let path_freqs = self.count_term_frequency_in_text(&path, &all_matched_terms);
-        if !path_freqs.is_empty() {
-            let matched: Vec<String> = path_freqs.keys().cloned().collect();
-            let path_score: f32 = path_freqs.values().map(|&c| c as f32).sum::<f32>() * boost::PATH;
-            field_scores.insert("path".to_string(), path_score);
-            field_matches.insert(
-                "path".to_string(),
-                FieldMatch {
-                    matched_terms: matched,
-                    term_frequencies: path_freqs,
-                },
-            );
+        for (field_name, text, field_boost) in [
+            ("title", title.as_str(), boost::TITLE),
+            ("body", body.as_str(), boost::BODY),
+            ("tags", tags_text.as_str(), boost::TAGS),
+            ("path", path.as_str(), boost::PATH),
+        ] {
+            let freqs = self.count_term_frequency_in_text(text, &all_matched_terms);
+            if !freqs.is_empty() {
+                let score: f32 = freqs.values().map(|&c| c as f32).sum::<f32>() * field_boost;
+                field_scores.insert(field_name.to_string(), score);
+                field_matches.insert(
+                    field_name.to_string(),
+                    FieldMatch {
+                        matched_terms: freqs.keys().cloned().collect(),
+                        term_frequencies: freqs,
+                    },
+                );
+            }
         }
 
         let score_explanation = if include_explanation {
