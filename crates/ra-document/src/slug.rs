@@ -22,11 +22,6 @@ pub struct Slugifier {
 }
 
 impl Slugifier {
-    /// Creates a new slugifier with no prior slugs.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Generates a GitHub-compatible slug from heading text.
     ///
     /// The algorithm:
@@ -111,13 +106,13 @@ mod tests {
 
     #[test]
     fn test_basic_heading() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("Overview"), "overview");
     }
 
     #[test]
     fn test_with_spaces() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(
             slugifier.slugify("Error Handling Patterns"),
             "error-handling-patterns"
@@ -126,14 +121,14 @@ mod tests {
 
     #[test]
     fn test_with_punctuation() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // Punctuation like <> and ! are removed, spaces become hyphens
         assert_eq!(slugifier.slugify("The Result<T> Type!"), "the-resultt-type");
     }
 
     #[test]
     fn test_duplicate_headings() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("Overview"), "overview");
         assert_eq!(slugifier.slugify("Overview"), "overview-1");
         assert_eq!(slugifier.slugify("Overview"), "overview-2");
@@ -141,38 +136,38 @@ mod tests {
 
     #[test]
     fn test_all_punctuation() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // When all chars are punctuation, fallback to "heading"
         assert_eq!(slugifier.slugify("!@#$%^&*()"), "heading");
     }
 
     #[test]
     fn test_leading_trailing_spaces() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("  Hello World  "), "hello-world");
     }
 
     #[test]
     fn test_consecutive_hyphens() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("Hello  --  World"), "hello-world");
     }
 
     #[test]
     fn test_underscores_preserved() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("my_function_name"), "my_function_name");
     }
 
     #[test]
     fn test_mixed_case() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("CamelCase Heading"), "camelcase-heading");
     }
 
     #[test]
     fn test_numbers() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(
             slugifier.slugify("Chapter 1: Introduction"),
             "chapter-1-introduction"
@@ -181,26 +176,26 @@ mod tests {
 
     #[test]
     fn test_unicode_removed() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // Non-ASCII chars are removed (GitHub behavior)
         assert_eq!(slugifier.slugify("Héllo Wörld"), "hllo-wrld");
     }
 
     #[test]
     fn test_empty_heading() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify(""), "heading");
     }
 
     #[test]
     fn test_only_hyphens() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("---"), "heading");
     }
 
     #[test]
     fn test_mixed_duplicates() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("Intro"), "intro");
         assert_eq!(slugifier.slugify("Setup"), "setup");
         assert_eq!(slugifier.slugify("Intro"), "intro-1");
@@ -210,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_reserve_slug() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
 
         slugifier.reserve_slug("preamble");
         assert_eq!(slugifier.slugify("Preamble"), "preamble-1");
@@ -219,35 +214,35 @@ mod tests {
 
     #[test]
     fn test_emoji_only_heading() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // Emoji are non-ASCII, so they get removed, leaving "heading" fallback
         assert_eq!(slugifier.slugify("🚀 🎉 ✨"), "heading");
     }
 
     #[test]
     fn test_emoji_with_text() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // Emoji removed, text preserved
         assert_eq!(slugifier.slugify("🚀 Getting Started"), "getting-started");
     }
 
     #[test]
     fn test_inline_code() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // Backticks are punctuation and get removed
         assert_eq!(slugifier.slugify("Using `Result<T>`"), "using-resultt");
     }
 
     #[test]
     fn test_inline_code_only() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // Code with only symbols/punctuation
         assert_eq!(slugifier.slugify("`<T>`"), "t");
     }
 
     #[test]
     fn test_special_characters() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         assert_eq!(slugifier.slugify("C++ Programming"), "c-programming");
         assert_eq!(slugifier.slugify("F# Language"), "f-language");
         assert_eq!(slugifier.slugify(".NET Framework"), "net-framework");
@@ -255,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_emoji_headings() {
-        let mut slugifier = Slugifier::new();
+        let mut slugifier = Slugifier::default();
         // Multiple emoji-only headings all become "heading", "heading-1", etc.
         assert_eq!(slugifier.slugify("🎉"), "heading");
         assert_eq!(slugifier.slugify("✨"), "heading-1");
