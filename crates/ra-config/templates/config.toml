@@ -25,7 +25,7 @@ fuzzy_distance = 1         # fuzzy matching (0 = off, 1-2 = Levenshtein distance
 
 # Context command settings - controls how `ra context` finds relevant docs
 [context]
-limit = 10                 # chunks to return
+terms = 50                 # max terms in query (higher = more diverse results)
 min_word_length = 4        # minimum word length for term extraction
 max_word_length = 30       # maximum word length for term extraction
 sample_size = 50000        # bytes to sample from large files

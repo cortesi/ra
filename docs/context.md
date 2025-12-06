@@ -129,7 +129,7 @@ Generated query:
 |------|-------------|
 | `--explain` | Show terms and query without searching |
 | `-n, --limit N` | Maximum results (default: 10) |
-| `--terms N` | Maximum terms in query (default: 15) |
+| `--terms N` | Maximum terms in query (default: 50; higher = more diverse) |
 | `-t, --tree NAME` | Limit to specific tree(s) |
 | `--list` | Output titles only |
 | `--matches` | Output only lines containing matches |
@@ -180,6 +180,7 @@ cutoff_ratio = 0.3            # Score ratio for relevance cutoff
 aggregation_threshold = 0.5   # Sibling ratio for hierarchical aggregation
 
 [context]
+terms = 50                    # Max terms in query (higher = more diverse results)
 min_term_frequency = 2        # Skip rare terms
 min_word_length = 4           # Skip short tokens
 max_word_length = 30          # Skip long tokens

@@ -91,10 +91,15 @@ Settings for `ra context` term extraction. Search parameters (limit, cutoff, etc
 
 | Key | Default | Description |
 |-----|---------|-------------|
+| `terms` | 50 | Maximum terms to include in query (higher = more diverse results) |
 | `min_term_frequency` | 2 | Skip terms appearing fewer times |
 | `min_word_length` | 4 | Skip shorter tokens |
 | `max_word_length` | 30 | Skip longer tokens |
 | `sample_size` | 50000 | Bytes to read from large files |
+
+For prose-heavy content (novels, documentation with many named entities), consider increasing
+`terms` to 100 or higher to capture locations, characters, and concepts that may appear
+infrequently but are semantically important.
 
 
 ## Context Rules
@@ -184,6 +189,7 @@ Changes trigger automatic reindexing on next use.
 
 ```toml
 [context]
+terms = 100             # More terms for richer semantic diversity
 min_term_frequency = 3  # Require more frequent terms
 
 [search]

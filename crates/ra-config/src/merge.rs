@@ -154,6 +154,9 @@ fn merge_context_settings(configs: &[ParsedConfig]) -> ContextSettings {
 
 /// Applies raw context scalar settings to result (not rules).
 fn apply_raw_context_scalars(result: &mut ContextSettings, raw: &RawContextSettings) {
+    if let Some(v) = raw.terms {
+        result.terms = v;
+    }
     if let Some(v) = raw.min_term_frequency {
         result.min_term_frequency = v;
     }

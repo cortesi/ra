@@ -279,9 +279,9 @@ EXAMPLES:
         #[arg(short = 'n', long)]
         limit: Option<usize>,
 
-        /// Maximum terms to include in the query
-        #[arg(long, default_value = "15")]
-        terms: usize,
+        /// Maximum terms to include in the query (higher = more diverse results)
+        #[arg(long)]
+        terms: Option<usize>,
 
         /// Output titles and snippets only
         #[arg(long)]
@@ -1395,7 +1395,7 @@ fn print_search_overrides(overrides: &ra_config::SearchOverrides, indent: &str) 
 fn cmd_context(
     files: &[String],
     limit: Option<usize>,
-    max_terms: usize,
+    max_terms: Option<usize>,
     list: bool,
     matches: bool,
     json: bool,
@@ -1411,6 +1411,9 @@ fn cmd_context(
         Ok(res) => res,
         Err(code) => return code,
     };
+
+    // Apply config default for max_terms if not specified on CLI
+    let max_terms = max_terms.unwrap_or(config.context.terms);
 
     // Ensure index is fresh (needed for both explain and search modes)
     let mut searcher = match ensure_index_fresh(&config) {

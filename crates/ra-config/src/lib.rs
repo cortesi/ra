@@ -257,6 +257,12 @@ impl SearchDefaults for SearchSettings {
 /// are inherited from `SearchSettings` and can be overridden per-rule.
 #[derive(Debug, Clone)]
 pub struct ContextSettings {
+    /// Maximum terms to include in context queries.
+    ///
+    /// Higher values capture more semantic diversity (locations, characters,
+    /// concepts) which is important for prose content where significant terms
+    /// may appear infrequently. Default is 50.
+    pub terms: usize,
     /// Ignore terms appearing less than this many times in source.
     pub min_term_frequency: usize,
     /// Ignore words shorter than this.
@@ -318,6 +324,7 @@ impl SearchOverrides {
 impl Default for ContextSettings {
     fn default() -> Self {
         Self {
+            terms: 50,
             min_term_frequency: 2,
             min_word_length: 4,
             max_word_length: 30,

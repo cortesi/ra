@@ -80,6 +80,8 @@ pub struct RawSearchSettings {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RawContextSettings {
+    /// Maximum terms to include in context queries.
+    pub terms: Option<usize>,
     /// Minimum term frequency for content analysis.
     pub min_term_frequency: Option<usize>,
     /// Minimum word length for content analysis.
@@ -284,6 +286,7 @@ stemmer = "german"
     fn test_parse_context_settings() {
         let toml = r#"
 [context]
+terms = 100
 min_term_frequency = 3
 min_word_length = 5
 max_word_length = 25
@@ -291,6 +294,7 @@ sample_size = 100000
 "#;
         let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
         let context = config.context.unwrap();
+        assert_eq!(context.terms, Some(100));
         assert_eq!(context.min_term_frequency, Some(3));
         assert_eq!(context.min_word_length, Some(5));
         assert_eq!(context.max_word_length, Some(25));

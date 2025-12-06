@@ -8,7 +8,12 @@ use ra_query::QueryExpr;
 use crate::rank::RankedTerm;
 
 /// Default number of terms to include in the query.
-pub const DEFAULT_TERM_LIMIT: usize = 15;
+///
+/// This value is set high enough to capture semantic diversity in prose content
+/// (locations, characters, concepts) where important terms may appear infrequently.
+/// For code-focused use cases, fewer terms typically suffice, but the extra terms
+/// add minimal noise due to TF-IDF weighting.
+pub const DEFAULT_TERM_LIMIT: usize = 50;
 
 /// A constructed context query with metadata.
 #[derive(Debug, Clone)]
