@@ -81,11 +81,6 @@ pub struct MoreLikeThisExplanation {
 }
 
 impl MoreLikeThisParams {
-    /// Creates a new builder with default values.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Sets the minimum document frequency.
     pub fn with_min_doc_frequency(mut self, value: u64) -> Self {
         self.min_doc_frequency = value;
@@ -369,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_mlt_params_builder() {
-        let params = MoreLikeThisParams::new()
+        let params = MoreLikeThisParams::default()
             .with_min_doc_frequency(5)
             .with_max_doc_frequency(1000)
             .with_min_term_frequency(2)
