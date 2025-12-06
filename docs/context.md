@@ -108,6 +108,9 @@ Show extracted terms and generated query without executing search:
 ```bash
 $ ra context --explain chapter1.md
 
+Applied context rules:
+  (none)
+
 File: chapter1.md
 
 Ranked terms:
@@ -120,8 +123,13 @@ Ranked terms:
 └───────────────┴──────────┴────────┴──────┴───────┴────────┘
 
 Generated query:
-  ashford^29.61 OR thornwood^15.36 OR rebellion^13.80 OR ...
+  OR
+  ├── ashford^29.61
+  ├── thornwood^15.36
+  └── rebellion^13.80
 ```
+
+When context rules match, the output also shows per-file matched rules.
 
 ### Flags
 
@@ -181,9 +189,7 @@ aggregation_threshold = 0.5   # Sibling ratio for hierarchical aggregation
 
 [context]
 terms = 50                    # Max terms in query (higher = more diverse results)
-min_term_frequency = 2        # Skip rare terms
-min_word_length = 4           # Skip short tokens
-max_word_length = 30          # Skip long tokens
+min_word_length = 4           # Skip tokens shorter than this
 sample_size = 50000           # Bytes read from large files
 ```
 
@@ -301,32 +307,36 @@ Use `--explain` to see which rules matched and their effects:
 ```bash
 $ ra context --explain src/api/handler.rs
 
+Applied context rules:
+  Terms:   rust, http, handlers
+  Trees:   docs
+  Include: docs:api/overview.md
+
 File: src/api/handler.rs
 
 Matched rules:
-  - *.rs
-    terms: ["rust"]
-    trees: ["docs", "examples"]
-  - src/api/**
-    terms: ["http", "handlers"]
-    trees: ["docs"]
-    include: ["docs:api/overview.md"]
-
-Merged effects:
-  terms: ["rust", "http", "handlers"]
-  trees: ["docs"]
-  include: ["docs:api/overview.md"]
+  Terms:   rust, http, handlers
+  Trees:   docs
+  Include: docs:api/overview.md
 
 Ranked terms:
-  ...
+┌───────────────┬──────────────┬────────┬──────┬───────┬────────┐
+│ Term          │ Source       │ Weight │ Freq │ IDF   │ Score  │
+├───────────────┼──────────────┼────────┼──────┼───────┼────────┤
+│ handler       │ path:filename│ 4.0    │ 1    │ 3.21  │ 12.84  │
+│ ...           │              │        │      │       │        │
+└───────────────┴──────────────┴────────┴──────┴───────┴────────┘
+
+Generated query:
+  OR
+  ├── handler^12.84
+  ├── ...
+  └── rust^2.0
 ```
 
 ### Example Configuration
 
 ```toml
-[context]
-min_word_length = 4
-
 [[context.rules]]
 match = "*.rs"
 trees = ["docs"]

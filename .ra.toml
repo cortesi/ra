@@ -25,11 +25,9 @@ path = "./docs"
 # Context command settings
 # These control how `ra context` analyzes files to find relevant documentation.
 # [context]
-# limit = 10
-# min_term_frequency = 2
-# min_word_length = 4
-# max_word_length = 30
-# sample_size = 50000
+# terms = 50               # Max terms in query (higher = more diverse results)
+# min_word_length = 4      # Skip tokens shorter than this
+# sample_size = 50000      # Bytes to read from large files
 
 # Context rules - customize search behavior based on file patterns.
 # When `ra context` analyzes a file, matching rules modify the search:

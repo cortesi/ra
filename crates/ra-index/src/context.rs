@@ -102,7 +102,7 @@ impl<'a> ContextSearch<'a> {
             rules,
             analysis_config: AnalysisConfig {
                 max_terms,
-                min_term_length: 3,
+                min_term_length: context_settings.min_word_length,
             },
         })
     }
