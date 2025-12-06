@@ -28,6 +28,9 @@ use ra_index::{
 };
 use serde::Serialize;
 
+// Default values are defined in ra-config::DEFAULT_* constants.
+// Help text references these values; update both if defaults change.
+
 /// CLI options for search parameters that can override config defaults.
 ///
 /// Used by both `search` and `context` commands to construct `SearchParams`.
@@ -225,7 +228,7 @@ EXAMPLES:
         #[arg(required = true)]
         queries: Vec<String>,
 
-        /// Hard limit on number of results (default: no limit, use elbow detection)
+        /// Maximum results to return [default: 10]
         #[arg(short = 'n', long)]
         limit: Option<usize>,
 
@@ -249,15 +252,15 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to retrieve from index (Phase 1)
+        /// Maximum candidates to retrieve from index [default: 100]
         #[arg(long)]
         candidate_limit: Option<usize>,
 
-        /// Score ratio threshold for relevance cutoff (Phase 2)
+        /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
         cutoff_ratio: Option<f32>,
 
-        /// Sibling ratio threshold for aggregation (Phase 3)
+        /// Sibling ratio threshold for aggregation [default: 0.5]
         #[arg(long)]
         aggregation_threshold: Option<f32>,
 
@@ -276,11 +279,11 @@ EXAMPLES:
         #[arg(required = true)]
         files: Vec<String>,
 
-        /// Maximum chunks to return
+        /// Maximum results to return [default: 10]
         #[arg(short = 'n', long)]
         limit: Option<usize>,
 
-        /// Maximum terms to include in the query (higher = more diverse results)
+        /// Maximum terms to include in the query [default: 50]
         #[arg(long)]
         terms: Option<usize>,
 
@@ -304,15 +307,15 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to retrieve from index
+        /// Maximum candidates to retrieve from index [default: 100]
         #[arg(long)]
         candidate_limit: Option<usize>,
 
-        /// Score ratio threshold for relevance cutoff (0.0-1.0)
+        /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
         cutoff_ratio: Option<f32>,
 
-        /// Sibling ratio threshold for aggregation
+        /// Sibling ratio threshold for aggregation [default: 0.5]
         #[arg(long)]
         aggregation_threshold: Option<f32>,
 
@@ -370,7 +373,7 @@ EXAMPLES:
         /// Source: chunk ID (tree:path#slug) or file path
         source: String,
 
-        /// Maximum results to return
+        /// Maximum results to return [default: 10]
         #[arg(short = 'n', long)]
         limit: Option<usize>,
 
@@ -394,15 +397,15 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to retrieve from index (Phase 1)
+        /// Maximum candidates to retrieve from index [default: 100]
         #[arg(long)]
         candidate_limit: Option<usize>,
 
-        /// Score ratio threshold for relevance cutoff (Phase 2)
+        /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
         cutoff_ratio: Option<f32>,
 
-        /// Sibling ratio threshold for aggregation (Phase 3)
+        /// Sibling ratio threshold for aggregation [default: 0.5]
         #[arg(long)]
         aggregation_threshold: Option<f32>,
 
@@ -3100,5 +3103,86 @@ fn cmd_update() -> ExitCode {
             eprintln!("error: indexing failed: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+    use ra_config::{
+        DEFAULT_AGGREGATION_THRESHOLD, DEFAULT_CANDIDATE_LIMIT, DEFAULT_CONTEXT_TERMS,
+        DEFAULT_CUTOFF_RATIO, DEFAULT_SEARCH_LIMIT,
+    };
+
+    use super::*;
+
+    /// Gets help text for a subcommand's argument.
+    fn get_arg_help(cmd: &clap::Command, subcmd: &str, arg: &str) -> String {
+        cmd.get_subcommands()
+            .find(|c| c.get_name() == subcmd)
+            .and_then(|c| c.get_arguments().find(|a| a.get_id() == arg))
+            .and_then(|a| a.get_help().map(|h| h.to_string()))
+            .unwrap_or_default()
+    }
+
+    /// Verifies that CLI help text contains the correct default values.
+    ///
+    /// This test catches drift between the DEFAULT_* constants in ra-config
+    /// and the help text strings in command definitions.
+    #[test]
+    fn cli_help_defaults_match_constants() {
+        let cmd = Cli::command();
+
+        // Check search command defaults
+        let limit_help = get_arg_help(&cmd, "search", "limit");
+        assert!(
+            limit_help.contains(&format!("[default: {}]", DEFAULT_SEARCH_LIMIT)),
+            "search --limit help should contain default {}: {limit_help}",
+            DEFAULT_SEARCH_LIMIT
+        );
+
+        let candidate_help = get_arg_help(&cmd, "search", "candidate_limit");
+        assert!(
+            candidate_help.contains(&format!("[default: {}]", DEFAULT_CANDIDATE_LIMIT)),
+            "search --candidate-limit help should contain default {}: {candidate_help}",
+            DEFAULT_CANDIDATE_LIMIT
+        );
+
+        let cutoff_help = get_arg_help(&cmd, "search", "cutoff_ratio");
+        assert!(
+            cutoff_help.contains(&format!("[default: {}]", DEFAULT_CUTOFF_RATIO)),
+            "search --cutoff-ratio help should contain default {}: {cutoff_help}",
+            DEFAULT_CUTOFF_RATIO
+        );
+
+        let agg_help = get_arg_help(&cmd, "search", "aggregation_threshold");
+        assert!(
+            agg_help.contains(&format!("[default: {}]", DEFAULT_AGGREGATION_THRESHOLD)),
+            "search --aggregation-threshold help should contain default {}: {agg_help}",
+            DEFAULT_AGGREGATION_THRESHOLD
+        );
+
+        // Check context command defaults
+        let ctx_limit_help = get_arg_help(&cmd, "context", "limit");
+        assert!(
+            ctx_limit_help.contains(&format!("[default: {}]", DEFAULT_SEARCH_LIMIT)),
+            "context --limit help should contain default {}: {ctx_limit_help}",
+            DEFAULT_SEARCH_LIMIT
+        );
+
+        let terms_help = get_arg_help(&cmd, "context", "terms");
+        assert!(
+            terms_help.contains(&format!("[default: {}]", DEFAULT_CONTEXT_TERMS)),
+            "context --terms help should contain default {}: {terms_help}",
+            DEFAULT_CONTEXT_TERMS
+        );
+
+        // Check likethis command defaults
+        let lt_limit_help = get_arg_help(&cmd, "likethis", "limit");
+        assert!(
+            lt_limit_help.contains(&format!("[default: {}]", DEFAULT_SEARCH_LIMIT)),
+            "likethis --limit help should contain default {}: {lt_limit_help}",
+            DEFAULT_SEARCH_LIMIT
+        );
     }
 }

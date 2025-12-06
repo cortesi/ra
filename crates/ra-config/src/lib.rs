@@ -21,6 +21,59 @@ use std::path::{Component, Path, PathBuf};
 
 use directories::BaseDirs;
 pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
+
+// =============================================================================
+// Default value constants
+//
+// These constants define hardcoded defaults for all configurable parameters.
+// They are public so the CLI can reference them in help text via clap's
+// `default_value` attribute, ensuring documentation stays in sync.
+// =============================================================================
+
+/// Default limit for general queries (Settings.default_limit).
+pub const DEFAULT_LIMIT: usize = 5;
+
+/// Default relevance multiplier for local trees (Settings.local_boost).
+pub const DEFAULT_LOCAL_BOOST: f32 = 1.5;
+
+/// Default setting for splitting documents at headings (Settings.chunk_at_headings).
+pub const DEFAULT_CHUNK_AT_HEADINGS: bool = true;
+
+/// Default warning threshold for chunk size (Settings.max_chunk_size).
+pub const DEFAULT_MAX_CHUNK_SIZE: usize = 50_000;
+
+/// Default stemming language (SearchSettings.stemmer).
+pub const DEFAULT_STEMMER: &str = "english";
+
+/// Default fuzzy matching distance (SearchSettings.fuzzy_distance).
+pub const DEFAULT_FUZZY_DISTANCE: u8 = 1;
+
+/// Default maximum results for search (SearchSettings.limit).
+pub const DEFAULT_SEARCH_LIMIT: usize = 10;
+
+/// Default maximum candidates from index (SearchSettings.candidate_limit).
+pub const DEFAULT_CANDIDATE_LIMIT: usize = 100;
+
+/// Default score ratio threshold for elbow cutoff (SearchSettings.cutoff_ratio).
+pub const DEFAULT_CUTOFF_RATIO: f32 = 0.3;
+
+/// Default sibling ratio threshold for aggregation (SearchSettings.aggregation_threshold).
+pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
+
+/// Default maximum terms for context queries (ContextSettings.terms).
+pub const DEFAULT_CONTEXT_TERMS: usize = 50;
+
+/// Default minimum term frequency (ContextSettings.min_term_frequency).
+pub const DEFAULT_MIN_TERM_FREQUENCY: usize = 2;
+
+/// Default minimum word length (ContextSettings.min_word_length).
+pub const DEFAULT_MIN_WORD_LENGTH: usize = 4;
+
+/// Default maximum word length (ContextSettings.max_word_length).
+pub const DEFAULT_MAX_WORD_LENGTH: usize = 30;
+
+/// Default sample size for large files (ContextSettings.sample_size).
+pub const DEFAULT_SAMPLE_SIZE: usize = 50_000;
 pub use error::ConfigError;
 pub use patterns::{CompiledContextPatterns, CompiledContextRules, CompiledPatterns, MatchedRules};
 use serde::{Deserialize, Serialize};
@@ -182,10 +235,10 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            default_limit: 5,
-            local_boost: 1.5,
-            chunk_at_headings: true,
-            max_chunk_size: 50_000,
+            default_limit: DEFAULT_LIMIT,
+            local_boost: DEFAULT_LOCAL_BOOST,
+            chunk_at_headings: DEFAULT_CHUNK_AT_HEADINGS,
+            max_chunk_size: DEFAULT_MAX_CHUNK_SIZE,
         }
     }
 }
@@ -226,12 +279,12 @@ pub struct SearchSettings {
 impl Default for SearchSettings {
     fn default() -> Self {
         Self {
-            stemmer: String::from("english"),
-            fuzzy_distance: 1,
-            limit: 10,
-            candidate_limit: 100,
-            cutoff_ratio: 0.3,
-            aggregation_threshold: 0.5,
+            stemmer: String::from(DEFAULT_STEMMER),
+            fuzzy_distance: DEFAULT_FUZZY_DISTANCE,
+            limit: DEFAULT_SEARCH_LIMIT,
+            candidate_limit: DEFAULT_CANDIDATE_LIMIT,
+            cutoff_ratio: DEFAULT_CUTOFF_RATIO,
+            aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
         }
     }
 }
@@ -324,11 +377,11 @@ impl SearchOverrides {
 impl Default for ContextSettings {
     fn default() -> Self {
         Self {
-            terms: 50,
-            min_term_frequency: 2,
-            min_word_length: 4,
-            max_word_length: 30,
-            sample_size: 50_000,
+            terms: DEFAULT_CONTEXT_TERMS,
+            min_term_frequency: DEFAULT_MIN_TERM_FREQUENCY,
+            min_word_length: DEFAULT_MIN_WORD_LENGTH,
+            max_word_length: DEFAULT_MAX_WORD_LENGTH,
+            sample_size: DEFAULT_SAMPLE_SIZE,
             rules: Vec::new(),
         }
     }
@@ -456,25 +509,33 @@ mod tests {
     #[test]
     fn test_settings_defaults() {
         let settings = Settings::default();
-        assert_eq!(settings.default_limit, 5);
-        assert!((settings.local_boost - 1.5).abs() < f32::EPSILON);
-        assert!(settings.chunk_at_headings);
-        assert_eq!(settings.max_chunk_size, 50_000);
+        assert_eq!(settings.default_limit, DEFAULT_LIMIT);
+        assert!((settings.local_boost - DEFAULT_LOCAL_BOOST).abs() < f32::EPSILON);
+        assert_eq!(settings.chunk_at_headings, DEFAULT_CHUNK_AT_HEADINGS);
+        assert_eq!(settings.max_chunk_size, DEFAULT_MAX_CHUNK_SIZE);
     }
 
     #[test]
     fn test_search_settings_defaults() {
         let search = SearchSettings::default();
-        assert_eq!(search.stemmer, "english");
+        assert_eq!(search.stemmer, DEFAULT_STEMMER);
+        assert_eq!(search.fuzzy_distance, DEFAULT_FUZZY_DISTANCE);
+        assert_eq!(search.limit, DEFAULT_SEARCH_LIMIT);
+        assert_eq!(search.candidate_limit, DEFAULT_CANDIDATE_LIMIT);
+        assert!((search.cutoff_ratio - DEFAULT_CUTOFF_RATIO).abs() < f32::EPSILON);
+        assert!(
+            (search.aggregation_threshold - DEFAULT_AGGREGATION_THRESHOLD).abs() < f32::EPSILON
+        );
     }
 
     #[test]
     fn test_context_settings_defaults() {
         let context = ContextSettings::default();
-        assert_eq!(context.min_term_frequency, 2);
-        assert_eq!(context.min_word_length, 4);
-        assert_eq!(context.max_word_length, 30);
-        assert_eq!(context.sample_size, 50_000);
+        assert_eq!(context.terms, DEFAULT_CONTEXT_TERMS);
+        assert_eq!(context.min_term_frequency, DEFAULT_MIN_TERM_FREQUENCY);
+        assert_eq!(context.min_word_length, DEFAULT_MIN_WORD_LENGTH);
+        assert_eq!(context.max_word_length, DEFAULT_MAX_WORD_LENGTH);
+        assert_eq!(context.sample_size, DEFAULT_SAMPLE_SIZE);
         assert!(context.rules.is_empty());
     }
 
