@@ -12,8 +12,9 @@ use std::{
 use clap::{Parser, Subcommand, error::ErrorKind};
 use comfy_table::{Cell, Table, presets::UTF8_FULL_CONDENSED};
 use ra_config::{
-    CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, discover_config_files,
-    format_path_for_display, global_config_path, global_template, local_template,
+    CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, SearchDefaults,
+    discover_config_files, format_path_for_display, global_config_path, global_template,
+    local_template,
 };
 use ra_document::parse_file;
 use ra_highlight::{
@@ -25,6 +26,79 @@ use ra_index::{
     SilentReporter, detect_index_status, index_directory, open_searcher, parse_query,
 };
 use serde::Serialize;
+
+/// CLI options for search parameters that can override config defaults.
+///
+/// Used by both `search` and `context` commands to construct `SearchParams`.
+struct SearchParamsOverrides {
+    /// Maximum results to return.
+    limit: Option<usize>,
+    /// Maximum candidates to retrieve from index.
+    candidate_limit: Option<usize>,
+    /// Score ratio threshold for relevance cutoff.
+    cutoff_ratio: Option<f32>,
+    /// Sibling ratio threshold for aggregation.
+    aggregation_threshold: Option<f32>,
+    /// Whether to disable hierarchical aggregation.
+    no_aggregation: bool,
+    /// Limit results to specific trees.
+    trees: Vec<String>,
+    /// Verbosity level for match details.
+    verbose: u8,
+}
+
+impl SearchParamsOverrides {
+    /// Builds `SearchParams` by applying CLI overrides to config defaults.
+    ///
+    /// This ensures consistent handling of search parameters for both `search` and `context`.
+    fn build_params<D: SearchDefaults>(&self, defaults: &D) -> SearchParams {
+        SearchParams {
+            candidate_limit: self
+                .candidate_limit
+                .unwrap_or_else(|| defaults.candidate_limit()),
+            cutoff_ratio: self.cutoff_ratio.unwrap_or_else(|| defaults.cutoff_ratio()),
+            max_results: self.limit.unwrap_or_else(|| defaults.limit()),
+            aggregation_threshold: self
+                .aggregation_threshold
+                .unwrap_or_else(|| defaults.aggregation_threshold()),
+            disable_aggregation: self.no_aggregation,
+            trees: self.trees.clone(),
+            verbosity: self.verbose,
+        }
+    }
+
+    /// Builds `SearchParams` with rule-based overrides applied.
+    ///
+    /// Precedence (highest to lowest): CLI → rule → config → hardcoded defaults.
+    fn build_params_with_rule_overrides<D: SearchDefaults>(
+        &self,
+        defaults: &D,
+        rule_overrides: &ra_config::SearchOverrides,
+    ) -> SearchParams {
+        // Apply rule overrides only where CLI didn't specify a value
+        SearchParams {
+            candidate_limit: self
+                .candidate_limit
+                .or(rule_overrides.candidate_limit)
+                .unwrap_or_else(|| defaults.candidate_limit()),
+            cutoff_ratio: self
+                .cutoff_ratio
+                .or(rule_overrides.cutoff_ratio)
+                .unwrap_or_else(|| defaults.cutoff_ratio()),
+            max_results: self
+                .limit
+                .or(rule_overrides.limit)
+                .unwrap_or_else(|| defaults.limit()),
+            aggregation_threshold: self
+                .aggregation_threshold
+                .or(rule_overrides.aggregation_threshold)
+                .unwrap_or_else(|| defaults.aggregation_threshold()),
+            disable_aggregation: self.no_aggregation,
+            trees: self.trees.clone(),
+            verbosity: self.verbose,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "ra")]
@@ -175,16 +249,16 @@ EXAMPLES:
         no_aggregation: bool,
 
         /// Maximum candidates to retrieve from index (Phase 1)
-        #[arg(long, default_value = "100")]
-        candidate_limit: usize,
+        #[arg(long)]
+        candidate_limit: Option<usize>,
 
         /// Score ratio threshold for relevance cutoff (Phase 2)
-        #[arg(long, default_value = "0.5")]
-        cutoff_ratio: f32,
+        #[arg(long)]
+        cutoff_ratio: Option<f32>,
 
         /// Sibling ratio threshold for aggregation (Phase 3)
-        #[arg(long, default_value = "0.5")]
-        aggregation_threshold: f32,
+        #[arg(long)]
+        aggregation_threshold: Option<f32>,
 
         /// Verbosity level (-v for summary, -vv for full details)
         #[arg(short = 'v', long, action = clap::ArgAction::Count)]
@@ -202,8 +276,8 @@ EXAMPLES:
         files: Vec<String>,
 
         /// Maximum chunks to return
-        #[arg(short = 'n', long, default_value = "10")]
-        limit: usize,
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
 
         /// Maximum terms to include in the query
         #[arg(long, default_value = "15")]
@@ -213,6 +287,10 @@ EXAMPLES:
         #[arg(long)]
         list: bool,
 
+        /// Output only lines containing matches
+        #[arg(long)]
+        matches: bool,
+
         /// Output in JSON format
         #[arg(long)]
         json: bool,
@@ -220,6 +298,22 @@ EXAMPLES:
         /// Show term analysis and generated query without searching
         #[arg(long)]
         explain: bool,
+
+        /// Disable hierarchical aggregation
+        #[arg(long)]
+        no_aggregation: bool,
+
+        /// Maximum candidates to retrieve from index
+        #[arg(long)]
+        candidate_limit: Option<usize>,
+
+        /// Score ratio threshold for relevance cutoff (0.0-1.0)
+        #[arg(long)]
+        cutoff_ratio: Option<f32>,
+
+        /// Sibling ratio threshold for aggregation
+        #[arg(long)]
+        aggregation_threshold: Option<f32>,
 
         /// Verbosity level (-v for summary, -vv for full details)
         #[arg(short = 'v', long, action = clap::ArgAction::Count)]
@@ -361,18 +455,21 @@ fn main() -> ExitCode {
             verbose,
             trees,
         } => {
-            // If no limit specified, use a very high max_results so elbow detection
-            // is the only cutoff. Otherwise use the specified limit.
-            let max_results = limit.unwrap_or(usize::MAX);
-            let params = SearchParams {
+            let (_, config) = match load_config_with_cwd(false) {
+                Ok(res) => res,
+                Err(code) => return code,
+            };
+
+            let overrides = SearchParamsOverrides {
+                limit,
                 candidate_limit,
                 cutoff_ratio,
-                max_results,
                 aggregation_threshold,
-                disable_aggregation: no_aggregation,
+                no_aggregation,
                 trees,
-                verbosity: verbose,
+                verbose,
             };
+            let params = overrides.build_params(&config.search);
             return cmd_search(&queries, &params, list, matches, json, explain, verbose);
         }
         Commands::Context {
@@ -380,12 +477,31 @@ fn main() -> ExitCode {
             limit,
             terms,
             list,
+            matches,
             json,
             explain,
+            no_aggregation,
+            candidate_limit,
+            cutoff_ratio,
+            aggregation_threshold,
             verbose,
             trees,
         } => {
-            return cmd_context(&files, limit, terms, list, json, explain, verbose, &trees);
+            return cmd_context(
+                &files,
+                limit,
+                terms,
+                list,
+                matches,
+                json,
+                explain,
+                no_aggregation,
+                candidate_limit,
+                cutoff_ratio,
+                aggregation_threshold,
+                verbose,
+                &trees,
+            );
         }
         Commands::Get {
             id,
@@ -1253,15 +1369,41 @@ fn print_context_warnings(warnings: &[ContextWarning]) {
     }
 }
 
+/// Prints search overrides from matched rules if any are set.
+fn print_search_overrides(overrides: &ra_config::SearchOverrides, indent: &str) {
+    if overrides.is_empty() {
+        return;
+    }
+    let mut parts = Vec::new();
+    if let Some(limit) = overrides.limit {
+        parts.push(format!("limit={limit}"));
+    }
+    if let Some(candidate_limit) = overrides.candidate_limit {
+        parts.push(format!("candidate_limit={candidate_limit}"));
+    }
+    if let Some(cutoff_ratio) = overrides.cutoff_ratio {
+        parts.push(format!("cutoff_ratio={cutoff_ratio}"));
+    }
+    if let Some(aggregation_threshold) = overrides.aggregation_threshold {
+        parts.push(format!("aggregation_threshold={aggregation_threshold}"));
+    }
+    println!("{indent}Search: {}", parts.join(", "));
+}
+
 /// Implements the `ra context` command.
 #[allow(clippy::too_many_arguments)]
 fn cmd_context(
     files: &[String],
-    limit: usize,
+    limit: Option<usize>,
     max_terms: usize,
     list: bool,
+    matches: bool,
     json: bool,
     explain: bool,
+    no_aggregation: bool,
+    candidate_limit: Option<usize>,
+    cutoff_ratio: Option<f32>,
+    aggregation_threshold: Option<f32>,
     verbose: u8,
     trees: &[String],
 ) -> ExitCode {
@@ -1321,16 +1463,18 @@ fn cmd_context(
         return ExitCode::SUCCESS;
     }
 
-    // Execute the search
-    let params = SearchParams {
-        candidate_limit: 100,
-        cutoff_ratio: 0.5,
-        max_results: limit,
-        aggregation_threshold: 0.5,
-        disable_aggregation: false,
+    // Execute the search with CLI overrides, then rule overrides, then config defaults
+    let overrides = SearchParamsOverrides {
+        limit,
+        candidate_limit,
+        cutoff_ratio,
+        aggregation_threshold,
+        no_aggregation,
         trees: trees.to_vec(),
-        verbosity: verbose,
+        verbose,
     };
+    let params =
+        overrides.build_params_with_rule_overrides(&config.search, &analysis.merged_rules.search);
 
     let (results, analysis) = match context_search.search_with_analysis(analysis, &params) {
         Ok(r) => r,
@@ -1348,7 +1492,7 @@ fn cmd_context(
         &results,
         &query_display,
         list,
-        false,
+        matches,
         json,
         verbose,
         context_search.searcher(),
@@ -1364,6 +1508,7 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
                 terms: analysis_result.merged_rules.terms.clone(),
                 trees: analysis_result.merged_rules.trees.clone(),
                 include: analysis_result.merged_rules.include.clone(),
+                search: JsonSearchOverrides::from_config(&analysis_result.merged_rules.search),
             },
             files: analysis_result
                 .files
@@ -1388,6 +1533,7 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
                         terms: fa.matched_rules.terms.clone(),
                         trees: fa.matched_rules.trees.clone(),
                         include: fa.matched_rules.include.clone(),
+                        search: JsonSearchOverrides::from_config(&fa.matched_rules.search),
                     },
                 })
                 .collect(),
@@ -1426,6 +1572,7 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
                     analysis_result.merged_rules.include.join(", ")
                 );
             }
+            print_search_overrides(&analysis_result.merged_rules.search, "  ");
         }
         println!();
 
@@ -1445,6 +1592,7 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
                 if !fa.matched_rules.include.is_empty() {
                     println!("  Include: {}", fa.matched_rules.include.join(", "));
                 }
+                print_search_overrides(&fa.matched_rules.search, "  ");
                 println!();
             }
 
@@ -1521,6 +1669,46 @@ struct JsonMatchedRules {
     trees: Vec<String>,
     /// Files to always include.
     include: Vec<String>,
+    /// Search parameter overrides from rules.
+    #[serde(skip_serializing_if = "JsonSearchOverrides::is_empty")]
+    search: JsonSearchOverrides,
+}
+
+/// JSON output for search parameter overrides from rules.
+#[derive(Serialize, Default)]
+struct JsonSearchOverrides {
+    /// Maximum results to return.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
+    /// Maximum candidates before elbow cutoff.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_limit: Option<usize>,
+    /// Elbow detection cutoff ratio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cutoff_ratio: Option<f32>,
+    /// Sibling aggregation threshold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aggregation_threshold: Option<f32>,
+}
+
+impl JsonSearchOverrides {
+    /// Returns true if no overrides are set.
+    fn is_empty(&self) -> bool {
+        self.limit.is_none()
+            && self.candidate_limit.is_none()
+            && self.cutoff_ratio.is_none()
+            && self.aggregation_threshold.is_none()
+    }
+
+    /// Creates from config search overrides.
+    fn from_config(overrides: &ra_config::SearchOverrides) -> Self {
+        Self {
+            limit: overrides.limit,
+            candidate_limit: overrides.candidate_limit,
+            cutoff_ratio: overrides.cutoff_ratio,
+            aggregation_threshold: overrides.aggregation_threshold,
+        }
+    }
 }
 
 /// JSON output for a single term's analysis.

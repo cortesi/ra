@@ -188,6 +188,21 @@ impl Default for Settings {
     }
 }
 
+/// Common search parameters shared between search and context commands.
+///
+/// Both `SearchSettings` and `ContextSettings` implement this trait, allowing
+/// shared code for building search parameters from CLI overrides and config defaults.
+pub trait SearchDefaults {
+    /// Maximum results to return.
+    fn limit(&self) -> usize;
+    /// Maximum candidates to retrieve from index before filtering.
+    fn candidate_limit(&self) -> usize;
+    /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
+    fn cutoff_ratio(&self) -> f32;
+    /// Sibling ratio threshold for hierarchical aggregation.
+    fn aggregation_threshold(&self) -> f32;
+}
+
 /// Search-related settings.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -196,6 +211,14 @@ pub struct SearchSettings {
     pub stemmer: String,
     /// Fuzzy matching Levenshtein distance (0 = disabled).
     pub fuzzy_distance: u8,
+    /// Maximum results to return.
+    pub limit: usize,
+    /// Maximum candidates to retrieve from index before filtering.
+    pub candidate_limit: usize,
+    /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
+    pub cutoff_ratio: f32,
+    /// Sibling ratio threshold for hierarchical aggregation.
+    pub aggregation_threshold: f32,
 }
 
 impl Default for SearchSettings {
@@ -203,15 +226,35 @@ impl Default for SearchSettings {
         Self {
             stemmer: String::from("english"),
             fuzzy_distance: 1,
+            limit: 10,
+            candidate_limit: 100,
+            cutoff_ratio: 0.3,
+            aggregation_threshold: 0.5,
         }
     }
 }
 
+impl SearchDefaults for SearchSettings {
+    fn limit(&self) -> usize {
+        self.limit
+    }
+    fn candidate_limit(&self) -> usize {
+        self.candidate_limit
+    }
+    fn cutoff_ratio(&self) -> f32 {
+        self.cutoff_ratio
+    }
+    fn aggregation_threshold(&self) -> f32 {
+        self.aggregation_threshold
+    }
+}
+
 /// Settings for the `ra context` command.
+///
+/// Contains only context-specific term extraction settings. Search parameters
+/// are inherited from `SearchSettings` and can be overridden per-rule.
 #[derive(Debug, Clone)]
 pub struct ContextSettings {
-    /// Default number of chunks to return.
-    pub limit: usize,
     /// Ignore terms appearing less than this many times in source.
     pub min_term_frequency: usize,
     /// Ignore words shorter than this.
@@ -237,12 +280,42 @@ pub struct ContextRule {
     pub terms: Vec<String>,
     /// Files to always include in results (tree-prefixed paths like "docs:api/overview.md").
     pub include: Vec<String>,
+    /// Search parameter overrides for this rule.
+    pub search: Option<SearchOverrides>,
+}
+
+/// Search parameter overrides that can be specified per context rule.
+///
+/// All fields are optional; unset fields inherit from `[search]`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SearchOverrides {
+    /// Maximum results to return.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Maximum candidates to retrieve from index before filtering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_limit: Option<usize>,
+    /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cutoff_ratio: Option<f32>,
+    /// Sibling ratio threshold for hierarchical aggregation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregation_threshold: Option<f32>,
+}
+
+impl SearchOverrides {
+    /// Returns true if all fields are None.
+    pub fn is_empty(&self) -> bool {
+        self.limit.is_none()
+            && self.candidate_limit.is_none()
+            && self.cutoff_ratio.is_none()
+            && self.aggregation_threshold.is_none()
+    }
 }
 
 impl Default for ContextSettings {
     fn default() -> Self {
         Self {
-            limit: 10,
             min_term_frequency: 2,
             min_word_length: 4,
             max_word_length: 30,
@@ -266,8 +339,6 @@ struct SerializableSettings {
 /// Context settings serializable to TOML.
 #[derive(Serialize)]
 struct SerializableContextSettings {
-    /// Default number of chunks to return.
-    limit: usize,
     /// Ignore terms appearing less than this many times in source.
     min_term_frequency: usize,
     /// Ignore words shorter than this.
@@ -295,6 +366,9 @@ struct SerializableContextRule {
     /// Files to always include.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     include: Vec<String>,
+    /// Search parameter overrides.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<SearchOverrides>,
 }
 
 /// Helper for serializing either a single string or array.
@@ -321,7 +395,6 @@ impl Serialize for StringOrVec {
 impl From<&ContextSettings> for SerializableContextSettings {
     fn from(ctx: &ContextSettings) -> Self {
         Self {
-            limit: ctx.limit,
             min_term_frequency: ctx.min_term_frequency,
             min_word_length: ctx.min_word_length,
             max_word_length: ctx.max_word_length,
@@ -347,6 +420,7 @@ impl From<&ContextRule> for SerializableContextRule {
             trees: rule.trees.clone(),
             terms: rule.terms.clone(),
             include: rule.include.clone(),
+            search: rule.search.clone(),
         }
     }
 }
@@ -388,7 +462,6 @@ mod tests {
     #[test]
     fn test_context_settings_defaults() {
         let context = ContextSettings::default();
-        assert_eq!(context.limit, 10);
         assert_eq!(context.min_term_frequency, 2);
         assert_eq!(context.min_word_length, 4);
         assert_eq!(context.max_word_length, 30);
@@ -431,7 +504,7 @@ mod tests {
         // Should contain default values in TOML format
         assert!(toml.contains("default_limit = 5"));
         assert!(toml.contains("stemmer = \"english\""));
-        assert!(toml.contains("limit = 10"));
+        assert!(toml.contains("min_term_frequency = 2")); // context-specific setting
 
         // Should be parseable as valid TOML
         let parsed: toml::Value =

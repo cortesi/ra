@@ -7,7 +7,7 @@ use std::{collections::HashMap, path::Path};
 
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 
-use crate::{ConfigError, ContextSettings, Tree};
+use crate::{ConfigError, ContextSettings, SearchOverrides, Tree};
 
 /// Compiled glob patterns for efficient file matching.
 ///
@@ -106,10 +106,12 @@ struct CompiledRule {
     terms: Vec<String>,
     /// Files to always include (tree:path format).
     include: Vec<String>,
+    /// Search parameter overrides for this rule.
+    search: Option<SearchOverrides>,
 }
 
 /// Result of matching context rules against a file path.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct MatchedRules {
     /// Merged terms from all matching rules.
     pub terms: Vec<String>,
@@ -117,12 +119,17 @@ pub struct MatchedRules {
     pub trees: Vec<String>,
     /// Merged include paths from all matching rules.
     pub include: Vec<String>,
+    /// Merged search parameter overrides from all matching rules.
+    pub search: SearchOverrides,
 }
 
 impl MatchedRules {
     /// Returns true if no rules matched.
     pub fn is_empty(&self) -> bool {
-        self.terms.is_empty() && self.trees.is_empty() && self.include.is_empty()
+        self.terms.is_empty()
+            && self.trees.is_empty()
+            && self.include.is_empty()
+            && self.search.is_empty()
     }
 
     /// Merges another `MatchedRules` into this one.
@@ -130,6 +137,7 @@ impl MatchedRules {
     /// - **terms**: concatenated (deduplicated)
     /// - **trees**: intersected (if either specifies trees)
     /// - **include**: concatenated (deduplicated)
+    /// - **search**: first non-None value wins for each field
     pub fn merge(&mut self, other: &Self) {
         // Terms: concatenate (deduplicated)
         for term in &other.terms {
@@ -154,6 +162,20 @@ impl MatchedRules {
                 // Intersect with existing
                 self.trees.retain(|t| other.trees.contains(t));
             }
+        }
+
+        // Search overrides: first non-None wins for each field
+        if self.search.limit.is_none() {
+            self.search.limit = other.search.limit;
+        }
+        if self.search.candidate_limit.is_none() {
+            self.search.candidate_limit = other.search.candidate_limit;
+        }
+        if self.search.cutoff_ratio.is_none() {
+            self.search.cutoff_ratio = other.search.cutoff_ratio;
+        }
+        if self.search.aggregation_threshold.is_none() {
+            self.search.aggregation_threshold = other.search.aggregation_threshold;
         }
     }
 
@@ -208,6 +230,7 @@ impl CompiledContextRules {
                 trees: rule.trees.clone(),
                 terms: rule.terms.clone(),
                 include: rule.include.clone(),
+                search: rule.search.clone(),
             });
         }
 
@@ -220,10 +243,12 @@ impl CompiledContextRules {
     /// - terms: concatenated
     /// - trees: intersected (if any rule specifies trees)
     /// - include: concatenated
+    /// - search: first non-None value wins for each field
     pub fn match_rules(&self, path: &Path) -> MatchedRules {
         let mut terms = Vec::new();
         let mut include = Vec::new();
         let mut trees_sets: Vec<&[String]> = Vec::new();
+        let mut search = SearchOverrides::default();
 
         for rule in &self.rules {
             // A rule matches if any of its patterns match
@@ -234,6 +259,22 @@ impl CompiledContextRules {
                 // Collect non-empty tree restrictions for intersection
                 if !rule.trees.is_empty() {
                     trees_sets.push(&rule.trees);
+                }
+
+                // Merge search overrides (first non-None wins)
+                if let Some(ref rule_search) = rule.search {
+                    if search.limit.is_none() {
+                        search.limit = rule_search.limit;
+                    }
+                    if search.candidate_limit.is_none() {
+                        search.candidate_limit = rule_search.candidate_limit;
+                    }
+                    if search.cutoff_ratio.is_none() {
+                        search.cutoff_ratio = rule_search.cutoff_ratio;
+                    }
+                    if search.aggregation_threshold.is_none() {
+                        search.aggregation_threshold = rule_search.aggregation_threshold;
+                    }
                 }
             }
         }
@@ -255,6 +296,7 @@ impl CompiledContextRules {
             terms,
             trees,
             include,
+            search,
         }
     }
 
@@ -439,6 +481,7 @@ mod tests {
                     trees: Vec::new(),
                     terms: terms.into_iter().map(String::from).collect(),
                     include: Vec::new(),
+                    search: None,
                 });
             }
             settings
@@ -538,6 +581,7 @@ mod tests {
                 trees: trees.into_iter().map(String::from).collect(),
                 terms: terms.into_iter().map(String::from).collect(),
                 include: include.into_iter().map(String::from).collect(),
+                search: None,
             }
         }
 
@@ -767,6 +811,7 @@ mod tests {
                 terms: terms.into_iter().map(String::from).collect(),
                 trees: trees.into_iter().map(String::from).collect(),
                 include: include.into_iter().map(String::from).collect(),
+                search: SearchOverrides::default(),
             }
         }
 

@@ -77,14 +77,20 @@ relevance boost in search results.
 |-----|---------|-------------|
 | `stemmer` | `"english"` | Language for stemming (see [search.md](search.md)) |
 | `fuzzy_distance` | 1 | Levenshtein edit distance; 0 disables fuzzy matching |
+| `limit` | 10 | Maximum results returned |
+| `candidate_limit` | 100 | Maximum candidates retrieved from index |
+| `cutoff_ratio` | 0.3 | Score ratio threshold for relevance cutoff |
+| `aggregation_threshold` | 0.5 | Sibling ratio for hierarchical aggregation |
+
+See [search.md](search.md) for detailed explanation of these parameters.
 
 ### Context (`[context]`)
 
-Settings for `ra context` and context analysis.
+Settings for `ra context` term extraction. Search parameters (limit, cutoff, etc.) come from
+`[search]` and can be overridden per-rule.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `limit` | 10 | Max chunks returned by `ra context` |
 | `min_term_frequency` | 2 | Skip terms appearing fewer times |
 | `min_word_length` | 4 | Skip shorter tokens |
 | `max_word_length` | 30 | Skip longer tokens |
@@ -105,6 +111,12 @@ terms = ["rust"]
 match = "src/api/**"
 terms = ["http", "routing"]
 include = ["docs:api/overview.md"]
+
+[[context.rules]]
+match = "tests/**"
+terms = ["testing"]
+search.limit = 20           # Override search params for test files
+search.cutoff_ratio = 0.2
 ```
 
 | Field | Type | Description |
@@ -113,9 +125,14 @@ include = ["docs:api/overview.md"]
 | `trees` | [String] | Limit search to these trees |
 | `terms` | [String] | Additional search terms to inject |
 | `include` | [String] | Files to always include (`tree:path` format) |
+| `search` | Table | Override search parameters for matching files |
 
-When multiple rules match a file, terms and includes are concatenated (deduplicated) and
-tree restrictions are intersected. See [context.md](context.md) for the full specification.
+The `search` sub-table accepts the same keys as `[search]`: `limit`, `candidate_limit`,
+`cutoff_ratio`, and `aggregation_threshold`.
+
+When multiple rules match a file, terms and includes are concatenated (deduplicated), tree
+restrictions are intersected, and search overrides are merged (first non-None wins). See
+[context.md](context.md) for the full specification.
 
 
 ## Global vs Project Configs
@@ -158,6 +175,7 @@ local_boost = 2.0
 
 [search]
 fuzzy_distance = 2
+cutoff_ratio = 0.2      # More permissive relevance filtering
 ```
 
 Changes trigger automatic reindexing on next use.
@@ -166,8 +184,11 @@ Changes trigger automatic reindexing on next use.
 
 ```toml
 [context]
-limit = 15
-min_term_frequency = 3
+min_term_frequency = 3  # Require more frequent terms
+
+[search]
+limit = 15              # Search params apply to both search and context
+cutoff_ratio = 0.2      # More permissive for broader context
 ```
 
 

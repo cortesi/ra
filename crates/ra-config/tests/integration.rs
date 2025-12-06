@@ -372,7 +372,6 @@ terms = ["python3", "django"]
 
     assert_eq!(config.search.stemmer, "german");
 
-    assert_eq!(config.context.limit, 25);
     assert_eq!(config.context.min_term_frequency, 5);
     assert_eq!(config.context.min_word_length, 3);
     assert_eq!(config.context.max_word_length, 50);

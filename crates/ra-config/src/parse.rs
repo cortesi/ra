@@ -63,14 +63,23 @@ pub struct RawSearchSettings {
     pub stemmer: Option<String>,
     /// Fuzzy matching Levenshtein distance (0 = disabled).
     pub fuzzy_distance: Option<u8>,
+    /// Maximum results to return.
+    pub limit: Option<usize>,
+    /// Maximum candidates to retrieve from index before filtering.
+    pub candidate_limit: Option<usize>,
+    /// Score ratio threshold for elbow cutoff (0.0-1.0).
+    pub cutoff_ratio: Option<f32>,
+    /// Sibling ratio threshold for hierarchical aggregation.
+    pub aggregation_threshold: Option<f32>,
 }
 
 /// Raw context settings.
+///
+/// Context-specific settings for term extraction. Search parameters are inherited
+/// from `[search]` and can be overridden per-rule in `[[context.rules]]`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RawContextSettings {
-    /// Default number of chunks to return.
-    pub limit: Option<usize>,
     /// Minimum term frequency for content analysis.
     pub min_term_frequency: Option<usize>,
     /// Minimum word length for content analysis.
@@ -99,6 +108,8 @@ pub struct RawContextRule {
     pub terms: Option<Vec<String>>,
     /// Files to always include in results (tree-prefixed paths like "docs:api/overview.md").
     pub include: Option<Vec<String>>,
+    /// Search parameter overrides for this rule.
+    pub search: Option<RawSearchSettings>,
 }
 
 /// Deserializes a field that can be either a single string or an array of strings.
@@ -273,7 +284,6 @@ stemmer = "german"
     fn test_parse_context_settings() {
         let toml = r#"
 [context]
-limit = 20
 min_term_frequency = 3
 min_word_length = 5
 max_word_length = 25
@@ -281,7 +291,6 @@ sample_size = 100000
 "#;
         let config = parse_config_str(toml, Path::new("test.toml")).unwrap();
         let context = config.context.unwrap();
-        assert_eq!(context.limit, Some(20));
         assert_eq!(context.min_term_frequency, Some(3));
         assert_eq!(context.min_word_length, Some(5));
         assert_eq!(context.max_word_length, Some(25));
@@ -371,9 +380,10 @@ local_boost = 1.5
 
 [search]
 stemmer = "english"
+limit = 10
 
 [context]
-limit = 10
+min_term_frequency = 3
 
 [[context.rules]]
 match = "*.rs"
@@ -393,9 +403,10 @@ include = ["**/*"]
 
         let search = config.search.unwrap();
         assert_eq!(search.stemmer, Some("english".to_string()));
+        assert_eq!(search.limit, Some(10));
 
         let context = config.context.unwrap();
-        assert_eq!(context.limit, Some(10));
+        assert_eq!(context.min_term_frequency, Some(3));
         assert!(context.rules.is_some());
         assert_eq!(context.rules.as_ref().unwrap().len(), 1);
 

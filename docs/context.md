@@ -132,7 +132,12 @@ Generated query:
 | `--terms N` | Maximum terms in query (default: 15) |
 | `-t, --tree NAME` | Limit to specific tree(s) |
 | `--list` | Output titles only |
+| `--matches` | Output only lines containing matches |
 | `--json` | JSON output |
+| `--no-aggregation` | Disable hierarchical aggregation |
+| `--candidate-limit N` | Max candidates from index (default: 100) |
+| `--cutoff-ratio N` | Score ratio for relevance cutoff (default: 0.3) |
+| `--aggregation-threshold N` | Sibling ratio for aggregation (default: 0.5) |
 | `-v, --verbose` | Increase verbosity |
 
 
@@ -164,16 +169,24 @@ plain text parser tokenizes content uniformly.
 
 ## Configuration
 
-Context analysis settings live in `.ra.toml`:
+Context analysis settings live in `.ra.toml`. The `[context]` section contains term extraction
+settings. Search parameters come from `[search]` and can be overridden per-rule:
 
 ```toml
+[search]
+limit = 10                    # Max results (applies to both search and context)
+candidate_limit = 100         # Max candidates from index
+cutoff_ratio = 0.3            # Score ratio for relevance cutoff
+aggregation_threshold = 0.5   # Sibling ratio for hierarchical aggregation
+
 [context]
-limit = 10              # Max results
-min_term_frequency = 2  # Skip rare terms
-min_word_length = 4     # Skip short tokens
-max_word_length = 30    # Skip long tokens
-sample_size = 50000     # Bytes read from large files
+min_term_frequency = 2        # Skip rare terms
+min_word_length = 4           # Skip short tokens
+max_word_length = 30          # Skip long tokens
+sample_size = 50000           # Bytes read from large files
 ```
+
+See [search.md](search.md) for detailed explanation of the search parameters.
 
 
 ## Context Rules
@@ -205,6 +218,9 @@ include = ["docs:api/overview.md"]
 | `trees` | `[String]` | No | Limit search to these trees (default: all trees) |
 | `terms` | `[String]` | No | Additional search terms to inject into the query |
 | `include` | `[String]` | No | Files to always include in results |
+| `search` | Table | No | Override search parameters for matching files |
+
+The `search` sub-table accepts: `limit`, `candidate_limit`, `cutoff_ratio`, `aggregation_threshold`.
 
 ### Match Patterns
 
@@ -246,6 +262,7 @@ When multiple rules match a file, their effects are merged:
 - **trees**: Intersection of all specified trees (if any rule specifies trees, only the
   intersection is searched; if no rules specify trees, all trees are searched)
 - **include**: All include paths from matching rules are concatenated (deduplicated)
+- **search**: First non-None value wins for each parameter (earlier rules take precedence)
 
 Example with two matching rules:
 
@@ -307,7 +324,6 @@ Ranked terms:
 
 ```toml
 [context]
-limit = 10
 min_word_length = 4
 
 [[context.rules]]
@@ -334,4 +350,6 @@ include = ["docs:frontend/components.md"]
 match = "tests/**"
 trees = ["docs", "examples"]
 terms = ["testing"]
+search.limit = 20           # More results for test files
+search.cutoff_ratio = 0.2   # More permissive filtering
 ```

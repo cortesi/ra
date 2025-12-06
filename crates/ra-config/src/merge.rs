@@ -6,7 +6,8 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    Config, ConfigError, ContextRule, ContextSettings, SearchSettings, Settings, Tree,
+    Config, ConfigError, ContextRule, ContextSettings, SearchOverrides, SearchSettings, Settings,
+    Tree,
     discovery::is_global_config,
     parse::{
         RawConfig, RawContextRule, RawContextSettings, RawSearchSettings, RawSettings, RawTree,
@@ -108,6 +109,18 @@ fn apply_raw_search(result: &mut SearchSettings, raw: &RawSearchSettings) {
     if let Some(v) = raw.fuzzy_distance {
         result.fuzzy_distance = v;
     }
+    if let Some(v) = raw.limit {
+        result.limit = v;
+    }
+    if let Some(v) = raw.candidate_limit {
+        result.candidate_limit = v;
+    }
+    if let Some(v) = raw.cutoff_ratio {
+        result.cutoff_ratio = v;
+    }
+    if let Some(v) = raw.aggregation_threshold {
+        result.aggregation_threshold = v;
+    }
 }
 
 /// Merges context settings.
@@ -141,9 +154,6 @@ fn merge_context_settings(configs: &[ParsedConfig]) -> ContextSettings {
 
 /// Applies raw context scalar settings to result (not rules).
 fn apply_raw_context_scalars(result: &mut ContextSettings, raw: &RawContextSettings) {
-    if let Some(v) = raw.limit {
-        result.limit = v;
-    }
     if let Some(v) = raw.min_term_frequency {
         result.min_term_frequency = v;
     }
@@ -160,11 +170,19 @@ fn apply_raw_context_scalars(result: &mut ContextSettings, raw: &RawContextSetti
 
 /// Converts a raw context rule to the resolved type.
 fn convert_context_rule(raw: &RawContextRule) -> ContextRule {
+    let search = raw.search.as_ref().map(|s| SearchOverrides {
+        limit: s.limit,
+        candidate_limit: s.candidate_limit,
+        cutoff_ratio: s.cutoff_ratio,
+        aggregation_threshold: s.aggregation_threshold,
+    });
+
     ContextRule {
         patterns: raw.patterns.clone(),
         trees: raw.trees.clone().unwrap_or_default(),
         terms: raw.terms.clone().unwrap_or_default(),
         include: raw.include.clone().unwrap_or_default(),
+        search,
     }
 }
 

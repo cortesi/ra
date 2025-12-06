@@ -411,7 +411,7 @@ mod tests {
 
         let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
         let settings = ContextSettings::default();
-        let context_search = ContextSearch::new(&mut searcher, &settings, settings.limit).unwrap();
+        let context_search = ContextSearch::new(&mut searcher, &settings, 10).unwrap();
 
         // Use a directory path to force read_to_string to fail.
         let unreadable_path = index_dir.path().join("dir_as_file");
@@ -448,7 +448,7 @@ mod tests {
 
         let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
         let settings = ContextSettings::default();
-        let context_search = ContextSearch::new(&mut searcher, &settings, settings.limit).unwrap();
+        let context_search = ContextSearch::new(&mut searcher, &settings, 10).unwrap();
 
         let result = context_search.analyze(&[test_file.as_path()], &[]);
 
@@ -481,7 +481,7 @@ mod tests {
 
         let mut searcher = Searcher::open(index_dir.path(), "english", &trees, 1.0).unwrap();
         let settings = ContextSettings::default();
-        let context_search = ContextSearch::new(&mut searcher, &settings, settings.limit).unwrap();
+        let context_search = ContextSearch::new(&mut searcher, &settings, 10).unwrap();
 
         let result = context_search.analyze(&[outside_file.as_path()], &[]);
 
