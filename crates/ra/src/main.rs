@@ -21,8 +21,8 @@ use ra_highlight::{
 };
 use ra_index::{
     AggregatedSearchResult, ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats,
-    IndexStatus, Indexer, ProgressReporter, SearchParams, SearchResult, Searcher, SilentReporter,
-    detect_index_status, index_directory, open_searcher, parse_query,
+    IndexStatus, Indexer, ProgressReporter, SearchCandidate, SearchParams, SearchResult, Searcher,
+    SilentReporter, detect_index_status, index_directory, open_searcher, parse_query,
 };
 use serde::Serialize;
 
@@ -539,27 +539,6 @@ fn json_from_aggregated_result(result: &AggregatedSearchResult, list: bool) -> J
 }
 
 /// Builds a JSON result from a single search result.
-fn json_from_search_result(result: &SearchResult, list: bool) -> JsonSearchResult {
-    JsonSearchResult {
-        id: result.id.clone(),
-        tree: result.tree.clone(),
-        path: result.path.clone(),
-        title: result.title.clone(),
-        breadcrumb: result.breadcrumb.clone(),
-        score: result.score,
-        snippet: None,
-        body: Some(result.body.clone()),
-        content: if list {
-            None
-        } else {
-            Some(format!("> {}\n\n{}", result.breadcrumb, result.body))
-        },
-        match_ranges: Some(json_match_ranges(&result.match_ranges)),
-        title_match_ranges: Some(json_match_ranges(&result.title_match_ranges)),
-        path_match_ranges: Some(json_match_ranges(&result.path_match_ranges)),
-    }
-}
-
 /// Rendering style for aggregated search results.
 #[derive(Clone, Copy)]
 enum DisplayMode {
@@ -779,30 +758,6 @@ fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> Strin
         output.push_str(&format!("{}\n", dim("(match details not collected)")));
     }
 
-    output
-}
-
-/// Formats a search result for full content output.
-fn format_result_full(result: &SearchResult) -> String {
-    let mut output = String::new();
-    output.push_str(&format!(
-        "─── {} ───\n",
-        highlight_id_with_path(&result.id, &result.path_match_ranges)
-    ));
-    let breadcrumb_line = highlight_breadcrumb_title(
-        &result.breadcrumb,
-        &result.title,
-        &result.title_match_ranges,
-    );
-    output.push_str(&format!("{breadcrumb_line}\n\n"));
-
-    // Format body with content styling, indentation, and match highlighting
-    let body = format_body(&result.body, &result.match_ranges);
-    output.push_str(&body);
-
-    if !result.body.ends_with('\n') {
-        output.push('\n');
-    }
     output
 }
 
@@ -1623,7 +1578,6 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
 
     // Get results
     let results: Vec<SearchResult> = if full_document || slug.is_none() {
-        // Get all chunks from the document
         match searcher.get_by_path(&tree, &path) {
             Ok(r) => r,
             Err(e) => {
@@ -1632,7 +1586,6 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
             }
         }
     } else {
-        // Get specific chunk by ID
         match searcher.get_by_id(id) {
             Ok(Some(r)) => vec![r],
             Ok(None) => vec![],
@@ -1648,33 +1601,12 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Output results
-    if json {
-        let json_output = JsonSearchOutput {
-            queries: vec![JsonQueryResults {
-                query: id.to_string(),
-                total_matches: results.len(),
-                results: results
-                    .iter()
-                    .map(|r| json_from_search_result(r, false))
-                    .collect(),
-            }],
-        };
-        match serde_json::to_string_pretty(&json_output) {
-            Ok(json_str) => println!("{json_str}"),
-            Err(e) => {
-                eprintln!("error: failed to serialize JSON: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        for result in &results {
-            print!("{}", format_result_full(result));
-            println!();
-        }
-    }
+    let aggregated: Vec<AggregatedSearchResult> = results
+        .into_iter()
+        .map(|r| AggregatedSearchResult::Single(SearchCandidate::from(r)))
+        .collect();
 
-    ExitCode::SUCCESS
+    output_aggregated_results(&aggregated, id, false, false, json, 0, &searcher)
 }
 
 /// Implements the `ra init` command.
