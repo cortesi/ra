@@ -553,13 +553,17 @@ mod mlt_tests {
 
         // Should find rust-ownership and rust-web (both about Rust)
         // but NOT include the source document itself
-        assert!(!results.iter().any(|r| r.id() == "local:docs/rust-intro.md"));
+        assert!(
+            !results
+                .iter()
+                .any(|r| r.candidate().id == "local:docs/rust-intro.md")
+        );
 
         // The Rust documents should rank higher than Python
         let rust_ids: HashSet<_> = results
             .iter()
-            .filter(|r| r.title().contains("Rust"))
-            .map(|r| r.id())
+            .filter(|r| r.candidate().title.contains("Rust"))
+            .map(|r| r.candidate().id.as_str())
             .collect();
         assert!(!rust_ids.is_empty(), "Should find other Rust documents");
     }
@@ -582,8 +586,8 @@ mod mlt_tests {
 
         // Source document should never appear in results
         for result in &results {
-            assert_ne!(result.id(), "local:docs/rust-intro.md");
-            assert_ne!(result.doc_id(), "local:docs/rust-intro.md");
+            assert_ne!(result.candidate().id, "local:docs/rust-intro.md");
+            assert_ne!(result.candidate().doc_id, "local:docs/rust-intro.md");
         }
     }
 
@@ -613,7 +617,7 @@ mod mlt_tests {
             .unwrap();
 
         // Should find Rust-related documents
-        assert!(results.iter().any(|r| r.title().contains("Rust")));
+        assert!(results.iter().any(|r| r.candidate().title.contains("Rust")));
     }
 
     #[test]
@@ -635,7 +639,7 @@ mod mlt_tests {
 
         // All results should be from the "local" tree
         for result in &results {
-            assert_eq!(result.tree(), "local");
+            assert_eq!(result.candidate().tree, "local");
         }
     }
 

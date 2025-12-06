@@ -4,7 +4,7 @@
 //! - [`SearchCandidate`]: A single chunk match from the index (re-exported from search)
 //! - [`SearchResult`]: Either a single match or an aggregated parent with constituents
 
-use std::{cmp::Ordering, ops::Range};
+use std::cmp::Ordering;
 
 pub use super::search::{MatchDetails, SearchCandidate};
 
@@ -67,24 +67,6 @@ impl SearchResult {
                     .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(Ordering::Equal))
                     .and_then(|c| c.match_details.as_ref())
             }
-        }
-    }
-
-    /// Returns title match ranges.
-    pub fn title_match_ranges(&self) -> &[Range<usize>] {
-        &self.candidate().title_match_ranges
-    }
-
-    /// Returns path match ranges.
-    pub fn path_match_ranges(&self) -> &[Range<usize>] {
-        &self.candidate().path_match_ranges
-    }
-
-    /// Returns body match ranges.
-    pub fn match_ranges(&self) -> &[Range<usize>] {
-        match self {
-            Self::Single(candidate) => &candidate.match_ranges,
-            Self::Aggregated { .. } => &[],
         }
     }
 
