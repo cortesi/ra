@@ -1028,9 +1028,6 @@ dependencies = [
 [[package]]
 name = "ra-query"
 version = "0.1.0"
-dependencies = [
- "thiserror 2.0.17",
-]
 
 [[package]]
 name = "rand"

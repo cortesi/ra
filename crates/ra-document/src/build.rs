@@ -94,7 +94,7 @@ struct HeadingWithSpan {
 /// 7. Computes sibling counts
 pub fn build_chunk_tree(content: &str, tree_name: &str, path: &Path, doc_title: &str) -> ChunkTree {
     let headings = extract_headings(content);
-    let mut slugifier = Slugifier::new();
+    let mut slugifier = Slugifier::default();
 
     // Create the document node as root
     let mut root = Node::document(tree_name, path, doc_title.to_string(), content.len());
