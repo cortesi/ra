@@ -63,10 +63,10 @@ pub struct RawSearchSettings {
     pub stemmer: Option<String>,
     /// Fuzzy matching Levenshtein distance (0 = disabled).
     pub fuzzy_distance: Option<u8>,
-    /// Maximum results to return.
+    /// Maximum results to return after aggregation.
     pub limit: Option<usize>,
-    /// Maximum candidates to retrieve from index before filtering.
-    pub candidate_limit: Option<usize>,
+    /// Maximum candidates to pass through Phase 2 into aggregation.
+    pub max_candidates: Option<usize>,
     /// Score ratio threshold for elbow cutoff (0.0-1.0).
     pub cutoff_ratio: Option<f32>,
     /// Sibling ratio threshold for hierarchical aggregation.

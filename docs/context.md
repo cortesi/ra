@@ -136,14 +136,14 @@ When context rules match, the output also shows per-file matched rules.
 | Flag | Description |
 |------|-------------|
 | `--explain` | Show terms and query without searching |
-| `-n, --limit N` | Maximum results (default: 10) |
+| `-n, --limit N` | Maximum results after aggregation (default: 10) |
 | `--terms N` | Maximum terms in query (default: 50; higher = more diverse) |
 | `-t, --tree NAME` | Limit to specific tree(s) |
 | `--list` | Output titles only |
 | `--matches` | Output only lines containing matches |
 | `--json` | JSON output |
 | `--no-aggregation` | Disable hierarchical aggregation |
-| `--candidate-limit N` | Max candidates from index (default: 100) |
+| `--max-candidates N` | Max candidates entering aggregation (default: 50) |
 | `--cutoff-ratio N` | Score ratio for relevance cutoff (default: 0.3) |
 | `--aggregation-threshold N` | Sibling ratio for aggregation (default: 0.5) |
 | `-v, --verbose` | Increase verbosity |
@@ -182,8 +182,8 @@ settings. Search parameters come from `[search]` and can be overridden per-rule:
 
 ```toml
 [search]
-limit = 10                    # Max results (applies to both search and context)
-candidate_limit = 100         # Max candidates from index
+limit = 10                    # Max results after aggregation
+max_candidates = 50           # Max candidates entering aggregation phase
 cutoff_ratio = 0.3            # Score ratio for relevance cutoff
 aggregation_threshold = 0.5   # Sibling ratio for hierarchical aggregation
 
@@ -227,7 +227,7 @@ include = ["docs:api/overview.md"]
 | `include` | `[String]` | No | Files to always include in results |
 | `search` | Table | No | Override search parameters for matching files |
 
-The `search` sub-table accepts: `limit`, `candidate_limit`, `cutoff_ratio`, `aggregation_threshold`.
+The `search` sub-table accepts: `limit`, `max_candidates`, `cutoff_ratio`, `aggregation_threshold`.
 
 ### Match Patterns
 
@@ -361,6 +361,7 @@ include = ["docs:frontend/components.md"]
 match = "tests/**"
 trees = ["docs", "examples"]
 terms = ["testing"]
-search.limit = 20           # More results for test files
-search.cutoff_ratio = 0.2   # More permissive filtering
+search.limit = 20             # More results for test files
+search.max_candidates = 100   # More candidates to aggregate
+search.cutoff_ratio = 0.2     # More permissive filtering
 ```

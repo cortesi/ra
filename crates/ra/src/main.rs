@@ -35,10 +35,10 @@ use serde::Serialize;
 ///
 /// Used by both `search` and `context` commands to construct `SearchParams`.
 struct SearchParamsOverrides {
-    /// Maximum results to return.
+    /// Maximum results to return after aggregation.
     limit: Option<usize>,
-    /// Maximum candidates to retrieve from index.
-    candidate_limit: Option<usize>,
+    /// Maximum candidates to pass through Phase 2 into aggregation.
+    max_candidates: Option<usize>,
     /// Score ratio threshold for relevance cutoff.
     cutoff_ratio: Option<f32>,
     /// Sibling ratio threshold for aggregation.
@@ -57,15 +57,16 @@ impl SearchParamsOverrides {
     /// This ensures consistent handling of search parameters for both `search` and `context`.
     fn build_params<D: SearchDefaults>(&self, defaults: &D) -> SearchParams {
         SearchParams {
-            candidate_limit: self
-                .candidate_limit
-                .unwrap_or_else(|| defaults.candidate_limit()),
+            candidate_limit: None, // Let SearchParams derive from limit
             cutoff_ratio: self.cutoff_ratio.unwrap_or_else(|| defaults.cutoff_ratio()),
-            max_results: self.limit.unwrap_or_else(|| defaults.limit()),
+            max_candidates: self
+                .max_candidates
+                .unwrap_or_else(|| defaults.max_candidates()),
             aggregation_threshold: self
                 .aggregation_threshold
                 .unwrap_or_else(|| defaults.aggregation_threshold()),
             disable_aggregation: self.no_aggregation,
+            limit: self.limit.unwrap_or_else(|| defaults.limit()),
             trees: self.trees.clone(),
             verbosity: self.verbose,
         }
@@ -81,15 +82,16 @@ impl SearchParamsOverrides {
     ) -> SearchParams {
         // Apply rule overrides only where CLI didn't specify a value
         SearchParams {
-            candidate_limit: self
-                .candidate_limit
-                .or(rule_overrides.candidate_limit)
-                .unwrap_or_else(|| defaults.candidate_limit()),
+            candidate_limit: None, // Let SearchParams derive from limit
             cutoff_ratio: self
                 .cutoff_ratio
                 .or(rule_overrides.cutoff_ratio)
                 .unwrap_or_else(|| defaults.cutoff_ratio()),
-            max_results: self
+            max_candidates: self
+                .max_candidates
+                .or(rule_overrides.max_candidates)
+                .unwrap_or_else(|| defaults.max_candidates()),
+            limit: self
                 .limit
                 .or(rule_overrides.limit)
                 .unwrap_or_else(|| defaults.limit()),
@@ -228,7 +230,7 @@ EXAMPLES:
         #[arg(required = true)]
         queries: Vec<String>,
 
-        /// Maximum results to return [default: 10]
+        /// Maximum results to return after aggregation [default: 10]
         #[arg(short = 'n', long)]
         limit: Option<usize>,
 
@@ -252,9 +254,9 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to retrieve from index [default: 100]
+        /// Maximum candidates to pass through elbow cutoff into aggregation [default: 50]
         #[arg(long)]
-        candidate_limit: Option<usize>,
+        max_candidates: Option<usize>,
 
         /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
@@ -279,7 +281,7 @@ EXAMPLES:
         #[arg(required = true)]
         files: Vec<String>,
 
-        /// Maximum results to return [default: 10]
+        /// Maximum results to return after aggregation [default: 10]
         #[arg(short = 'n', long)]
         limit: Option<usize>,
 
@@ -307,9 +309,9 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to retrieve from index [default: 100]
+        /// Maximum candidates to pass through elbow cutoff into aggregation [default: 50]
         #[arg(long)]
-        candidate_limit: Option<usize>,
+        max_candidates: Option<usize>,
 
         /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
@@ -373,7 +375,7 @@ EXAMPLES:
         /// Source: chunk ID (tree:path#slug) or file path
         source: String,
 
-        /// Maximum results to return [default: 10]
+        /// Maximum results to return after aggregation [default: 10]
         #[arg(short = 'n', long)]
         limit: Option<usize>,
 
@@ -397,9 +399,9 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to retrieve from index [default: 100]
+        /// Maximum candidates to pass through elbow cutoff into aggregation [default: 50]
         #[arg(long)]
-        candidate_limit: Option<usize>,
+        max_candidates: Option<usize>,
 
         /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
@@ -558,7 +560,7 @@ fn main() -> ExitCode {
             json,
             explain,
             no_aggregation,
-            candidate_limit,
+            max_candidates,
             cutoff_ratio,
             aggregation_threshold,
             verbose,
@@ -571,7 +573,7 @@ fn main() -> ExitCode {
 
             let overrides = SearchParamsOverrides {
                 limit,
-                candidate_limit,
+                max_candidates,
                 cutoff_ratio,
                 aggregation_threshold,
                 no_aggregation,
@@ -590,7 +592,7 @@ fn main() -> ExitCode {
             json,
             explain,
             no_aggregation,
-            candidate_limit,
+            max_candidates,
             cutoff_ratio,
             aggregation_threshold,
             verbose,
@@ -605,7 +607,7 @@ fn main() -> ExitCode {
                 json,
                 explain,
                 no_aggregation,
-                candidate_limit,
+                max_candidates,
                 cutoff_ratio,
                 aggregation_threshold,
                 verbose,
@@ -627,7 +629,7 @@ fn main() -> ExitCode {
             json,
             explain,
             no_aggregation,
-            candidate_limit,
+            max_candidates,
             cutoff_ratio,
             aggregation_threshold,
             verbose,
@@ -648,7 +650,7 @@ fn main() -> ExitCode {
                 json,
                 explain,
                 no_aggregation,
-                candidate_limit,
+                max_candidates,
                 cutoff_ratio,
                 aggregation_threshold,
                 verbose,
@@ -1256,15 +1258,19 @@ fn cmd_search(
 
                 // Show search parameters
                 println!("{}", subheader("Search Parameters:"));
-                println!("   Phase 1: candidate_limit = {}", params.candidate_limit);
+                println!(
+                    "   Phase 1: candidate_limit = {}",
+                    params.effective_candidate_limit()
+                );
                 println!("   Phase 2: cutoff_ratio = {}", params.cutoff_ratio);
-                println!("   Phase 2: max_results = {}", params.max_results);
+                println!("   Phase 2: max_candidates = {}", params.max_candidates);
                 println!(
                     "   Phase 3: aggregation_threshold = {}",
                     params.aggregation_threshold
                 );
+                println!("   Phase 4: limit = {}", params.limit);
                 println!(
-                    "   Phase 3: aggregation = {}",
+                    "   Aggregation = {}",
                     if params.disable_aggregation {
                         "disabled"
                     } else {
@@ -1506,8 +1512,8 @@ fn print_search_overrides(overrides: &ra_config::SearchOverrides, indent: &str) 
     if let Some(limit) = overrides.limit {
         parts.push(format!("limit={limit}"));
     }
-    if let Some(candidate_limit) = overrides.candidate_limit {
-        parts.push(format!("candidate_limit={candidate_limit}"));
+    if let Some(max_candidates) = overrides.max_candidates {
+        parts.push(format!("max_candidates={max_candidates}"));
     }
     if let Some(cutoff_ratio) = overrides.cutoff_ratio {
         parts.push(format!("cutoff_ratio={cutoff_ratio}"));
@@ -1529,7 +1535,7 @@ fn cmd_context(
     json: bool,
     explain: bool,
     no_aggregation: bool,
-    candidate_limit: Option<usize>,
+    max_candidates: Option<usize>,
     cutoff_ratio: Option<f32>,
     aggregation_threshold: Option<f32>,
     verbose: u8,
@@ -1597,7 +1603,7 @@ fn cmd_context(
     // Execute the search with CLI overrides, then rule overrides, then config defaults
     let overrides = SearchParamsOverrides {
         limit,
-        candidate_limit,
+        max_candidates,
         cutoff_ratio,
         aggregation_threshold,
         no_aggregation,
@@ -1808,12 +1814,12 @@ struct JsonMatchedRules {
 /// JSON output for search parameter overrides from rules.
 #[derive(Serialize, Default)]
 struct JsonSearchOverrides {
-    /// Maximum results to return.
+    /// Maximum results to return after aggregation.
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<usize>,
-    /// Maximum candidates before elbow cutoff.
+    /// Maximum candidates before aggregation.
     #[serde(skip_serializing_if = "Option::is_none")]
-    candidate_limit: Option<usize>,
+    max_candidates: Option<usize>,
     /// Elbow detection cutoff ratio.
     #[serde(skip_serializing_if = "Option::is_none")]
     cutoff_ratio: Option<f32>,
@@ -1826,7 +1832,7 @@ impl JsonSearchOverrides {
     /// Returns true if no overrides are set.
     fn is_empty(&self) -> bool {
         self.limit.is_none()
-            && self.candidate_limit.is_none()
+            && self.max_candidates.is_none()
             && self.cutoff_ratio.is_none()
             && self.aggregation_threshold.is_none()
     }
@@ -1835,7 +1841,7 @@ impl JsonSearchOverrides {
     fn from_config(overrides: &ra_config::SearchOverrides) -> Self {
         Self {
             limit: overrides.limit,
-            candidate_limit: overrides.candidate_limit,
+            max_candidates: overrides.max_candidates,
             cutoff_ratio: overrides.cutoff_ratio,
             aggregation_threshold: overrides.aggregation_threshold,
         }
@@ -1938,7 +1944,7 @@ fn cmd_likethis(
     json: bool,
     explain: bool,
     no_aggregation: bool,
-    candidate_limit: Option<usize>,
+    max_candidates: Option<usize>,
     cutoff_ratio: Option<f32>,
     aggregation_threshold: Option<f32>,
     verbose: u8,
@@ -1971,7 +1977,7 @@ fn cmd_likethis(
     // Build search parameters
     let overrides = SearchParamsOverrides {
         limit,
-        candidate_limit,
+        max_candidates,
         cutoff_ratio,
         aggregation_threshold,
         no_aggregation,
@@ -2245,9 +2251,10 @@ fn output_likethis_explain(
                 boost_factor: explanation.mlt_params.boost_factor,
             },
             search_params: JsonSearchParams {
-                candidate_limit: search_params.candidate_limit,
+                candidate_limit: search_params.effective_candidate_limit(),
                 cutoff_ratio: search_params.cutoff_ratio,
-                max_results: search_params.max_results,
+                max_candidates: search_params.max_candidates,
+                limit: search_params.limit,
                 aggregation_threshold: search_params.aggregation_threshold,
                 disable_aggregation: search_params.disable_aggregation,
                 trees: search_params.trees.clone(),
@@ -2306,16 +2313,20 @@ fn output_likethis_explain(
         println!("{}", subheader("Search Parameters:"));
         println!(
             "   Phase 1: candidate_limit = {}",
-            search_params.candidate_limit
+            search_params.effective_candidate_limit()
         );
         println!("   Phase 2: cutoff_ratio = {}", search_params.cutoff_ratio);
-        println!("   Phase 2: max_results = {}", search_params.max_results);
+        println!(
+            "   Phase 2: max_candidates = {}",
+            search_params.max_candidates
+        );
         println!(
             "   Phase 3: aggregation_threshold = {}",
             search_params.aggregation_threshold
         );
+        println!("   Phase 4: limit = {}", search_params.limit);
         println!(
-            "   Phase 3: aggregation = {}",
+            "   Aggregation = {}",
             if search_params.disable_aggregation {
                 "disabled"
             } else {
@@ -2371,8 +2382,10 @@ struct JsonSearchParams {
     candidate_limit: usize,
     /// Score ratio threshold for cutoff.
     cutoff_ratio: f32,
-    /// Maximum results to return.
-    max_results: usize,
+    /// Maximum candidates before aggregation.
+    max_candidates: usize,
+    /// Maximum results to return after aggregation.
+    limit: usize,
     /// Sibling ratio threshold for aggregation.
     aggregation_threshold: f32,
     /// Whether aggregation is disabled.
@@ -3102,8 +3115,8 @@ fn cmd_update() -> ExitCode {
 mod tests {
     use clap::CommandFactory;
     use ra_config::{
-        DEFAULT_AGGREGATION_THRESHOLD, DEFAULT_CANDIDATE_LIMIT, DEFAULT_CONTEXT_TERMS,
-        DEFAULT_CUTOFF_RATIO, DEFAULT_SEARCH_LIMIT,
+        DEFAULT_AGGREGATION_THRESHOLD, DEFAULT_CONTEXT_TERMS, DEFAULT_CUTOFF_RATIO,
+        DEFAULT_MAX_CANDIDATES, DEFAULT_SEARCH_LIMIT,
     };
 
     use super::*;
@@ -3133,11 +3146,11 @@ mod tests {
             DEFAULT_SEARCH_LIMIT
         );
 
-        let candidate_help = get_arg_help(&cmd, "search", "candidate_limit");
+        let max_candidates_help = get_arg_help(&cmd, "search", "max_candidates");
         assert!(
-            candidate_help.contains(&format!("[default: {}]", DEFAULT_CANDIDATE_LIMIT)),
-            "search --candidate-limit help should contain default {}: {candidate_help}",
-            DEFAULT_CANDIDATE_LIMIT
+            max_candidates_help.contains(&format!("[default: {}]", DEFAULT_MAX_CANDIDATES)),
+            "search --max-candidates help should contain default {}: {max_candidates_help}",
+            DEFAULT_MAX_CANDIDATES
         );
 
         let cutoff_help = get_arg_help(&cmd, "search", "cutoff_ratio");

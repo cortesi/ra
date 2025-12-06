@@ -112,8 +112,8 @@ fn apply_raw_search(result: &mut SearchSettings, raw: &RawSearchSettings) {
     if let Some(v) = raw.limit {
         result.limit = v;
     }
-    if let Some(v) = raw.candidate_limit {
-        result.candidate_limit = v;
+    if let Some(v) = raw.max_candidates {
+        result.max_candidates = v;
     }
     if let Some(v) = raw.cutoff_ratio {
         result.cutoff_ratio = v;
@@ -175,7 +175,7 @@ fn apply_raw_context_scalars(result: &mut ContextSettings, raw: &RawContextSetti
 fn convert_context_rule(raw: &RawContextRule) -> ContextRule {
     let search = raw.search.as_ref().map(|s| SearchOverrides {
         limit: s.limit,
-        candidate_limit: s.candidate_limit,
+        max_candidates: s.max_candidates,
         cutoff_ratio: s.cutoff_ratio,
         aggregation_threshold: s.aggregation_threshold,
     });

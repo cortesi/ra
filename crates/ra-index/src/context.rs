@@ -273,11 +273,7 @@ impl<'a> ContextSearch<'a> {
         }
 
         // Inject auto-included files from rules
-        self.inject_includes(
-            &mut results,
-            &analysis.merged_rules.include,
-            params.max_results,
-        );
+        self.inject_includes(&mut results, &analysis.merged_rules.include, params.limit);
 
         Ok((results, analysis))
     }

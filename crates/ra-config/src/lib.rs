@@ -51,8 +51,8 @@ pub const DEFAULT_FUZZY_DISTANCE: u8 = 1;
 /// Default maximum results for search (SearchSettings.limit).
 pub const DEFAULT_SEARCH_LIMIT: usize = 10;
 
-/// Default maximum candidates from index (SearchSettings.candidate_limit).
-pub const DEFAULT_CANDIDATE_LIMIT: usize = 100;
+/// Default maximum candidates before aggregation (SearchSettings.max_candidates).
+pub const DEFAULT_MAX_CANDIDATES: usize = 50;
 
 /// Default score ratio threshold for elbow cutoff (SearchSettings.cutoff_ratio).
 pub const DEFAULT_CUTOFF_RATIO: f32 = 0.3;
@@ -248,10 +248,10 @@ impl Default for Settings {
 /// Both `SearchSettings` and `ContextSettings` implement this trait, allowing
 /// shared code for building search parameters from CLI overrides and config defaults.
 pub trait SearchDefaults {
-    /// Maximum results to return.
+    /// Maximum results to return after aggregation.
     fn limit(&self) -> usize;
-    /// Maximum candidates to retrieve from index before filtering.
-    fn candidate_limit(&self) -> usize;
+    /// Maximum candidates to pass through Phase 2 into aggregation.
+    fn max_candidates(&self) -> usize;
     /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
     fn cutoff_ratio(&self) -> f32;
     /// Sibling ratio threshold for hierarchical aggregation.
@@ -266,10 +266,10 @@ pub struct SearchSettings {
     pub stemmer: String,
     /// Fuzzy matching Levenshtein distance (0 = disabled).
     pub fuzzy_distance: u8,
-    /// Maximum results to return.
+    /// Maximum results to return after aggregation.
     pub limit: usize,
-    /// Maximum candidates to retrieve from index before filtering.
-    pub candidate_limit: usize,
+    /// Maximum candidates to pass through Phase 2 into aggregation.
+    pub max_candidates: usize,
     /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
     pub cutoff_ratio: f32,
     /// Sibling ratio threshold for hierarchical aggregation.
@@ -282,7 +282,7 @@ impl Default for SearchSettings {
             stemmer: String::from(DEFAULT_STEMMER),
             fuzzy_distance: DEFAULT_FUZZY_DISTANCE,
             limit: DEFAULT_SEARCH_LIMIT,
-            candidate_limit: DEFAULT_CANDIDATE_LIMIT,
+            max_candidates: DEFAULT_MAX_CANDIDATES,
             cutoff_ratio: DEFAULT_CUTOFF_RATIO,
             aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
         }
@@ -293,8 +293,8 @@ impl SearchDefaults for SearchSettings {
     fn limit(&self) -> usize {
         self.limit
     }
-    fn candidate_limit(&self) -> usize {
-        self.candidate_limit
+    fn max_candidates(&self) -> usize {
+        self.max_candidates
     }
     fn cutoff_ratio(&self) -> f32 {
         self.cutoff_ratio
@@ -350,12 +350,12 @@ pub struct ContextRule {
 /// All fields are optional; unset fields inherit from `[search]`.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SearchOverrides {
-    /// Maximum results to return.
+    /// Maximum results to return after aggregation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
-    /// Maximum candidates to retrieve from index before filtering.
+    /// Maximum candidates to pass through Phase 2 into aggregation.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub candidate_limit: Option<usize>,
+    pub max_candidates: Option<usize>,
     /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cutoff_ratio: Option<f32>,
@@ -368,7 +368,7 @@ impl SearchOverrides {
     /// Returns true if all fields are None.
     pub fn is_empty(&self) -> bool {
         self.limit.is_none()
-            && self.candidate_limit.is_none()
+            && self.max_candidates.is_none()
             && self.cutoff_ratio.is_none()
             && self.aggregation_threshold.is_none()
     }
@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(search.stemmer, DEFAULT_STEMMER);
         assert_eq!(search.fuzzy_distance, DEFAULT_FUZZY_DISTANCE);
         assert_eq!(search.limit, DEFAULT_SEARCH_LIMIT);
-        assert_eq!(search.candidate_limit, DEFAULT_CANDIDATE_LIMIT);
+        assert_eq!(search.max_candidates, DEFAULT_MAX_CANDIDATES);
         assert!((search.cutoff_ratio - DEFAULT_CUTOFF_RATIO).abs() < f32::EPSILON);
         assert!(
             (search.aggregation_threshold - DEFAULT_AGGREGATION_THRESHOLD).abs() < f32::EPSILON

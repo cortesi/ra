@@ -136,17 +136,23 @@ ra uses Tantivy for full-text search with:
 
 ## Search
 
-Search operates in three phases:
+Search operates in five phases:
 
-1. **Candidate retrieval**: Query the Tantivy index for up to `candidate_limit` results
+1. **Candidate retrieval**: Query the Tantivy index for up to `limit × 5` results
    ranked by BM25.
 
-2. **Elbow cutoff**: Detect the natural boundary where relevance drops. Cut results when
-   the score ratio between adjacent results falls below `cutoff_ratio`.
+2. **Normalization**: For multi-tree searches, normalize scores per tree so each tree's
+   best result gets a score of 1.0.
 
-3. **Hierarchical aggregation**: When multiple sibling chunks match and their count meets
+3. **Elbow cutoff**: Detect the natural boundary where relevance drops. Cut results when
+   the score ratio between adjacent results falls below `cutoff_ratio`. Hard cap at
+   `max_candidates`.
+
+4. **Hierarchical aggregation**: When multiple sibling chunks match and their count meets
    `aggregation_threshold`, merge them into their parent chunk. This cascades up the
    hierarchy.
+
+5. **Final limit**: Truncate results to `limit`.
 
 After aggregation, any result whose ancestor also appears in results is filtered out.
 
@@ -205,14 +211,14 @@ specific trees, and auto-include files in results.
 Search the knowledge base. Multiple arguments are joined with OR.
 
 Options:
-- `-n, --limit N`: Maximum results
+- `-n, --limit N`: Maximum results after aggregation (default: 10)
 - `--list`: Show titles and snippets only
 - `--matches`: Show matching lines only
 - `--json`: JSON output
 - `--explain`: Show parsed query AST
-- `--candidate-limit N`: Phase 1 limit (default: 100)
-- `--cutoff-ratio N`: Phase 2 threshold (default: 0.5)
-- `--aggregation-threshold N`: Phase 3 threshold (default: 0.5)
+- `--max-candidates N`: Max candidates entering aggregation (default: 50)
+- `--cutoff-ratio N`: Elbow threshold (default: 0.3)
+- `--aggregation-threshold N`: Sibling ratio for aggregation (default: 0.5)
 - `--no-aggregation`: Disable hierarchical aggregation
 - `-v, --verbose`: Increase output verbosity
 
@@ -221,9 +227,11 @@ Options:
 Find relevant documentation for source files.
 
 Options:
-- `-n, --limit N`: Maximum results
-- `--terms N`: Maximum terms in generated query (default: 15)
+- `-n, --limit N`: Maximum results after aggregation (default: 10)
+- `--terms N`: Maximum terms in generated query (default: 50)
 - `-t, --tree NAME`: Limit to specific tree(s)
+- `--max-candidates N`: Max candidates entering aggregation (default: 50)
+- `--cutoff-ratio N`: Elbow threshold (default: 0.3)
 - `--list`: Show titles only
 - `--json`: JSON output
 - `--explain`: Show extracted terms and generated query

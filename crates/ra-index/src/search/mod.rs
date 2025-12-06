@@ -43,8 +43,7 @@ pub use idf::TreeFilteredSearcher;
 use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use mlt::{MoreLikeThisExplanation, MoreLikeThisParams};
 pub use open::open_searcher;
-#[allow(unused_imports)]
-pub use params::{DEFAULT_CANDIDATE_LIMIT, SearchParams};
+pub use params::SearchParams;
 pub use ranges::merge_ranges;
 use tantivy::{Index, tokenizer::TextAnalyzer};
 pub use types::{MatchDetails, SearchCandidate};

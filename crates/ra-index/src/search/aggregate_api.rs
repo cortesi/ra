@@ -7,6 +7,7 @@
 //! 2. Per-tree score normalization (for multi-tree searches)
 //! 3. Elbow cutoff for relevance filtering
 //! 4. Hierarchical aggregation of sibling matches
+//! 5. Final limit truncation
 //!
 //! See the [`crate::search`] module documentation for an overview of the algorithm.
 
@@ -81,7 +82,7 @@ impl Searcher {
         self.run_aggregated_search(content_query, &query_terms, &display_query, params)
     }
 
-    /// Executes the shared four-phase aggregated search pipeline.
+    /// Executes the shared five-phase aggregated search pipeline.
     fn run_aggregated_search(
         &mut self,
         content_query: Box<dyn Query>,
@@ -92,16 +93,17 @@ impl Searcher {
         let query = self.apply_tree_filter(content_query, &params.trees);
 
         // Phase 1: Execute query and get raw results
+        let effective_candidate_limit = params.effective_candidate_limit();
         let raw_results = if params.verbosity > 0 {
             self.execute_query_with_details(
                 &*query,
                 display_query,
                 query_terms,
-                params.candidate_limit,
+                effective_candidate_limit,
                 params.verbosity >= 2,
             )?
         } else {
-            self.execute_query_with_highlights(&*query, query_terms, params.candidate_limit)?
+            self.execute_query_with_highlights(&*query, query_terms, effective_candidate_limit)?
         };
 
         // raw_results are already SearchCandidates
@@ -112,18 +114,21 @@ impl Searcher {
         let normalized = normalize_scores_across_trees(candidates, params.trees.len());
 
         // Phase 3: Apply elbow cutoff on normalized scores
-        let filtered = apply_elbow(normalized, params.cutoff_ratio, params.max_results);
+        let filtered = apply_elbow(normalized, params.cutoff_ratio, params.max_candidates);
 
         // Phase 4: Aggregate siblings under parent nodes
-        if params.disable_aggregation {
-            Ok(single_results_from_candidates(filtered))
+        let mut results = if params.disable_aggregation {
+            single_results_from_candidates(filtered)
         } else {
-            Ok(aggregate_candidates(
-                filtered,
-                params.aggregation_threshold,
-                |parent_id| self.lookup_parent(parent_id),
-            ))
-        }
+            aggregate_candidates(filtered, params.aggregation_threshold, |parent_id| {
+                self.lookup_parent(parent_id)
+            })
+        };
+
+        // Phase 5: Apply final limit
+        results.truncate(params.limit);
+
+        Ok(results)
     }
 
     /// Looks up a parent node by ID for aggregation.

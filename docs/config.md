@@ -77,11 +77,13 @@ relevance boost in search results.
 |-----|---------|-------------|
 | `stemmer` | `"english"` | Language for stemming (see [search.md](search.md)) |
 | `fuzzy_distance` | 1 | Levenshtein edit distance; 0 disables fuzzy matching |
-| `limit` | 10 | Maximum results returned |
-| `candidate_limit` | 100 | Maximum candidates retrieved from index |
+| `limit` | 10 | Maximum results returned after aggregation |
+| `max_candidates` | 50 | Maximum candidates passed into aggregation phase |
 | `cutoff_ratio` | 0.3 | Score ratio threshold for relevance cutoff |
 | `aggregation_threshold` | 0.5 | Sibling ratio for hierarchical aggregation |
 
+The search pipeline fetches `limit × 5` candidates from the index by default, applies elbow cutoff
+to produce up to `max_candidates` results, aggregates siblings, then truncates to `limit`.
 See [search.md](search.md) for detailed explanation of these parameters.
 
 ### Context (`[context]`)
@@ -130,7 +132,7 @@ search.cutoff_ratio = 0.2
 | `include` | [String] | Files to always include (`tree:path` format) |
 | `search` | Table | Override search parameters for matching files |
 
-The `search` sub-table accepts the same keys as `[search]`: `limit`, `candidate_limit`,
+The `search` sub-table accepts the same keys as `[search]`: `limit`, `max_candidates`,
 `cutoff_ratio`, and `aggregation_threshold`.
 
 When multiple rules match a file, terms and includes are concatenated (deduplicated), tree

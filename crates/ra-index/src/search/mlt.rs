@@ -318,7 +318,9 @@ impl Searcher {
         let query = self.apply_tree_filter(query, &params.trees);
 
         // Phase 1: Execute query
-        let raw_results = self.execute_query_no_highlights(&*query, &[], params.candidate_limit)?;
+        let effective_candidate_limit = params.effective_candidate_limit();
+        let raw_results =
+            self.execute_query_no_highlights(&*query, &[], effective_candidate_limit)?;
 
         // Filter out excluded documents
         let candidates: Vec<SearchCandidate> = raw_results
@@ -330,18 +332,21 @@ impl Searcher {
         let normalized = normalize_scores_across_trees(candidates, params.trees.len());
 
         // Phase 3: Apply elbow cutoff
-        let filtered = apply_elbow(normalized, params.cutoff_ratio, params.max_results);
+        let filtered = apply_elbow(normalized, params.cutoff_ratio, params.max_candidates);
 
         // Phase 4: Aggregate siblings
-        if params.disable_aggregation {
-            Ok(single_results_from_candidates(filtered))
+        let mut results = if params.disable_aggregation {
+            single_results_from_candidates(filtered)
         } else {
-            Ok(aggregate_candidates(
-                filtered,
-                params.aggregation_threshold,
-                |parent_id| self.lookup_parent(parent_id),
-            ))
-        }
+            aggregate_candidates(filtered, params.aggregation_threshold, |parent_id| {
+                self.lookup_parent(parent_id)
+            })
+        };
+
+        // Phase 5: Apply final limit
+        results.truncate(params.limit);
+
+        Ok(results)
     }
 }
 

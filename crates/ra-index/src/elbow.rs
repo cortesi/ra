@@ -1,6 +1,6 @@
 //! Elbow detection for search result relevance cutoff.
 //!
-//! This module implements Phase 2 of the three-phase search algorithm: finding
+//! This module implements Phase 2 of the four-phase search algorithm: finding
 //! the "elbow" point in search results where relevance drops significantly.
 //!
 //! The algorithm works by computing the ratio between adjacent scores. When the
@@ -23,9 +23,6 @@ use crate::SearchCandidate;
 /// When the ratio between adjacent scores falls below this value,
 /// we consider it the elbow point.
 pub const DEFAULT_CUTOFF_RATIO: f32 = 0.5;
-
-/// Default maximum number of results to return.
-pub const DEFAULT_MAX_RESULTS: usize = 20;
 
 /// Finds the elbow cutoff point in a list of search candidates.
 ///

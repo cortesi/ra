@@ -168,8 +168,8 @@ impl MatchedRules {
         if self.search.limit.is_none() {
             self.search.limit = other.search.limit;
         }
-        if self.search.candidate_limit.is_none() {
-            self.search.candidate_limit = other.search.candidate_limit;
+        if self.search.max_candidates.is_none() {
+            self.search.max_candidates = other.search.max_candidates;
         }
         if self.search.cutoff_ratio.is_none() {
             self.search.cutoff_ratio = other.search.cutoff_ratio;
@@ -266,8 +266,8 @@ impl CompiledContextRules {
                     if search.limit.is_none() {
                         search.limit = rule_search.limit;
                     }
-                    if search.candidate_limit.is_none() {
-                        search.candidate_limit = rule_search.candidate_limit;
+                    if search.max_candidates.is_none() {
+                        search.max_candidates = rule_search.max_candidates;
                     }
                     if search.cutoff_ratio.is_none() {
                         search.cutoff_ratio = rule_search.cutoff_ratio;

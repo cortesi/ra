@@ -13,3 +13,5 @@ default_limit = 5
 # Search settings
 [search]
 stemmer = "english"
+limit = 10                 # final results after aggregation
+max_candidates = 50        # candidates passed into aggregation phase
