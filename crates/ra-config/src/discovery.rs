@@ -72,55 +72,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-
-    /// Creates a temporary directory structure for testing.
-    struct TestDir {
-        root: tempfile::TempDir,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            Self {
-                root: tempfile::tempdir().unwrap(),
-            }
-        }
-
-        fn path(&self) -> &Path {
-            self.root.path()
-        }
-
-        fn create_dir(&self, rel_path: &str) -> PathBuf {
-            let path = self.root.path().join(rel_path);
-            fs::create_dir_all(&path).unwrap();
-            path
-        }
-
-        fn create_config(&self, rel_path: &str) -> PathBuf {
-            let dir = self.root.path().join(rel_path);
-            fs::create_dir_all(&dir).unwrap();
-            let config = dir.join(CONFIG_FILENAME);
-            fs::write(&config, "# test config\n").unwrap();
-            config
-        }
-
-        fn create_config_at_root(&self) -> PathBuf {
-            let config = self.root.path().join(CONFIG_FILENAME);
-            fs::write(&config, "# root config\n").unwrap();
-            config
-        }
-
-        fn create_config_with_content(&self, rel_path: &str, content: &str) -> PathBuf {
-            let dir = self.root.path().join(rel_path);
-            fs::create_dir_all(&dir).unwrap();
-            let config = dir.join(CONFIG_FILENAME);
-            fs::write(&config, content).unwrap();
-            config
-        }
-
-        fn create_root_config(&self, rel_path: &str) -> PathBuf {
-            self.create_config_with_content(rel_path, "root = true\n")
-        }
-    }
+    use crate::test_support::TestDir;
 
     #[test]
     fn test_discover_no_configs() {

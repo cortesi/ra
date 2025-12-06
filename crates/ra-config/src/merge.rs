@@ -227,35 +227,10 @@ fn convert_tree(name: &str, raw: &RawTree, resolved_path: PathBuf, is_global: bo
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-    };
+    use std::path::Path;
 
     use super::*;
-    use crate::parse::parse_config_str;
-
-    struct TestDir {
-        root: tempfile::TempDir,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            Self {
-                root: tempfile::tempdir().unwrap(),
-            }
-        }
-
-        fn path(&self) -> &Path {
-            self.root.path()
-        }
-
-        fn create_dir(&self, rel_path: &str) -> PathBuf {
-            let path = self.root.path().join(rel_path);
-            fs::create_dir_all(&path).unwrap();
-            path
-        }
-    }
+    use crate::{parse::parse_config_str, test_support::TestDir};
 
     #[test]
     fn test_merge_empty_configs() {
