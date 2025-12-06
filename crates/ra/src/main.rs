@@ -23,7 +23,7 @@ use ra_highlight::{
 use ra_index::{
     AggregatedSearchResult, ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats,
     IndexStatus, Indexer, ProgressReporter, SearchCandidate, SearchParams, SearchResult, Searcher,
-    SilentReporter, detect_index_status, index_directory, open_searcher, parse_query,
+    SilentReporter, detect_index_status, index_directory, merge_ranges, open_searcher, parse_query,
 };
 use serde::Serialize;
 
@@ -976,25 +976,6 @@ fn highlight_breadcrumb_title(
 }
 
 /// Sorts and merges overlapping or adjacent ranges.
-fn merge_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
-    if ranges.is_empty() {
-        return ranges;
-    }
-    ranges.sort_by_key(|r| r.start);
-    let mut merged = Vec::with_capacity(ranges.len());
-    let mut current = ranges[0].clone();
-    for range in ranges.into_iter().skip(1) {
-        if range.start <= current.end {
-            current.end = current.end.max(range.end);
-        } else {
-            merged.push(current);
-            current = range;
-        }
-    }
-    merged.push(current);
-    merged
-}
-
 /// Computes highlight ranges for a search result, mapping child matches into the parent body.
 fn aggregated_match_ranges(result: &AggregatedSearchResult, full_body: &str) -> Vec<Range<usize>> {
     match result {
@@ -1016,7 +997,7 @@ fn aggregated_match_ranges(result: &AggregatedSearchResult, full_body: &str) -> 
                     }
                 }
             }
-            merge_ranges(ranges)
+            merge_ranges(ranges, Vec::new())
         }
     }
 }

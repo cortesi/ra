@@ -10,7 +10,12 @@
 //!
 //! See the [`crate::search`] module documentation for an overview of the algorithm.
 
-use tantivy::{Term, collector::TopDocs, query::TermQuery, schema::IndexRecordOption};
+use tantivy::{
+    Term,
+    collector::TopDocs,
+    query::{Query, TermQuery},
+    schema::IndexRecordOption,
+};
 
 use super::{
     SearchParams, Searcher,
@@ -44,42 +49,9 @@ impl Searcher {
             None => return Ok(Vec::new()),
         };
 
-        let query = self.apply_tree_filter(content_query, &params.trees);
         let query_terms = self.tokenize_query(query_str);
 
-        // Phase 1: Execute query and get raw results
-        let raw_results = if params.verbosity > 0 {
-            self.execute_query_with_details(
-                &*query,
-                query_str,
-                &query_terms,
-                params.candidate_limit,
-                params.verbosity >= 2,
-            )?
-        } else {
-            self.execute_query_with_highlights(&*query, &query_terms, params.candidate_limit)?
-        };
-
-        let candidates: Vec<SearchCandidate> =
-            raw_results.into_iter().map(SearchCandidate::from).collect();
-
-        // Phase 2: Normalize scores across trees (only for multi-tree searches)
-        // This ensures fair comparison when trees have different content densities.
-        let normalized = normalize_scores_across_trees(candidates, params.trees.len());
-
-        // Phase 3: Apply elbow cutoff on normalized scores
-        let filtered = apply_elbow(normalized, params.cutoff_ratio, params.max_results);
-
-        // Phase 4: Aggregate siblings under parent nodes
-        if params.disable_aggregation {
-            Ok(single_results_from_candidates(filtered))
-        } else {
-            Ok(aggregate_candidates(
-                filtered,
-                params.aggregation_threshold,
-                |parent_id| self.lookup_parent(parent_id),
-            ))
-        }
+        self.run_aggregated_search(content_query, &query_terms, query_str, params)
     }
 
     /// Searches using a pre-built query expression.
@@ -107,20 +79,33 @@ impl Searcher {
             None => return Ok(Vec::new()),
         };
 
-        let query = self.apply_tree_filter(content_query, &params.trees);
         let query_terms = expr.extract_terms();
+        let display_query = expr.to_query_string();
+
+        self.run_aggregated_search(content_query, &query_terms, &display_query, params)
+    }
+
+    /// Executes the shared four-phase aggregated search pipeline.
+    fn run_aggregated_search(
+        &mut self,
+        content_query: Box<dyn Query>,
+        query_terms: &[String],
+        display_query: &str,
+        params: &SearchParams,
+    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+        let query = self.apply_tree_filter(content_query, &params.trees);
 
         // Phase 1: Execute query and get raw results
         let raw_results = if params.verbosity > 0 {
             self.execute_query_with_details(
                 &*query,
-                &expr.to_query_string(),
-                &query_terms,
+                display_query,
+                query_terms,
                 params.candidate_limit,
                 params.verbosity >= 2,
             )?
         } else {
-            self.execute_query_with_highlights(&*query, &query_terms, params.candidate_limit)?
+            self.execute_query_with_highlights(&*query, query_terms, params.candidate_limit)?
         };
 
         let candidates: Vec<SearchCandidate> =

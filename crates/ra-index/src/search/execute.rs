@@ -135,46 +135,7 @@ impl Searcher {
         query_terms: &[String],
         limit: usize,
     ) -> Result<Vec<SearchResult>, IndexError> {
-        let reader = self
-            .index
-            .reader()
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-
-        let searcher = reader.searcher();
-
-        let top_docs = searcher
-            .search(query, &TopDocs::with_limit(limit))
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-
-        let matched_terms = self.find_matched_terms(
-            &searcher,
-            query_terms,
-            &[self.schema.body, self.schema.title, self.schema.path],
-        );
-
-        let highlight_query = self.build_highlight_query(&matched_terms);
-
-        let snippet_generator = if let Some(ref hq) = highlight_query {
-            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
-                .map_err(|e| IndexError::Write(e.to_string()))?;
-            generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
-            Some(generator)
-        } else {
-            None
-        };
-
-        let mut results = Vec::with_capacity(top_docs.len());
-
-        for (score, doc_address) in top_docs {
-            let doc: TantivyDocument = searcher
-                .doc(doc_address)
-                .map_err(|e| IndexError::Write(e.to_string()))?;
-
-            let result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
-            results.push(result);
-        }
-
-        Ok(results)
+        self.execute_query_core(query, query_terms, limit, true)
     }
 
     /// Executes a query without generating snippets or highlights (faster).
@@ -184,35 +145,7 @@ impl Searcher {
         query_terms: &[String],
         limit: usize,
     ) -> Result<Vec<SearchResult>, IndexError> {
-        let reader = self
-            .index
-            .reader()
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-
-        let searcher = reader.searcher();
-
-        let matched_terms = self.find_matched_terms(
-            &searcher,
-            query_terms,
-            &[self.schema.body, self.schema.title, self.schema.path],
-        );
-
-        let top_docs = searcher
-            .search(query, &TopDocs::with_limit(limit))
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-
-        let mut results = Vec::with_capacity(top_docs.len());
-
-        for (score, doc_address) in top_docs {
-            let doc: TantivyDocument = searcher
-                .doc(doc_address)
-                .map_err(|e| IndexError::Write(e.to_string()))?;
-
-            let result = self.doc_to_result(&doc, score, &None, &matched_terms);
-            results.push(result);
-        }
-
-        Ok(results)
+        self.execute_query_core(query, query_terms, limit, false)
     }
 
     /// Executes a query with full match detail collection.
@@ -249,14 +182,7 @@ impl Searcher {
 
         let highlight_query = self.build_highlight_query(&matched_terms);
 
-        let snippet_generator = if let Some(ref hq) = highlight_query {
-            let mut generator = SnippetGenerator::create(&searcher, hq.as_ref(), self.schema.body)
-                .map_err(|e| IndexError::Write(e.to_string()))?;
-            generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
-            Some(generator)
-        } else {
-            None
-        };
+        let snippet_generator = self.build_snippet_generator(&searcher, &highlight_query)?;
 
         let mut results = Vec::with_capacity(top_docs.len());
 
@@ -292,6 +218,69 @@ impl Searcher {
         }
 
         Ok(results)
+    }
+
+    /// Shared execution path for searches with optional snippet generation.
+    fn execute_query_core(
+        &self,
+        query: &dyn Query,
+        query_terms: &[String],
+        limit: usize,
+        with_snippets: bool,
+    ) -> Result<Vec<SearchResult>, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let searcher = reader.searcher();
+
+        let matched_terms = self.find_matched_terms(
+            &searcher,
+            query_terms,
+            &[self.schema.body, self.schema.title, self.schema.path],
+        );
+
+        let highlight_query = if with_snippets {
+            self.build_highlight_query(&matched_terms)
+        } else {
+            None
+        };
+
+        let snippet_generator = self.build_snippet_generator(&searcher, &highlight_query)?;
+
+        let top_docs = searcher
+            .search(query, &TopDocs::with_limit(limit))
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let mut results = Vec::with_capacity(top_docs.len());
+
+        for (score, doc_address) in top_docs {
+            let doc: TantivyDocument = searcher
+                .doc(doc_address)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+
+            let result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+
+    /// Creates a snippet generator when a highlight query is present.
+    fn build_snippet_generator(
+        &self,
+        searcher: &tantivy::Searcher,
+        highlight_query: &Option<Box<dyn Query>>,
+    ) -> Result<Option<SnippetGenerator>, IndexError> {
+        if let Some(hq) = highlight_query {
+            let mut generator = SnippetGenerator::create(searcher, hq.as_ref(), self.schema.body)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+            generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
+            Ok(Some(generator))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Collects detailed match information for a search result.

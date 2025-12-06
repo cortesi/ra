@@ -43,6 +43,7 @@ use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use open::open_searcher;
 #[allow(unused_imports)]
 pub use params::{DEFAULT_CANDIDATE_LIMIT, SearchParams};
+pub use ranges::merge_ranges;
 use tantivy::{Index, tokenizer::TextAnalyzer};
 #[allow(unused_imports)]
 pub use types::{FieldMatch, MatchDetails, SearchResult};
