@@ -12,7 +12,7 @@ use std::{
 use clap::{Parser, Subcommand, error::ErrorKind};
 use comfy_table::{Cell, Table, presets::UTF8_FULL_CONDENSED};
 use ra_config::{
-    CONFIG_FILENAME, CompiledContextPatterns, Config, ConfigWarning, SearchDefaults,
+    CONFIG_FILENAME, CompiledContextRules, Config, ConfigWarning, SearchDefaults,
     discover_config_files, format_path_for_display, global_config_path, global_template,
     local_template,
 };
@@ -2949,9 +2949,9 @@ fn cmd_inspect_ctx(file: &str) -> ExitCode {
         Err(code) => return code,
     };
 
-    // Compile context patterns
-    let patterns = match CompiledContextPatterns::compile(&config.context) {
-        Ok(patterns) => patterns,
+    // Compile context rules
+    let rules = match CompiledContextRules::compile(&config.context) {
+        Ok(rules) => rules,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
@@ -2959,7 +2959,7 @@ fn cmd_inspect_ctx(file: &str) -> ExitCode {
     };
 
     // Create analyzer and analyze the file
-    let analyzer = ContextAnalyzer::new(&config.context, patterns);
+    let analyzer = ContextAnalyzer::new(&config.context, rules);
     let signals = match analyzer.analyze_file(path) {
         Ok(signals) => signals,
         Err(e) => {

@@ -27,7 +27,7 @@ use std::{
 
 pub use analyze::{AnalysisConfig, ContextAnalysis, analyze_context};
 pub use query::ContextQuery;
-use ra_config::{CompiledContextPatterns, ContextSettings};
+use ra_config::{CompiledContextRules, ContextSettings};
 pub use rank::{IdfProvider, RankedTerm};
 pub use stopwords::Stopwords;
 pub use term::WeightedTerm;
@@ -78,8 +78,8 @@ impl ContextSignals {
 
 /// Analyzes files to extract context signals.
 pub struct ContextAnalyzer {
-    /// Compiled glob patterns for pattern matching.
-    patterns: CompiledContextPatterns,
+    /// Compiled context rules for pattern matching.
+    rules: CompiledContextRules,
     /// Maximum bytes to sample from file content.
     sample_size: usize,
     /// Minimum word length for path component extraction.
@@ -87,10 +87,10 @@ pub struct ContextAnalyzer {
 }
 
 impl ContextAnalyzer {
-    /// Creates a new analyzer with the given settings and patterns.
-    pub fn new(settings: &ContextSettings, patterns: CompiledContextPatterns) -> Self {
+    /// Creates a new analyzer with the given settings and rules.
+    pub fn new(settings: &ContextSettings, rules: CompiledContextRules) -> Self {
         Self {
-            patterns,
+            rules,
             sample_size: settings.sample_size,
             min_word_length: settings.min_word_length,
         }
@@ -99,8 +99,8 @@ impl ContextAnalyzer {
     /// Creates an analyzer with default settings (for testing).
     pub fn with_defaults() -> Self {
         Self {
-            patterns: CompiledContextPatterns::compile(&ContextSettings::default())
-                .expect("default patterns should compile"),
+            rules: CompiledContextRules::compile(&ContextSettings::default())
+                .expect("default rules should compile"),
             sample_size: DEFAULT_SAMPLE_SIZE,
             min_word_length: 4,
         }
@@ -112,7 +112,7 @@ impl ContextAnalyzer {
     pub fn analyze_file(&self, path: &Path) -> io::Result<ContextSignals> {
         Ok(ContextSignals {
             path_terms: self.extract_path_terms(path),
-            pattern_terms: self.patterns.match_terms(path),
+            pattern_terms: self.rules.match_terms(path),
             content_sample: self.sample_content(path)?,
         })
     }

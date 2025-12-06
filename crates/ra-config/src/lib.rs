@@ -22,7 +22,7 @@ use std::path::{Component, Path, PathBuf};
 use directories::BaseDirs;
 pub use discovery::{CONFIG_FILENAME, discover_config_files, global_config_path, is_global_config};
 pub use error::ConfigError;
-pub use patterns::{CompiledContextPatterns, CompiledContextRules, CompiledPatterns, MatchedRules};
+pub use patterns::{CompiledContextRules, CompiledPatterns, MatchedRules};
 use serde::{Deserialize, Serialize};
 pub use templates::{global_template, local_template};
 pub use validate::ConfigWarning;
