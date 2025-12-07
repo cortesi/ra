@@ -105,4 +105,56 @@ impl SearchCandidate {
     pub fn breadcrumb(&self) -> String {
         self.hierarchy.join(" > ")
     }
+
+    /// Checks if this candidate is an ancestor of another candidate.
+    ///
+    /// A candidate is an ancestor if:
+    /// - They share the same document ID
+    /// - AND either:
+    ///   - This candidate is the document node (id == doc_id)
+    ///   - OR this candidate's slug is a prefix of the other's slug followed by `-`
+    pub fn is_ancestor_of(&self, other: &SearchCandidate) -> bool {
+        // Same ID is not an ancestor relationship
+        if self.id == other.id {
+            return false;
+        }
+
+        // Must be in the same document
+        if self.doc_id != other.doc_id {
+            return false;
+        }
+
+        // If self is the document node, it's an ancestor of all chunks in that document
+        if self.id == self.doc_id {
+            return true;
+        }
+
+        // If other is the document node, it can't be a descendant of self
+        if other.id == other.doc_id {
+            return false;
+        }
+
+        // Both are chunks. Extract slugs relative to doc_id.
+        // Format is "{doc_id}#{slug}"
+        // We know id starts with doc_id and they are equal, and ids are different.
+        // And neither is equal to doc_id.
+        // So both must have a '#' after doc_id.
+        let self_slug_start = self.doc_id.len() + 1;
+        let other_slug_start = other.doc_id.len() + 1;
+
+        // Safety check (shouldn't happen given above checks)
+        if self.id.len() <= self_slug_start || other.id.len() <= other_slug_start {
+            return false;
+        }
+
+        let self_slug = &self.id[self_slug_start..];
+        let other_slug = &other.id[other_slug_start..];
+
+        // Ancestor's slug must be a prefix of descendant's slug, followed by "-"
+        if other_slug.len() > self_slug.len() {
+            other_slug.starts_with(self_slug) && other_slug.as_bytes()[self_slug.len()] == b'-'
+        } else {
+            false
+        }
+    }
 }
