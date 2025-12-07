@@ -16,12 +16,81 @@
 //!    aggregating siblings when appropriate. See [`adaptive_aggregate`].
 //!
 //! 4. **Final Limit**: Truncate to the requested number of results.
+//!
+//! # Score Normalization
+//!
+//! When searching across multiple trees with different content densities, raw BM25 scores
+//! are not directly comparable. A specialized tree with focused content will score much
+//! higher on domain-specific terms than a general tree, even when both contain relevant
+//! results.
+//!
+//! This module implements **top-score normalization**: each result's score is divided by
+//! the maximum score within its tree, so the best result in each tree gets a score of 1.0.
+//! This preserves relative ordering within trees while making cross-tree comparison fair.
 
-use super::{
-    SearchCandidate, SearchParams, adaptive::adaptive_aggregate,
-    normalize::normalize_scores_across_trees,
-};
+use std::{cmp::Ordering, collections::HashMap};
+
+use super::{SearchCandidate, SearchParams, adaptive::adaptive_aggregate};
 use crate::{elbow::elbow_cutoff, result::SearchResult as AggregatedSearchResult};
+
+/// Normalizes scores across multiple trees using top-score normalization.
+///
+/// Each result's score is divided by the maximum score in its tree, so the best
+/// result in each tree gets a score of 1.0. Results are then re-sorted by normalized
+/// score in descending order.
+///
+/// # Arguments
+///
+/// * `candidates` - Search candidates to normalize (will be modified in place)
+/// * `tree_count` - Number of trees being searched (normalization skipped if <= 1)
+///
+/// # Returns
+///
+/// The same candidates with normalized scores, sorted by score descending.
+///
+/// # Behavior
+///
+/// - If `tree_count <= 1`, returns candidates unchanged (no normalization needed)
+/// - If only one tree has results, returns candidates unchanged
+/// - Trees with no results are ignored
+/// - Zero or negative max scores are treated as 1.0 to avoid division issues
+fn normalize_scores_across_trees(
+    mut candidates: Vec<SearchCandidate>,
+    tree_count: usize,
+) -> Vec<SearchCandidate> {
+    // Skip normalization for single-tree searches
+    if tree_count <= 1 {
+        return candidates;
+    }
+
+    // Find max score per tree (using owned Strings to avoid borrow issues)
+    let mut max_scores: HashMap<String, f32> = HashMap::new();
+    for candidate in &candidates {
+        let entry = max_scores.entry(candidate.tree.clone()).or_insert(0.0);
+        if candidate.score > *entry {
+            *entry = candidate.score;
+        }
+    }
+
+    // Skip if only one tree has results (nothing to normalize against)
+    if max_scores.len() <= 1 {
+        return candidates;
+    }
+
+    // Normalize each candidate's score by its tree's max
+    for candidate in &mut candidates {
+        let max_score = max_scores.get(&candidate.tree).copied().unwrap_or(1.0);
+
+        // Avoid division by zero or negative scores
+        let divisor = if max_score > 0.0 { max_score } else { 1.0 };
+        candidate.score /= divisor;
+    }
+
+    // Re-sort by normalized score (descending)
+    candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+
+    candidates
+}
 
 /// Processes raw search candidates through the result pipeline.
 ///
@@ -263,5 +332,148 @@ mod tests {
         let scores: Vec<f32> = results.iter().map(|r| r.candidate().score).collect();
         assert!((scores[0] - 1.0).abs() < 0.001);
         assert!((scores[1] - 1.0).abs() < 0.001);
+    }
+
+    // Normalization tests (merged from normalize.rs)
+
+    #[test]
+    fn single_tree_unchanged() {
+        let candidates = vec![
+            make_candidate("doc1", "tree-a", None, 100.0, 1),
+            make_candidate("doc2", "tree-a", None, 50.0, 1),
+        ];
+
+        let result = normalize_scores_across_trees(candidates, 1);
+
+        assert_eq!(result.len(), 2);
+        assert!((result[0].score - 100.0).abs() < f32::EPSILON);
+        assert!((result[1].score - 50.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn multi_tree_normalizes() {
+        let candidates = vec![
+            make_candidate("doc1", "tree-a", None, 4500.0, 1),
+            make_candidate("doc2", "tree-a", None, 3000.0, 1),
+            make_candidate("doc1", "tree-b", None, 800.0, 1),
+            make_candidate("doc2", "tree-b", None, 600.0, 1),
+        ];
+
+        let result = normalize_scores_across_trees(candidates, 2);
+
+        assert_eq!(result.len(), 4);
+
+        // After normalization, both tree tops should be 1.0
+        // tree-a:doc1 = 4500/4500 = 1.0
+        // tree-b:doc1 = 800/800 = 1.0
+        // tree-a:doc2 = 3000/4500 = 0.667
+        // tree-b:doc2 = 600/800 = 0.75
+
+        // Find the normalized scores
+        let tree_a_doc1 = result
+            .iter()
+            .find(|c| c.id == "doc1" && c.tree == "tree-a")
+            .unwrap();
+        let tree_a_doc2 = result
+            .iter()
+            .find(|c| c.id == "doc2" && c.tree == "tree-a")
+            .unwrap();
+        let tree_b_doc1 = result
+            .iter()
+            .find(|c| c.id == "doc1" && c.tree == "tree-b")
+            .unwrap();
+        let tree_b_doc2 = result
+            .iter()
+            .find(|c| c.id == "doc2" && c.tree == "tree-b")
+            .unwrap();
+
+        assert!((tree_a_doc1.score - 1.0).abs() < 0.001);
+        assert!((tree_b_doc1.score - 1.0).abs() < 0.001);
+        assert!((tree_a_doc2.score - 0.667).abs() < 0.01);
+        assert!((tree_b_doc2.score - 0.75).abs() < 0.001);
+    }
+
+    #[test]
+    fn results_sorted_by_normalized_score() {
+        let candidates = vec![
+            make_candidate("doc1", "tree-a", None, 4500.0, 1), // -> 1.0
+            make_candidate("doc2", "tree-a", None, 3000.0, 1), // -> 0.667
+            make_candidate("doc1", "tree-b", None, 800.0, 1),  // -> 1.0
+            make_candidate("doc2", "tree-b", None, 600.0, 1),  // -> 0.75
+        ];
+
+        let result = normalize_scores_across_trees(candidates, 2);
+
+        // Should be sorted: 1.0, 1.0, 0.75, 0.667
+        assert!((result[0].score - 1.0).abs() < 0.001);
+        assert!((result[1].score - 1.0).abs() < 0.001);
+        assert!((result[2].score - 0.75).abs() < 0.001);
+        assert!((result[3].score - 0.667).abs() < 0.01);
+    }
+
+    #[test]
+    fn only_one_tree_has_results() {
+        // Even with tree_count=2, if only one tree has results, no normalization
+        let candidates = vec![
+            make_candidate("doc1", "tree-a", None, 100.0, 1),
+            make_candidate("doc2", "tree-a", None, 50.0, 1),
+        ];
+
+        let result = normalize_scores_across_trees(candidates, 2);
+
+        assert!((result[0].score - 100.0).abs() < f32::EPSILON);
+        assert!((result[1].score - 50.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn handles_zero_scores() {
+        let candidates = vec![
+            make_candidate("doc1", "tree-a", None, 100.0, 1),
+            make_candidate("doc2", "tree-a", None, 0.0, 1),
+            make_candidate("doc1", "tree-b", None, 50.0, 1),
+        ];
+
+        let result = normalize_scores_across_trees(candidates, 2);
+
+        // tree-a max is 100, tree-b max is 50
+        let tree_a_doc1 = result
+            .iter()
+            .find(|c| c.id == "doc1" && c.tree == "tree-a")
+            .unwrap();
+        let tree_a_doc2 = result
+            .iter()
+            .find(|c| c.id == "doc2" && c.tree == "tree-a")
+            .unwrap();
+        let tree_b_doc1 = result
+            .iter()
+            .find(|c| c.id == "doc1" && c.tree == "tree-b")
+            .unwrap();
+
+        assert!((tree_a_doc1.score - 1.0).abs() < 0.001);
+        assert!((tree_a_doc2.score - 0.0).abs() < 0.001);
+        assert!((tree_b_doc1.score - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn empty_candidates_normalize() {
+        let candidates: Vec<SearchCandidate> = vec![];
+        let result = normalize_scores_across_trees(candidates, 2);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn three_trees() {
+        let candidates = vec![
+            make_candidate("doc1", "tree-a", None, 1000.0, 1),
+            make_candidate("doc1", "tree-b", None, 500.0, 1),
+            make_candidate("doc1", "tree-c", None, 100.0, 1),
+        ];
+
+        let result = normalize_scores_across_trees(candidates, 3);
+
+        // All should be normalized to 1.0 (each is the max in its tree)
+        for candidate in &result {
+            assert!((candidate.score - 1.0).abs() < 0.001);
+        }
     }
 }

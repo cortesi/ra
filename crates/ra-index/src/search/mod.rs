@@ -26,29 +26,25 @@
 mod adaptive;
 mod aggregate_api;
 mod execute;
-mod fuzzy;
-mod hierarchy;
 mod idf;
 mod mlt;
-mod normalize;
 mod open;
 mod params;
 mod pipeline;
 mod query;
-mod ranges;
 #[cfg(test)]
 mod tests;
 mod types;
 
 use std::{collections::HashMap, path::PathBuf};
 
+pub use execute::merge_ranges;
 pub use idf::TreeFilteredSearcher;
 use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use mlt::{MoreLikeThisExplanation, MoreLikeThisParams};
 pub use open::open_searcher;
 pub use params::SearchParams;
 use ra_config::FieldBoosts;
-pub use ranges::merge_ranges;
 use tantivy::{Index, tokenizer::TextAnalyzer};
 pub use types::{MatchDetails, SearchCandidate};
 
