@@ -16,7 +16,7 @@
 //!
 //! The function returns the first 3 results (indices 0, 1, 2).
 
-use crate::SearchCandidate;
+use crate::{SearchCandidate, result::SearchResult};
 
 /// Default cutoff ratio for elbow detection.
 ///
@@ -89,6 +89,67 @@ pub fn elbow_cutoff(
     let final_count = cutoff_index.min(max_results);
 
     candidates.into_iter().take(final_count).collect()
+}
+
+/// Finds the elbow cutoff point in a list of search results.
+///
+/// This variant operates on aggregated SearchResults instead of raw candidates.
+/// The results must be sorted by score in descending order. The function
+/// finds the first index where the ratio `score[i+1] / score[i]` falls below
+/// the cutoff ratio, indicating a significant drop in relevance.
+///
+/// # Arguments
+/// * `results` - Search results sorted by score (highest first)
+/// * `cutoff_ratio` - Threshold ratio below which we cut off (0.0 to 1.0)
+/// * `max_results` - Maximum number of results to return if no elbow is found
+///
+/// # Returns
+/// A vector containing results up to (but not including) the elbow point,
+/// or up to `max_results` if no elbow is found.
+pub fn elbow_cutoff_results(
+    results: Vec<SearchResult>,
+    cutoff_ratio: f32,
+    max_results: usize,
+) -> Vec<SearchResult> {
+    // Handle edge cases
+    if results.is_empty() {
+        return Vec::new();
+    }
+
+    if results.len() == 1 {
+        return results;
+    }
+
+    // Find the elbow point
+    let mut cutoff_index = results.len();
+
+    for i in 0..results.len() - 1 {
+        let current_score = results[i].candidate().score;
+        let next_score = results[i + 1].candidate().score;
+
+        // Zero or negative scores trigger immediate cutoff
+        if current_score <= 0.0 {
+            cutoff_index = i;
+            break;
+        }
+
+        if next_score <= 0.0 {
+            cutoff_index = i + 1;
+            break;
+        }
+
+        // Compute ratio and check against threshold
+        let ratio = next_score / current_score;
+        if ratio < cutoff_ratio {
+            cutoff_index = i + 1;
+            break;
+        }
+    }
+
+    // Apply max_results limit
+    let final_count = cutoff_index.min(max_results);
+
+    results.into_iter().take(final_count).collect()
 }
 
 #[cfg(test)]
@@ -314,5 +375,73 @@ mod test {
 
         // Elbow at index 12 (ratio 5.0/14.5 ≈ 0.34 < 0.5)
         assert_eq!(result.len(), 12);
+    }
+
+    // Tests for elbow_cutoff_results (SearchResult variant)
+
+    fn make_result(id: &str, score: f32) -> SearchResult {
+        SearchResult::single(make_candidate(id, score))
+    }
+
+    fn make_results(scores: &[f32]) -> Vec<SearchResult> {
+        scores
+            .iter()
+            .enumerate()
+            .map(|(i, &score)| make_result(&format!("doc{i}"), score))
+            .collect()
+    }
+
+    #[test]
+    fn results_spec_example_scores() {
+        let results = make_results(&[8.0, 7.5, 7.0, 3.2, 3.0, 2.8, 0.9]);
+        let result = elbow_cutoff_results(results, 0.5, 20);
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].candidate().score, 8.0);
+        assert_eq!(result[1].candidate().score, 7.5);
+        assert_eq!(result[2].candidate().score, 7.0);
+    }
+
+    #[test]
+    fn results_empty_input() {
+        let results: Vec<SearchResult> = vec![];
+        let result = elbow_cutoff_results(results, 0.5, 20);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn results_single_result() {
+        let results = make_results(&[5.0]);
+        let result = elbow_cutoff_results(results, 0.5, 20);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn results_with_aggregated() {
+        // Test that elbow works with aggregated results
+        let parent = make_candidate("parent", 0.0);
+        let child1 = make_candidate("child1", 8.0);
+        let child2 = make_candidate("child2", 7.0);
+
+        let aggregated = SearchResult::aggregated(parent, vec![child1, child2]);
+        // Score should be max of constituents = 8.0
+
+        let single = make_result("other", 2.0);
+
+        let results = vec![aggregated, single];
+        let result = elbow_cutoff_results(results, 0.5, 20);
+
+        // Ratio 2.0/8.0 = 0.25 < 0.5, so elbow at index 1
+        assert_eq!(result.len(), 1);
+        assert!(result[0].is_aggregated());
+    }
+
+    #[test]
+    fn results_max_limit() {
+        let results = make_results(&[10.0, 9.5, 9.0, 8.5, 8.0]);
+        let result = elbow_cutoff_results(results, 0.5, 2);
+
+        // No elbow found, should return max_results
+        assert_eq!(result.len(), 2);
     }
 }

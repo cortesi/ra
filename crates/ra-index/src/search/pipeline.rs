@@ -9,18 +9,20 @@
 //! 1. **Score Normalization**: For multi-tree searches, normalize scores so each
 //!    tree's best result gets 1.0. See [`normalize_scores_across_trees`].
 //!
-//! 2. **Elbow Cutoff**: Detect where relevance drops significantly and truncate.
-//!    See [`elbow_cutoff`].
+//! 2. **Adaptive Hierarchical Aggregation**: Process candidates one-by-one in score order,
+//!    aggregating siblings when appropriate. When a parent enters results, all its
+//!    descendants are skipped. See [`adaptive_aggregate`].
 //!
-//! 3. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
-//!    enough siblings match. See [`aggregate`].
+//! 3. **Elbow Cutoff**: Detect where relevance drops significantly and truncate.
+//!    Applied on aggregated results, not raw candidates.
 //!
 //! 4. **Final Limit**: Truncate to the requested number of results.
 
-use super::{SearchCandidate, SearchParams, normalize::normalize_scores_across_trees};
-use crate::{
-    aggregate::aggregate, elbow::elbow_cutoff, result::SearchResult as AggregatedSearchResult,
+use super::{
+    SearchCandidate, SearchParams, adaptive::adaptive_aggregate,
+    normalize::normalize_scores_across_trees,
 };
+use crate::{elbow::elbow_cutoff_results, result::SearchResult as AggregatedSearchResult};
 
 /// Processes raw search candidates through the result pipeline.
 ///
@@ -35,7 +37,7 @@ use crate::{
 ///
 /// # Returns
 ///
-/// Final search results after normalization, elbow cutoff, and aggregation.
+/// Final search results after normalization, aggregation, and elbow cutoff.
 pub fn process_candidates<F>(
     candidates: Vec<SearchCandidate>,
     params: &SearchParams,
@@ -47,28 +49,37 @@ where
     // Phase 1: Normalize scores across trees (only for multi-tree searches)
     let normalized = normalize_scores_across_trees(candidates, params.trees.len());
 
-    // Phase 2: Apply elbow cutoff on normalized scores
-    let filtered = elbow_cutoff(normalized, params.cutoff_ratio, params.max_candidates);
-
-    // Phase 3: Aggregate siblings under parent nodes
-    let mut results = if params.disable_aggregation {
-        single_results_from_candidates(filtered)
+    // Phase 2: Adaptive aggregation - process candidates incrementally, stop at limit
+    // Uses a larger internal limit since aggregation may reduce result count
+    let aggregation_limit = params.limit * 2;
+    let results = if params.disable_aggregation {
+        single_results_from_candidates(normalized, aggregation_limit)
     } else {
-        aggregate(filtered, params.aggregation_threshold, parent_lookup)
+        adaptive_aggregate(
+            normalized,
+            params.aggregation_threshold,
+            aggregation_limit,
+            parent_lookup,
+        )
     };
 
-    // Phase 4: Apply final limit
-    results.truncate(params.limit);
+    // Phase 3: Apply elbow cutoff on aggregated results
+    let filtered = elbow_cutoff_results(results, params.cutoff_ratio, params.max_candidates);
 
-    results
+    // Phase 4: Apply final limit
+    filtered.into_iter().take(params.limit).collect()
 }
 
 /// Converts raw candidates into single (non-aggregated) results.
 ///
 /// Used when aggregation is disabled via `SearchParams::disable_aggregation`.
-fn single_results_from_candidates(candidates: Vec<SearchCandidate>) -> Vec<AggregatedSearchResult> {
+fn single_results_from_candidates(
+    candidates: Vec<SearchCandidate>,
+    limit: usize,
+) -> Vec<AggregatedSearchResult> {
     candidates
         .into_iter()
+        .take(limit)
         .map(AggregatedSearchResult::single)
         .collect()
 }
