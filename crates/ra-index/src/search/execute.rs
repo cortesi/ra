@@ -19,10 +19,7 @@ use super::{
     ranges::{extract_match_ranges, merge_ranges},
     types::{FieldMatch, MatchDetails, SearchCandidate},
 };
-use crate::{
-    IndexError, aggregate::aggregate, elbow::elbow_cutoff,
-    result::SearchResult as AggregatedSearchResult, schema::boost,
-};
+use crate::{IndexError, schema::boost};
 
 /// Default maximum number of characters in a snippet.
 const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
@@ -483,32 +480,4 @@ impl Searcher {
     pub(crate) fn get_u64_field(&self, doc: &TantivyDocument, field: Field) -> u64 {
         doc.get_first(field).and_then(|v| v.as_u64()).unwrap_or(0)
     }
-}
-
-/// Convenience to aggregate siblings when only Phase 1 & 2 are needed.
-pub fn aggregate_candidates(
-    candidates: Vec<SearchCandidate>,
-    aggregation_threshold: f32,
-    lookup: impl Fn(&str) -> Option<SearchCandidate>,
-) -> Vec<AggregatedSearchResult> {
-    aggregate(candidates, aggregation_threshold, lookup)
-}
-
-/// Converts raw matches into aggregated results when aggregation is disabled.
-pub fn single_results_from_candidates(
-    filtered: Vec<SearchCandidate>,
-) -> Vec<AggregatedSearchResult> {
-    filtered
-        .into_iter()
-        .map(AggregatedSearchResult::single)
-        .collect()
-}
-
-/// Applies elbow cutoff to candidates.
-pub fn apply_elbow(
-    candidates: Vec<SearchCandidate>,
-    cutoff_ratio: f32,
-    max_results: usize,
-) -> Vec<SearchCandidate> {
-    elbow_cutoff(candidates, cutoff_ratio, max_results)
 }

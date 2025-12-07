@@ -3,8 +3,8 @@
 //! This module provides the [`MoreLikeThisParams`] configuration struct and methods
 //! on [`Searcher`] for finding documents similar to a given document or set of field values.
 //!
-//! The implementation wraps Tantivy's `MoreLikeThisQuery` and integrates with the existing
-//! search pipeline (normalization, elbow cutoff, aggregation).
+//! The implementation wraps Tantivy's `MoreLikeThisQuery` and integrates with the
+//! unified result pipeline (see [`super::pipeline`]).
 
 use std::{collections::HashSet, iter};
 
@@ -15,11 +15,7 @@ use tantivy::{
     schema::{Field, IndexRecordOption, OwnedValue, Value},
 };
 
-use super::{
-    SearchParams, Searcher,
-    execute::{aggregate_candidates, apply_elbow, single_results_from_candidates},
-    normalize::normalize_scores_across_trees,
-};
+use super::{SearchParams, Searcher, pipeline::process_candidates};
 use crate::{
     IndexError, QueryError, SearchCandidate, result::SearchResult as AggregatedSearchResult,
 };
@@ -315,7 +311,7 @@ impl Searcher {
         })
     }
 
-    /// Executes the MLT search with the standard pipeline.
+    /// Executes the MLT search with the unified pipeline.
     fn run_mlt_search(
         &self,
         query: Box<dyn Query>,
@@ -324,7 +320,7 @@ impl Searcher {
     ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
         let query = self.apply_tree_filter(query, &params.trees);
 
-        // Phase 1: Execute query
+        // Execute query and get raw candidates
         let effective_candidate_limit = params.effective_candidate_limit();
         let raw_results =
             self.execute_query_no_highlights(&*query, &[], effective_candidate_limit)?;
@@ -335,25 +331,10 @@ impl Searcher {
             .filter(|c| !exclude_ids.contains(&c.id) && !exclude_ids.contains(&c.doc_id))
             .collect();
 
-        // Phase 2: Normalize scores across trees
-        let normalized = normalize_scores_across_trees(candidates, params.trees.len());
-
-        // Phase 3: Apply elbow cutoff
-        let filtered = apply_elbow(normalized, params.cutoff_ratio, params.max_candidates);
-
-        // Phase 4: Aggregate siblings
-        let mut results = if params.disable_aggregation {
-            single_results_from_candidates(filtered)
-        } else {
-            aggregate_candidates(filtered, params.aggregation_threshold, |parent_id| {
-                self.lookup_parent(parent_id)
-            })
-        };
-
-        // Phase 5: Apply final limit
-        results.truncate(params.limit);
-
-        Ok(results)
+        // Process through unified pipeline
+        Ok(process_candidates(candidates, params, |parent_id| {
+            self.lookup_parent(parent_id)
+        }))
     }
 }
 

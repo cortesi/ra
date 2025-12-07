@@ -31,6 +31,7 @@ mod mlt;
 mod normalize;
 mod open;
 mod params;
+mod pipeline;
 mod query;
 mod ranges;
 #[cfg(test)]

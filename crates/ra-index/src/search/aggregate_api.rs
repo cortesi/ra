@@ -1,15 +1,10 @@
 //! Aggregated search entry points and parent lookup.
 //!
-//! This module provides the main search entry points that combine all phases of the
-//! search algorithm:
+//! This module provides the main search entry points that combine query execution
+//! with the unified result pipeline. All search operations (string queries,
+//! expression queries) flow through the same pipeline for consistent behavior.
 //!
-//! 1. Query execution with tree filtering
-//! 2. Per-tree score normalization (for multi-tree searches)
-//! 3. Elbow cutoff for relevance filtering
-//! 4. Hierarchical aggregation of sibling matches
-//! 5. Final limit truncation
-//!
-//! See the [`crate::search`] module documentation for an overview of the algorithm.
+//! See the [`super::pipeline`] module for pipeline details.
 
 use tantivy::{
     Term,
@@ -18,24 +13,14 @@ use tantivy::{
     schema::{IndexRecordOption, Value},
 };
 
-use super::{
-    SearchParams, Searcher,
-    execute::{aggregate_candidates, apply_elbow, single_results_from_candidates},
-    normalize::normalize_scores_across_trees,
-};
+use super::{SearchParams, Searcher, pipeline::process_candidates};
 use crate::{IndexError, SearchCandidate, result::SearchResult as AggregatedSearchResult};
 
 impl Searcher {
     /// Searches using the hierarchical algorithm with per-tree score normalization.
     ///
-    /// This is the main entry point for string-based queries. The search proceeds through
-    /// four phases:
-    ///
-    /// 1. **Query Execution**: Parse and execute the query with tree filtering
-    /// 2. **Score Normalization**: For multi-tree searches, normalize scores so each
-    ///    tree's best result gets 1.0 (see [`normalize_scores_across_trees`])
-    /// 3. **Elbow Cutoff**: Truncate at the relevance cliff (see [`apply_elbow`])
-    /// 4. **Aggregation**: Group sibling matches under parents (see [`aggregate_candidates`])
+    /// This is the main entry point for string-based queries. Query execution is
+    /// followed by the unified result pipeline (see [`super::pipeline`]).
     pub fn search_aggregated(
         &mut self,
         query_str: &str,
@@ -54,13 +39,7 @@ impl Searcher {
     /// Searches using a pre-built query expression.
     ///
     /// This is the main entry point for expression-based queries (e.g., from context search).
-    /// The search proceeds through four phases:
-    ///
-    /// 1. **Query Execution**: Compile and execute the expression with tree filtering
-    /// 2. **Score Normalization**: For multi-tree searches, normalize scores so each
-    ///    tree's best result gets 1.0 (see [`normalize_scores_across_trees`])
-    /// 3. **Elbow Cutoff**: Truncate at the relevance cliff (see [`apply_elbow`])
-    /// 4. **Aggregation**: Group sibling matches under parents (see [`aggregate_candidates`])
+    /// Query execution is followed by the unified result pipeline (see [`super::pipeline`]).
     pub fn search_aggregated_expr(
         &mut self,
         expr: &ra_query::QueryExpr,
@@ -82,7 +61,7 @@ impl Searcher {
         self.run_aggregated_search(content_query, &query_terms, &display_query, params)
     }
 
-    /// Executes the shared five-phase aggregated search pipeline.
+    /// Executes query and processes results through the unified pipeline.
     fn run_aggregated_search(
         &mut self,
         content_query: Box<dyn Query>,
@@ -92,9 +71,9 @@ impl Searcher {
     ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
         let query = self.apply_tree_filter(content_query, &params.trees);
 
-        // Phase 1: Execute query and get raw results
+        // Execute query and get raw candidates
         let effective_candidate_limit = params.effective_candidate_limit();
-        let raw_results = if params.verbosity > 0 {
+        let candidates = if params.verbosity > 0 {
             self.execute_query_with_details(
                 &*query,
                 display_query,
@@ -106,29 +85,10 @@ impl Searcher {
             self.execute_query_with_highlights(&*query, query_terms, effective_candidate_limit)?
         };
 
-        // raw_results are already SearchCandidates
-        let candidates = raw_results;
-
-        // Phase 2: Normalize scores across trees (only for multi-tree searches)
-        // This ensures fair comparison when trees have different content densities.
-        let normalized = normalize_scores_across_trees(candidates, params.trees.len());
-
-        // Phase 3: Apply elbow cutoff on normalized scores
-        let filtered = apply_elbow(normalized, params.cutoff_ratio, params.max_candidates);
-
-        // Phase 4: Aggregate siblings under parent nodes
-        let mut results = if params.disable_aggregation {
-            single_results_from_candidates(filtered)
-        } else {
-            aggregate_candidates(filtered, params.aggregation_threshold, |parent_id| {
-                self.lookup_parent(parent_id)
-            })
-        };
-
-        // Phase 5: Apply final limit
-        results.truncate(params.limit);
-
-        Ok(results)
+        // Process through unified pipeline
+        Ok(process_candidates(candidates, params, |parent_id| {
+            self.lookup_parent(parent_id)
+        }))
     }
 
     /// Looks up a parent node by ID for aggregation.
