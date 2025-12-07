@@ -92,6 +92,23 @@ impl AdaptiveAggregator {
         false
     }
 
+    /// Finds indices of results that are descendants of the candidate.
+    ///
+    /// A result is a descendant if the candidate is an ancestor of the result's ID.
+    pub fn find_descendant_indices(&self, candidate: &SearchCandidate) -> Vec<usize> {
+        self.results
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, result)| {
+                if is_ancestor_of(&candidate.id, &result.candidate().id) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Finds indices of results that are siblings of the candidate.
     ///
     /// Siblings share the same parent_id.
@@ -304,7 +321,23 @@ impl AdaptiveAggregator {
                 break;
             }
 
+            // Skip if this candidate is already in results (e.g., added via cascade)
+            if self.result_index.contains_key(&candidate.id) {
+                continue;
+            }
+
             if self.is_claimed(&candidate) {
+                continue;
+            }
+
+            // Check if this candidate has descendants already in results.
+            // If so, this ancestor subsumes them - remove descendants and add ancestor.
+            let descendant_indices = self.find_descendant_indices(&candidate);
+            if !descendant_indices.is_empty() {
+                // Remove all descendant results - ancestor subsumes them
+                let constituents = self.remove_results(&descendant_indices);
+                // Add ancestor as aggregated result with descendants as constituents
+                self.add_aggregated(candidate, constituents, parent_lookup);
                 continue;
             }
 
@@ -882,5 +915,92 @@ mod tests {
         assert_eq!(agg.result_count(), 2);
         assert!(!agg.results()[0].is_aggregated());
         assert!(!agg.results()[1].is_aggregated());
+    }
+
+    #[test]
+    fn ancestor_arriving_after_descendants_subsumes_them() {
+        // This tests the bug where children arrive before parent:
+        // - Child A (high score) arrives first, added as single
+        // - Child B arrives, added as single
+        // - Parent arrives later with lower score, should subsume children
+        let mut agg = AdaptiveAggregator::new(0.5, 10);
+
+        // Children arrive first with high scores
+        let candidates = vec![
+            make_candidate("local:test.md#child-a", Some("local:test.md"), 10.0, 3),
+            make_candidate("local:test.md#child-b", Some("local:test.md"), 9.0, 3),
+            // Parent arrives later with lower score
+            make_candidate("local:test.md", None, 5.0, 1),
+        ];
+
+        agg.process(candidates, &|_| None);
+
+        // Should have 1 aggregated result: the parent subsuming the children
+        assert_eq!(agg.result_count(), 1);
+        assert!(agg.results()[0].is_aggregated());
+        assert_eq!(agg.results()[0].candidate().id, "local:test.md");
+        // Parent should have the children as constituents
+        assert_eq!(agg.results()[0].constituents().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn ancestor_subsumes_nested_descendants() {
+        // Document arrives after both children and grandchildren
+        let mut agg = AdaptiveAggregator::new(0.5, 10);
+
+        let doc = make_candidate("local:test.md", None, 1.0, 1);
+        let s1 = make_candidate("local:test.md#s1", Some("local:test.md"), 0.0, 2);
+
+        // Grandchildren arrive first
+        let candidates = vec![
+            make_candidate("local:test.md#s1-a", Some("local:test.md#s1"), 10.0, 2),
+            make_candidate("local:test.md#s1-b", Some("local:test.md#s1"), 9.0, 2),
+            // Section arrives - should subsume grandchildren
+            make_candidate("local:test.md#s1", Some("local:test.md"), 5.0, 2),
+            // Document arrives last - should subsume section
+            make_candidate("local:test.md", None, 2.0, 1),
+        ];
+
+        agg.process(candidates, &|id| match id {
+            "local:test.md" => Some(doc.clone()),
+            "local:test.md#s1" => Some(s1.clone()),
+            _ => None,
+        });
+
+        // Should cascade all the way to document
+        assert_eq!(agg.result_count(), 1);
+        assert!(agg.results()[0].is_aggregated());
+        assert_eq!(agg.results()[0].candidate().id, "local:test.md");
+    }
+
+    #[test]
+    fn find_descendant_indices_works() {
+        let mut agg = AdaptiveAggregator::new(0.5, 10);
+
+        // Add some children
+        agg.add_single(make_candidate(
+            "local:test.md#child-a",
+            Some("local:test.md"),
+            5.0,
+            2,
+        ));
+        agg.add_single(make_candidate(
+            "local:test.md#child-b",
+            Some("local:test.md"),
+            4.0,
+            2,
+        ));
+        // Add unrelated document
+        agg.add_single(make_candidate("local:other.md", None, 3.0, 1));
+
+        // Parent should find its children as descendants
+        let parent = make_candidate("local:test.md", None, 2.0, 1);
+        let descendants = agg.find_descendant_indices(&parent);
+        assert_eq!(descendants.len(), 2);
+
+        // Unrelated doc should find no descendants
+        let unrelated = make_candidate("local:another.md", None, 1.0, 1);
+        let no_descendants = agg.find_descendant_indices(&unrelated);
+        assert!(no_descendants.is_empty());
     }
 }
