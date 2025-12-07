@@ -124,6 +124,7 @@ impl Searcher {
             let tree = self.get_text_field(&doc, self.schema.tree);
             let path = self.get_text_field(&doc, self.schema.path);
             let body = self.get_text_field(&doc, self.schema.body);
+            let depth = self.get_u64_field(&doc, self.schema.depth);
             let position = self.get_u64_field(&doc, self.schema.position);
             let byte_start = self.get_u64_field(&doc, self.schema.byte_start);
             let byte_end = self.get_u64_field(&doc, self.schema.byte_end);
@@ -134,6 +135,7 @@ impl Searcher {
                 doc_id,
                 parent_id,
                 hierarchy,
+                depth,
                 tree,
                 path,
                 body,

@@ -169,6 +169,7 @@ mod test {
             doc_id: "local:test.md".to_string(),
             parent_id: Some("local:test.md".to_string()),
             hierarchy: vec!["Doc".to_string(), format!("Title {id}")],
+            depth: 1,
             tree: "local".to_string(),
             path: "test.md".to_string(),
             body: "Body content".to_string(),

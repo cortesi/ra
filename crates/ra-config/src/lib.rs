@@ -60,6 +60,131 @@ pub const DEFAULT_CUTOFF_RATIO: f32 = 0.3;
 /// Default sibling ratio threshold for aggregation (SearchSettings.aggregation_threshold).
 pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
 
+// =============================================================================
+// Search field boost defaults
+//
+// These constants define the query-time boost weights for different index fields.
+// Higher values increase the relevance contribution from matches in that field.
+// =============================================================================
+
+/// Default boost for hierarchy field (matches in document headings).
+pub const DEFAULT_BOOST_HIERARCHY: f32 = 3.0;
+/// Default boost for path field (filename matches).
+pub const DEFAULT_BOOST_PATH: f32 = 8.0;
+/// Default boost for tags field (frontmatter metadata).
+pub const DEFAULT_BOOST_TAGS: f32 = 5.0;
+/// Default boost for body field (document content).
+pub const DEFAULT_BOOST_BODY: f32 = 1.0;
+/// Default maximum boost for top-level headings (depth 0-1).
+pub const DEFAULT_BOOST_HEADING_MAX: f32 = 5.0;
+/// Default decay factor for heading depth boost (each level multiplies by this).
+pub const DEFAULT_BOOST_HEADING_DECAY: f32 = 0.7;
+
+// =============================================================================
+// Context markdown parser boost defaults
+//
+// These constants define term weights for the markdown parser used in context
+// extraction. Higher weights increase term significance in context queries.
+// =============================================================================
+
+/// Default weight for terms in H1 headings.
+pub const DEFAULT_MARKDOWN_H1: f32 = 3.0;
+/// Default weight for terms in H2-H3 headings.
+pub const DEFAULT_MARKDOWN_H2_H3: f32 = 2.0;
+/// Default weight for terms in H4-H6 headings.
+pub const DEFAULT_MARKDOWN_H4_H6: f32 = 1.5;
+/// Default weight for terms in body text.
+pub const DEFAULT_MARKDOWN_BODY: f32 = 1.0;
+
+/// Field boost configuration for search ranking.
+///
+/// These weights are applied at query time to control how matches in different
+/// fields contribute to the final score.
+#[derive(Debug, Clone, Copy)]
+pub struct FieldBoosts {
+    /// Boost for hierarchy field (document headings).
+    pub hierarchy: f32,
+    /// Boost for path field (filename matches).
+    pub path: f32,
+    /// Boost for tags field (frontmatter metadata).
+    pub tags: f32,
+    /// Boost for body field (document content).
+    pub body: f32,
+    /// Maximum boost for top-level headings (depth 0-1).
+    pub heading_max: f32,
+    /// Decay factor per heading level.
+    pub heading_decay: f32,
+}
+
+impl Default for FieldBoosts {
+    fn default() -> Self {
+        Self {
+            hierarchy: DEFAULT_BOOST_HIERARCHY,
+            path: DEFAULT_BOOST_PATH,
+            tags: DEFAULT_BOOST_TAGS,
+            body: DEFAULT_BOOST_BODY,
+            heading_max: DEFAULT_BOOST_HEADING_MAX,
+            heading_decay: DEFAULT_BOOST_HEADING_DECAY,
+        }
+    }
+}
+
+impl FieldBoosts {
+    /// Computes a depth-based boost for a chunk's heading level.
+    ///
+    /// - depth 0 (document) and depth 1 (h1) get the maximum boost
+    /// - Each subsequent level decays by the decay factor
+    ///   - h2 (depth 2): max * decay
+    ///   - h3 (depth 3): max * decay²
+    ///   - h4 (depth 4): max * decay³
+    ///   - etc.
+    pub fn heading_boost(&self, depth: u64) -> f32 {
+        if depth <= 1 {
+            self.heading_max
+        } else {
+            self.heading_max * self.heading_decay.powi((depth - 1) as i32)
+        }
+    }
+}
+
+/// Markdown parser weight configuration for context term extraction.
+///
+/// These weights control how terms from different heading levels contribute
+/// to the context query.
+#[derive(Debug, Clone, Copy)]
+pub struct MarkdownWeights {
+    /// Weight for terms in H1 headings.
+    pub h1: f32,
+    /// Weight for terms in H2-H3 headings.
+    pub h2_h3: f32,
+    /// Weight for terms in H4-H6 headings.
+    pub h4_h6: f32,
+    /// Weight for terms in body text.
+    pub body: f32,
+}
+
+impl Default for MarkdownWeights {
+    fn default() -> Self {
+        Self {
+            h1: DEFAULT_MARKDOWN_H1,
+            h2_h3: DEFAULT_MARKDOWN_H2_H3,
+            h4_h6: DEFAULT_MARKDOWN_H4_H6,
+            body: DEFAULT_MARKDOWN_BODY,
+        }
+    }
+}
+
+impl MarkdownWeights {
+    /// Returns the source label and weight for a heading level.
+    pub fn heading_weight(&self, level: u8) -> (&'static str, f32) {
+        match level {
+            1 => ("md:h1", self.h1),
+            2 | 3 => ("md:h2-h3", self.h2_h3),
+            _ => ("md:h4-h6", self.h4_h6),
+        }
+    }
+}
+
 /// Default maximum terms for context queries (ContextSettings.terms).
 pub const DEFAULT_CONTEXT_TERMS: usize = 50;
 
@@ -274,6 +399,30 @@ pub struct SearchSettings {
     pub cutoff_ratio: f32,
     /// Sibling ratio threshold for hierarchical aggregation.
     pub aggregation_threshold: f32,
+
+    // Field boost weights (applied at query time)
+    /// Boost multiplier for hierarchy field matches.
+    pub boost_hierarchy: f32,
+    /// Boost multiplier for path field matches.
+    pub boost_path: f32,
+    /// Boost multiplier for tags field matches.
+    pub boost_tags: f32,
+    /// Boost multiplier for body field matches.
+    pub boost_body: f32,
+    /// Maximum boost for top-level headings (depth 0-1).
+    pub boost_heading_max: f32,
+    /// Decay factor per heading level (h2 = max * decay, h3 = max * decay², etc.).
+    pub boost_heading_decay: f32,
+
+    // Markdown parser weights (for context term extraction)
+    /// Weight for terms extracted from H1 headings.
+    pub markdown_h1: f32,
+    /// Weight for terms extracted from H2-H3 headings.
+    pub markdown_h2_h3: f32,
+    /// Weight for terms extracted from H4-H6 headings.
+    pub markdown_h4_h6: f32,
+    /// Weight for terms extracted from body text.
+    pub markdown_body: f32,
 }
 
 impl Default for SearchSettings {
@@ -285,6 +434,42 @@ impl Default for SearchSettings {
             max_candidates: DEFAULT_MAX_CANDIDATES,
             cutoff_ratio: DEFAULT_CUTOFF_RATIO,
             aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
+            // Field boosts
+            boost_hierarchy: DEFAULT_BOOST_HIERARCHY,
+            boost_path: DEFAULT_BOOST_PATH,
+            boost_tags: DEFAULT_BOOST_TAGS,
+            boost_body: DEFAULT_BOOST_BODY,
+            boost_heading_max: DEFAULT_BOOST_HEADING_MAX,
+            boost_heading_decay: DEFAULT_BOOST_HEADING_DECAY,
+            // Markdown parser weights
+            markdown_h1: DEFAULT_MARKDOWN_H1,
+            markdown_h2_h3: DEFAULT_MARKDOWN_H2_H3,
+            markdown_h4_h6: DEFAULT_MARKDOWN_H4_H6,
+            markdown_body: DEFAULT_MARKDOWN_BODY,
+        }
+    }
+}
+
+impl SearchSettings {
+    /// Returns the field boost configuration from these settings.
+    pub fn field_boosts(&self) -> FieldBoosts {
+        FieldBoosts {
+            hierarchy: self.boost_hierarchy,
+            path: self.boost_path,
+            tags: self.boost_tags,
+            body: self.boost_body,
+            heading_max: self.boost_heading_max,
+            heading_decay: self.boost_heading_decay,
+        }
+    }
+
+    /// Returns the markdown parser weight configuration from these settings.
+    pub fn markdown_weights(&self) -> MarkdownWeights {
+        MarkdownWeights {
+            h1: self.markdown_h1,
+            h2_h3: self.markdown_h2_h3,
+            h4_h6: self.markdown_h4_h6,
+            body: self.markdown_body,
         }
     }
 }
@@ -526,6 +711,37 @@ mod tests {
         assert!(
             (search.aggregation_threshold - DEFAULT_AGGREGATION_THRESHOLD).abs() < f32::EPSILON
         );
+        // Field boosts
+        assert!((search.boost_hierarchy - DEFAULT_BOOST_HIERARCHY).abs() < f32::EPSILON);
+        assert!((search.boost_path - DEFAULT_BOOST_PATH).abs() < f32::EPSILON);
+        assert!((search.boost_tags - DEFAULT_BOOST_TAGS).abs() < f32::EPSILON);
+        assert!((search.boost_body - DEFAULT_BOOST_BODY).abs() < f32::EPSILON);
+        assert!((search.boost_heading_max - DEFAULT_BOOST_HEADING_MAX).abs() < f32::EPSILON);
+        assert!((search.boost_heading_decay - DEFAULT_BOOST_HEADING_DECAY).abs() < f32::EPSILON);
+        // Markdown weights
+        assert!((search.markdown_h1 - DEFAULT_MARKDOWN_H1).abs() < f32::EPSILON);
+        assert!((search.markdown_h2_h3 - DEFAULT_MARKDOWN_H2_H3).abs() < f32::EPSILON);
+        assert!((search.markdown_h4_h6 - DEFAULT_MARKDOWN_H4_H6).abs() < f32::EPSILON);
+        assert!((search.markdown_body - DEFAULT_MARKDOWN_BODY).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_field_boosts() {
+        let boosts = FieldBoosts::default();
+        // Test heading boost calculation
+        assert!((boosts.heading_boost(0) - 5.0).abs() < f32::EPSILON); // Document
+        assert!((boosts.heading_boost(1) - 5.0).abs() < f32::EPSILON); // H1
+        assert!((boosts.heading_boost(2) - 3.5).abs() < f32::EPSILON); // H2
+        assert!((boosts.heading_boost(3) - 2.45).abs() < 0.01); // H3
+    }
+
+    #[test]
+    fn test_markdown_weights() {
+        let weights = MarkdownWeights::default();
+        assert_eq!(weights.heading_weight(1), ("md:h1", 3.0));
+        assert_eq!(weights.heading_weight(2), ("md:h2-h3", 2.0));
+        assert_eq!(weights.heading_weight(3), ("md:h2-h3", 2.0));
+        assert_eq!(weights.heading_weight(4), ("md:h4-h6", 1.5));
     }
 
     #[test]

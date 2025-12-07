@@ -161,6 +161,7 @@ impl ChunkTree {
                     parent_id: node.parent_id.clone(),
                     body: body.to_string(),
                     hierarchy,
+                    depth: node.depth,
                     position: node.position,
                     byte_start: node.byte_start,
                     byte_end: node.byte_end,
@@ -249,6 +250,8 @@ pub struct TreeChunk {
     /// For document nodes, contains just the document title.
     /// For headings, contains [doc_title, ancestor_titles..., this_title].
     pub hierarchy: Vec<String>,
+    /// Heading level: 0 for document node, 1-6 for h1-h6.
+    pub depth: u8,
     /// Document order index (0-based, pre-order traversal).
     pub position: usize,
     /// Byte offset where this chunk's span starts.
@@ -263,12 +266,6 @@ impl TreeChunk {
     /// Returns the chunk's title (the last element of the hierarchy).
     pub fn title(&self) -> &str {
         self.hierarchy.last().map(|s| s.as_str()).unwrap_or("")
-    }
-
-    /// Returns the hierarchy depth.
-    /// Document nodes have depth 0, h1 headings have depth 1, etc.
-    pub fn depth(&self) -> usize {
-        self.hierarchy.len().saturating_sub(1)
     }
 }
 
@@ -610,7 +607,7 @@ mod tests {
         assert_eq!(chunks[0].hierarchy, vec!["Doc"]);
         assert_eq!(chunks[0].title(), "Doc");
         assert_eq!(chunks[0].body, "preamble content\n");
-        assert_eq!(chunks[0].depth(), 0);
+        assert_eq!(chunks[0].depth, 0);
         assert_eq!(chunks[0].position, 0);
 
         // Heading chunk
@@ -618,7 +615,7 @@ mod tests {
         assert_eq!(chunks[1].hierarchy, vec!["Doc", "Section"]);
         assert_eq!(chunks[1].title(), "Section");
         assert_eq!(chunks[1].body, "heading content here");
-        assert_eq!(chunks[1].depth(), 1);
+        assert_eq!(chunks[1].depth, 1);
         assert_eq!(chunks[1].position, 1);
     }
 

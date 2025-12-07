@@ -34,6 +34,7 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
                 "Getting Started".to_string(),
                 "Introduction to Rust".to_string(),
             ],
+            depth: 1,
             tags: vec!["rust".to_string(), "programming".to_string()],
             path: "docs/rust.md".to_string(),
             tree: "local".to_string(),
@@ -53,6 +54,7 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
                 "Advanced Topics".to_string(),
                 "Async Programming".to_string(),
             ],
+            depth: 1,
             tags: vec!["rust".to_string(), "async".to_string()],
             path: "docs/async.md".to_string(),
             tree: "local".to_string(),
@@ -69,6 +71,7 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
             doc_id: "global:reference/errors.md".to_string(),
             parent_id: Some("global:reference/errors.md".to_string()),
             hierarchy: vec!["Reference".to_string(), "Error Handling".to_string()],
+            depth: 1,
             tags: vec!["rust".to_string(), "errors".to_string()],
             path: "reference/errors.md".to_string(),
             tree: "global".to_string(),
@@ -222,6 +225,7 @@ fn fuzzy_typos_match_and_highlight_actual_terms() {
         doc_id: "local:docs/test.md".to_string(),
         parent_id: None,
         hierarchy: vec!["Test".to_string()],
+        depth: 0,
         tags: vec![],
         path: "docs/test.md".to_string(),
         tree: "local".to_string(),
@@ -255,6 +259,7 @@ fn fuzzy_stemming_ranges_cover_variants() {
         doc_id: "local:docs/stems.md".to_string(),
         parent_id: None,
         hierarchy: vec!["Stems".to_string()],
+        depth: 0,
         tags: vec![],
         path: "docs/stems.md".to_string(),
         tree: "local".to_string(),
@@ -288,6 +293,7 @@ fn hierarchical_fields_roundtrip() {
             doc_id: "local:docs/guide.md".to_string(),
             parent_id: None,
             hierarchy: vec!["Guide".to_string()],
+            depth: 0,
             tags: vec![],
             path: "docs/guide.md".to_string(),
             tree: "local".to_string(),
@@ -303,6 +309,7 @@ fn hierarchical_fields_roundtrip() {
             doc_id: "local:docs/guide.md".to_string(),
             parent_id: Some("local:docs/guide.md".to_string()),
             hierarchy: vec!["Guide".to_string(), "Section One".to_string()],
+            depth: 1,
             tags: vec![],
             path: "docs/guide.md".to_string(),
             tree: "local".to_string(),
@@ -320,7 +327,7 @@ fn hierarchical_fields_roundtrip() {
     let doc_result = searcher.search("preamble", 10).unwrap()[0].clone();
     assert_eq!(doc_result.id, "local:docs/guide.md");
     assert!(doc_result.parent_id.is_none());
-    assert_eq!(doc_result.depth(), 0);
+    assert_eq!(doc_result.depth, 0);
     assert_eq!(doc_result.position, 0);
     assert_eq!(doc_result.byte_start, 0);
     assert_eq!(doc_result.byte_end, 30);
@@ -328,7 +335,7 @@ fn hierarchical_fields_roundtrip() {
 
     let heading = searcher.search("section unique", 10).unwrap()[0].clone();
     assert_eq!(heading.parent_id, Some("local:docs/guide.md".to_string()));
-    assert_eq!(heading.depth(), 1);
+    assert_eq!(heading.depth, 1);
     assert_eq!(heading.position, 1);
     assert_eq!(heading.byte_start, 30);
     assert_eq!(heading.byte_end, 100);
@@ -412,6 +419,7 @@ mod mlt_tests {
                 doc_id: "local:docs/rust-intro.md".to_string(),
                 parent_id: None,
                 hierarchy: vec!["Introduction to Rust Programming".to_string()],
+                depth: 0,
                 tags: vec!["rust".to_string(), "programming".to_string()],
                 path: "docs/rust-intro.md".to_string(),
                 tree: "local".to_string(),
@@ -430,6 +438,7 @@ mod mlt_tests {
                 doc_id: "local:docs/rust-ownership.md".to_string(),
                 parent_id: None,
                 hierarchy: vec!["Understanding Rust Ownership".to_string()],
+                depth: 0,
                 tags: vec!["rust".to_string(), "ownership".to_string()],
                 path: "docs/rust-ownership.md".to_string(),
                 tree: "local".to_string(),
@@ -448,6 +457,7 @@ mod mlt_tests {
                 doc_id: "local:docs/python-intro.md".to_string(),
                 parent_id: None,
                 hierarchy: vec!["Introduction to Python".to_string()],
+                depth: 0,
                 tags: vec!["python".to_string(), "scripting".to_string()],
                 path: "docs/python-intro.md".to_string(),
                 tree: "local".to_string(),
@@ -466,6 +476,7 @@ mod mlt_tests {
                 doc_id: "global:docs/rust-web.md".to_string(),
                 parent_id: None,
                 hierarchy: vec!["Rust Web Development".to_string()],
+                depth: 0,
                 tags: vec!["rust".to_string(), "web".to_string()],
                 path: "docs/rust-web.md".to_string(),
                 tree: "global".to_string(),
@@ -714,6 +725,7 @@ mod pipeline_integration_tests {
                 doc_id: "local:docs/doc.md".to_string(),
                 parent_id: None,
                 hierarchy: vec!["Rust Guide".to_string()],
+                depth: 0,
                 tags: vec!["rust".to_string()],
                 path: "docs/doc.md".to_string(),
                 tree: "local".to_string(),
@@ -729,6 +741,7 @@ mod pipeline_integration_tests {
                 doc_id: "local:docs/doc.md".to_string(),
                 parent_id: Some("local:docs/doc.md".to_string()),
                 hierarchy: vec!["Rust Guide".to_string(), "Introduction".to_string()],
+                depth: 1,
                 tags: vec!["rust".to_string()],
                 path: "docs/doc.md".to_string(),
                 tree: "local".to_string(),
@@ -744,6 +757,7 @@ mod pipeline_integration_tests {
                 doc_id: "local:docs/doc.md".to_string(),
                 parent_id: Some("local:docs/doc.md".to_string()),
                 hierarchy: vec!["Rust Guide".to_string(), "Ownership".to_string()],
+                depth: 1,
                 tags: vec!["rust".to_string()],
                 path: "docs/doc.md".to_string(),
                 tree: "local".to_string(),
@@ -760,6 +774,7 @@ mod pipeline_integration_tests {
                 doc_id: "local:docs/python.md".to_string(),
                 parent_id: None,
                 hierarchy: vec!["Python Guide".to_string()],
+                depth: 0,
                 tags: vec!["python".to_string()],
                 path: "docs/python.md".to_string(),
                 tree: "local".to_string(),

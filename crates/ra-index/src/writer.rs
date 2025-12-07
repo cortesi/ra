@@ -133,6 +133,7 @@ impl IndexWriter {
         tantivy_doc.add_text(self.schema.body, &doc.body);
 
         // Hierarchical metadata
+        tantivy_doc.add_u64(self.schema.depth, doc.depth as u64);
         tantivy_doc.add_u64(self.schema.position, doc.position as u64);
         tantivy_doc.add_u64(self.schema.byte_start, doc.byte_start as u64);
         tantivy_doc.add_u64(self.schema.byte_end, doc.byte_end as u64);
@@ -231,6 +232,7 @@ mod test {
             doc_id: "local:docs/test.md".to_string(),
             parent_id: Some("local:docs/test.md".to_string()),
             hierarchy: vec!["Test Document".to_string(), "Introduction".to_string()],
+            depth: 1,
             tags: vec!["rust".to_string(), "tutorial".to_string()],
             path: "docs/test.md".to_string(),
             tree: "local".to_string(),
@@ -277,6 +279,7 @@ mod test {
                 doc_id: "local:a.md".to_string(),
                 parent_id: Some("local:a.md".to_string()),
                 hierarchy: vec!["A".to_string(), "One".to_string()],
+                depth: 1,
                 tags: vec![],
                 path: "a.md".to_string(),
                 tree: "local".to_string(),
@@ -292,6 +295,7 @@ mod test {
                 doc_id: "local:b.md".to_string(),
                 parent_id: Some("local:b.md".to_string()),
                 hierarchy: vec!["B".to_string(), "Two".to_string()],
+                depth: 1,
                 tags: vec![],
                 path: "b.md".to_string(),
                 tree: "local".to_string(),

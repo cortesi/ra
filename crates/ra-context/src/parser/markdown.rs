@@ -5,32 +5,27 @@
 
 use std::path::Path;
 
+use ra_config::MarkdownWeights;
 use ra_document::{HeadingInfo, extract_headings, parse_frontmatter};
 
 use super::ContentParser;
 use crate::{Stopwords, WeightedTerm, parser::extract_terms_from_text};
 
-/// Weight for H1 headings.
-const WEIGHT_H1: f32 = 3.0;
-/// Weight for H2-H3 headings.
-const WEIGHT_H2_H3: f32 = 2.0;
-/// Weight for H4-H6 headings.
-const WEIGHT_H4_H6: f32 = 1.5;
-/// Weight for body text.
-const WEIGHT_BODY: f32 = 1.0;
-
 /// Parser for markdown files.
 ///
-/// Extracts terms with weights based on structural position:
-/// - H1 headings: weight 3.0
-/// - H2-H3 headings: weight 2.0
-/// - H4-H6 headings: weight 1.5
-/// - Body text: weight 1.0
+/// Extracts terms with weights based on structural position.
+/// Default weights:
+/// - H1 headings: 3.0
+/// - H2-H3 headings: 2.0
+/// - H4-H6 headings: 1.5
+/// - Body text: 1.0
 pub struct MarkdownParser {
     /// Stopword list used to filter out common words.
     stopwords: Stopwords,
     /// Minimum token length to consider for indexing.
     min_term_length: usize,
+    /// Configurable weights for different heading levels.
+    weights: MarkdownWeights,
 }
 
 impl Default for MarkdownParser {
@@ -45,6 +40,7 @@ impl MarkdownParser {
         Self {
             stopwords: Stopwords::new(),
             min_term_length: 3,
+            weights: MarkdownWeights::default(),
         }
     }
 
@@ -53,15 +49,7 @@ impl MarkdownParser {
         Self {
             stopwords,
             min_term_length,
-        }
-    }
-
-    /// Returns the source label and weight for a heading level.
-    fn heading_weight(level: u8) -> (&'static str, f32) {
-        match level {
-            1 => ("md:h1", WEIGHT_H1),
-            2 | 3 => ("md:h2-h3", WEIGHT_H2_H3),
-            _ => ("md:h4-h6", WEIGHT_H4_H6),
+            weights: MarkdownWeights::default(),
         }
     }
 
@@ -70,7 +58,7 @@ impl MarkdownParser {
         let mut terms = Vec::new();
 
         for heading in headings {
-            let (source, weight) = Self::heading_weight(heading.level);
+            let (source, weight) = self.weights.heading_weight(heading.level);
             let heading_terms = extract_terms_from_text(
                 &heading.text,
                 source,
@@ -138,7 +126,7 @@ impl ContentParser for MarkdownParser {
         let body_terms = extract_terms_from_text(
             &body,
             "body",
-            WEIGHT_BODY,
+            self.weights.body,
             &self.stopwords,
             self.min_term_length,
         );
@@ -258,11 +246,12 @@ Body text here.
 
     #[test]
     fn heading_weight_classification() {
-        assert_eq!(MarkdownParser::heading_weight(1), ("md:h1", 3.0));
-        assert_eq!(MarkdownParser::heading_weight(2), ("md:h2-h3", 2.0));
-        assert_eq!(MarkdownParser::heading_weight(3), ("md:h2-h3", 2.0));
-        assert_eq!(MarkdownParser::heading_weight(4), ("md:h4-h6", 1.5));
-        assert_eq!(MarkdownParser::heading_weight(5), ("md:h4-h6", 1.5));
-        assert_eq!(MarkdownParser::heading_weight(6), ("md:h4-h6", 1.5));
+        let weights = MarkdownWeights::default();
+        assert_eq!(weights.heading_weight(1), ("md:h1", 3.0));
+        assert_eq!(weights.heading_weight(2), ("md:h2-h3", 2.0));
+        assert_eq!(weights.heading_weight(3), ("md:h2-h3", 2.0));
+        assert_eq!(weights.heading_weight(4), ("md:h4-h6", 1.5));
+        assert_eq!(weights.heading_weight(5), ("md:h4-h6", 1.5));
+        assert_eq!(weights.heading_weight(6), ("md:h4-h6", 1.5));
     }
 }

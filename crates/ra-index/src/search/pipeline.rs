@@ -88,6 +88,7 @@ mod tests {
         } else {
             vec!["Doc".to_string()]
         };
+        let depth = if id.contains('#') { 1 } else { 0 };
 
         SearchCandidate {
             id: id.to_string(),
@@ -98,6 +99,7 @@ mod tests {
             },
             parent_id: parent_id.map(String::from),
             hierarchy,
+            depth,
             tree: tree.to_string(),
             path: "test.md".to_string(),
             body: format!("Body of {id}"),

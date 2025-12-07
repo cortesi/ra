@@ -202,7 +202,7 @@ Let's begin."#;
 
         // First chunk should be the document node (preamble)
         assert_eq!(chunks[0].id, "docs:doc.md");
-        assert_eq!(chunks[0].depth(), 0);
+        assert_eq!(chunks[0].depth, 0);
         assert!(chunks[0].body.contains("Intro text"));
     }
 
@@ -222,7 +222,7 @@ Let's begin."#;
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].id, "docs:notes.txt");
         assert!(!chunks[0].id.contains('#'));
-        assert_eq!(chunks[0].depth(), 0);
+        assert_eq!(chunks[0].depth, 0);
     }
 
     #[test]
@@ -237,7 +237,7 @@ Let's begin."#;
             .extract_chunks(&result.document.title);
 
         // Heading chunks should have fragment IDs
-        for chunk in chunks.iter().filter(|c| c.depth() > 0) {
+        for chunk in chunks.iter().filter(|c| c.depth > 0) {
             assert!(chunk.id.starts_with("my-tree:guide.md#"));
         }
     }

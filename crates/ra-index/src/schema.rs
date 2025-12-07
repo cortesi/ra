@@ -4,11 +4,12 @@
 //! - `id`: Unique chunk identifier (stored only)
 //! - `doc_id`: Document identifier (stored)
 //! - `parent_id`: Parent chunk identifier (stored, optional)
-//! - `hierarchy`: Hierarchy path as multi-value text (text, stored, boosted 10x)
-//! - `tags`: Document tags (text, stored, boosted 5x)
-//! - `path`: File path within tree (text, stored, boosted 8x)
+//! - `hierarchy`: Hierarchy path as multi-value text (text, stored)
+//! - `tags`: Document tags (text, stored)
+//! - `path`: File path within tree (text, stored)
 //! - `tree`: Tree name (string, stored, fast)
 //! - `body`: Chunk content (text, stored)
+//! - `depth`: Heading level (u64, stored, fast) - 0 for document, 1-6 for h1-h6
 //! - `position`: Document order index (u64, stored, indexed)
 //! - `byte_start`: Content span start (u64, stored)
 //! - `byte_end`: Content span end (u64, stored)
@@ -21,21 +22,6 @@ use tantivy::schema::{
 };
 
 use crate::analyzer::RA_TOKENIZER;
-
-/// Field boost weights for search ranking.
-///
-/// Hierarchy and path matches are weighted heavily since they indicate the document
-/// is specifically about the search term, not just mentioning it in passing.
-pub mod boost {
-    /// Hierarchy field boost - very strong signal that document is about this term.
-    pub const HIERARCHY: f32 = 10.0;
-    /// Path field boost - filename matches are strong relevance signals.
-    pub const PATH: f32 = 8.0;
-    /// Tags field boost - intentional metadata.
-    pub const TAGS: f32 = 5.0;
-    /// Body field boost - baseline for content matches.
-    pub const BODY: f32 = 1.0;
-}
 
 /// Handles to all fields in the index schema.
 #[derive(Debug, Clone)]
@@ -59,6 +45,8 @@ pub struct IndexSchema {
     pub tree: Field,
     /// Chunk body content.
     pub body: Field,
+    /// Heading level: 0 for document node, 1-6 for h1-h6.
+    pub depth: Field,
     /// Document order index (0-based pre-order traversal).
     pub position: Field,
     /// Byte offset where content span starts.
@@ -129,6 +117,9 @@ impl IndexSchema {
             .set_stored();
         let body = builder.add_text_field("body", body_options);
 
+        // Depth field: u64, stored and fast for hierarchy boost computation
+        let depth = builder.add_u64_field("depth", STORED | FAST);
+
         // Position field: u64, stored and indexed for ordering
         let position = builder.add_u64_field("position", STORED | INDEXED);
 
@@ -155,6 +146,7 @@ impl IndexSchema {
             path,
             tree,
             body,
+            depth,
             position,
             byte_start,
             byte_end,
@@ -195,6 +187,7 @@ mod test {
         assert!(tantivy_schema.get_field("path").is_ok());
         assert!(tantivy_schema.get_field("tree").is_ok());
         assert!(tantivy_schema.get_field("body").is_ok());
+        assert!(tantivy_schema.get_field("depth").is_ok());
         assert!(tantivy_schema.get_field("position").is_ok());
         assert!(tantivy_schema.get_field("byte_start").is_ok());
         assert!(tantivy_schema.get_field("byte_end").is_ok());
@@ -308,6 +301,12 @@ mod test {
         // sibling_count: u64, stored only
         let entry = schema.schema().get_field_entry(schema.sibling_count);
         assert!(entry.is_stored());
+        assert!(matches!(entry.field_type(), FieldType::U64(_)));
+
+        // depth: u64, stored and fast
+        let entry = schema.schema().get_field_entry(schema.depth);
+        assert!(entry.is_stored());
+        assert!(entry.is_fast());
         assert!(matches!(entry.field_type(), FieldType::U64(_)));
     }
 }

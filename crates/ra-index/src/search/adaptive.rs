@@ -414,11 +414,17 @@ mod tests {
             vec!["Doc".to_string()]
         };
 
+        let depth = if id.contains('#') {
+            hierarchy.len() as u64 - 1
+        } else {
+            0
+        };
         SearchCandidate {
             id: id.to_string(),
             doc_id: id.split('#').next().unwrap_or(id).to_string(),
             parent_id: parent_id.map(String::from),
             hierarchy,
+            depth,
             tree: "local".to_string(),
             path: "test.md".to_string(),
             body: format!("Body of {id}"),

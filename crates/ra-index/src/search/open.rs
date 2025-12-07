@@ -7,6 +7,7 @@ use std::{
 };
 
 use levenshtein_automata::LevenshteinAutomatonBuilder;
+use ra_config::FieldBoosts;
 use tantivy::{Index, directory::MmapDirectory};
 
 use super::Searcher;
@@ -18,13 +19,32 @@ use crate::{
 };
 
 impl Searcher {
-    /// Opens an existing index for searching.
+    /// Opens an existing index for searching with default boost values.
     pub fn open(
         path: &Path,
         language: &str,
         trees: &[ra_config::Tree],
         local_boost: f32,
         fuzzy_distance: u8,
+    ) -> Result<Self, IndexError> {
+        Self::open_with_boosts(
+            path,
+            language,
+            trees,
+            local_boost,
+            fuzzy_distance,
+            FieldBoosts::default(),
+        )
+    }
+
+    /// Opens an existing index for searching with custom boost values.
+    pub fn open_with_boosts(
+        path: &Path,
+        language: &str,
+        trees: &[ra_config::Tree],
+        local_boost: f32,
+        fuzzy_distance: u8,
+        boosts: FieldBoosts,
     ) -> Result<Self, IndexError> {
         if !path.exists() {
             return Err(IndexError::OpenIndex {
@@ -45,7 +65,7 @@ impl Searcher {
         let analyzer = build_analyzer_from_name(language)?;
         index.tokenizers().register(RA_TOKENIZER, analyzer.clone());
 
-        let query_compiler = QueryCompiler::new(schema.clone(), language, fuzzy_distance)?;
+        let query_compiler = QueryCompiler::new(schema.clone(), language, fuzzy_distance, boosts)?;
 
         let lev_builder = LevenshteinAutomatonBuilder::new(fuzzy_distance, true);
 
@@ -68,17 +88,19 @@ impl Searcher {
             tree_is_global,
             tree_paths,
             local_boost,
+            boosts,
         })
     }
 
     /// Opens an existing index for searching using configuration.
     pub fn open_with_config(path: &Path, config: &ra_config::Config) -> Result<Self, IndexError> {
-        Self::open(
+        Self::open_with_boosts(
             path,
             &config.search.stemmer,
             &config.trees,
             config.settings.local_boost,
             config.search.fuzzy_distance,
+            config.search.field_boosts(),
         )
     }
 
@@ -127,11 +149,12 @@ pub fn open_searcher(
     })?;
 
     let fuzzy_distance = fuzzy_override.unwrap_or(config.search.fuzzy_distance);
-    Searcher::open(
+    Searcher::open_with_boosts(
         &index_dir,
         &config.search.stemmer,
         &config.trees,
         config.settings.local_boost,
         fuzzy_distance,
+        config.search.field_boosts(),
     )
 }

@@ -4,6 +4,7 @@
 
 use std::{error::Error, fmt};
 
+use ra_config::FieldBoosts;
 use ra_query::QueryExpr;
 use tantivy::{
     Term,
@@ -14,11 +15,7 @@ use tantivy::{
     tokenizer::{TextAnalyzer, TokenStream},
 };
 
-use crate::{
-    IndexError,
-    analyzer::build_analyzer_from_name,
-    schema::{IndexSchema, boost},
-};
+use crate::{IndexError, analyzer::build_analyzer_from_name, schema::IndexSchema};
 
 /// Error during query compilation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +40,8 @@ pub struct QueryCompiler {
     analyzer: TextAnalyzer,
     /// Levenshtein distance for fuzzy matching (0 = disabled).
     fuzzy_distance: u8,
+    /// Field boost weights.
+    boosts: FieldBoosts,
 }
 
 impl QueryCompiler {
@@ -51,12 +50,14 @@ impl QueryCompiler {
         schema: IndexSchema,
         language: &str,
         fuzzy_distance: u8,
+        boosts: FieldBoosts,
     ) -> Result<Self, IndexError> {
         let analyzer = build_analyzer_from_name(language)?;
         Ok(Self {
             schema,
             analyzer,
             fuzzy_distance,
+            boosts,
         })
     }
 
@@ -123,10 +124,10 @@ impl QueryCompiler {
 
         // Build phrase queries for each searchable field
         let fields_with_boosts: [(Field, f32); 4] = [
-            (self.schema.hierarchy, boost::HIERARCHY),
-            (self.schema.tags, boost::TAGS),
-            (self.schema.path, boost::PATH),
-            (self.schema.body, boost::BODY),
+            (self.schema.hierarchy, self.boosts.hierarchy),
+            (self.schema.tags, self.boosts.tags),
+            (self.schema.path, self.boosts.path),
+            (self.schema.body, self.boosts.body),
         ];
 
         let clauses: Vec<(Occur, Box<dyn Query>)> = fields_with_boosts
@@ -250,11 +251,11 @@ impl QueryCompiler {
         match name {
             // "title" is an alias for "hierarchy" for backwards compatibility
             "title" | "hierarchy" => {
-                self.compile_single_field_query(self.schema.hierarchy, boost::HIERARCHY, expr)
+                self.compile_single_field_query(self.schema.hierarchy, self.boosts.hierarchy, expr)
             }
-            "tags" => self.compile_single_field_query(self.schema.tags, boost::TAGS, expr),
-            "body" => self.compile_single_field_query(self.schema.body, boost::BODY, expr),
-            "path" => self.compile_single_field_query(self.schema.path, boost::PATH, expr),
+            "tags" => self.compile_single_field_query(self.schema.tags, self.boosts.tags, expr),
+            "body" => self.compile_single_field_query(self.schema.body, self.boosts.body, expr),
+            "path" => self.compile_single_field_query(self.schema.path, self.boosts.path, expr),
             "tree" => self.compile_tree_query(expr),
             _ => Err(CompileError {
                 message: format!("unknown field: {}", name),
@@ -399,10 +400,10 @@ impl QueryCompiler {
     /// Builds a multi-field term query with boosts and optional fuzzy matching.
     fn build_multi_field_term_query(&self, term_text: &str) -> Option<Box<dyn Query>> {
         let fields_with_boosts: [(Field, f32); 4] = [
-            (self.schema.hierarchy, boost::HIERARCHY),
-            (self.schema.tags, boost::TAGS),
-            (self.schema.path, boost::PATH),
-            (self.schema.body, boost::BODY),
+            (self.schema.hierarchy, self.boosts.hierarchy),
+            (self.schema.tags, self.boosts.tags),
+            (self.schema.path, self.boosts.path),
+            (self.schema.body, self.boosts.body),
         ];
 
         let clauses: Vec<(Occur, Box<dyn Query>)> = fields_with_boosts
@@ -458,14 +459,16 @@ mod tests {
 
     fn compile_query(input: &str) -> Option<Box<dyn Query>> {
         let schema = IndexSchema::new();
-        let mut compiler = QueryCompiler::new(schema, "english", 0).unwrap();
+        let mut compiler =
+            QueryCompiler::new(schema, "english", 0, FieldBoosts::default()).unwrap();
         let expr = parse(input).unwrap()?;
         compiler.compile(&expr).unwrap()
     }
 
     fn compile_query_fuzzy(input: &str, fuzzy: u8) -> Option<Box<dyn Query>> {
         let schema = IndexSchema::new();
-        let mut compiler = QueryCompiler::new(schema, "english", fuzzy).unwrap();
+        let mut compiler =
+            QueryCompiler::new(schema, "english", fuzzy, FieldBoosts::default()).unwrap();
         let expr = parse(input).unwrap()?;
         compiler.compile(&expr).unwrap()
     }
@@ -558,7 +561,8 @@ mod tests {
     #[test]
     fn unknown_field_error() {
         let schema = IndexSchema::new();
-        let mut compiler = QueryCompiler::new(schema, "english", 0).unwrap();
+        let mut compiler =
+            QueryCompiler::new(schema, "english", 0, FieldBoosts::default()).unwrap();
         let expr = parse("unknown:value").unwrap().unwrap();
         let result = compiler.compile(&expr);
         assert!(result.is_err());

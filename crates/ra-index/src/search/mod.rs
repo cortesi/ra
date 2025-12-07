@@ -47,6 +47,7 @@ use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use mlt::{MoreLikeThisExplanation, MoreLikeThisParams};
 pub use open::open_searcher;
 pub use params::SearchParams;
+use ra_config::FieldBoosts;
 pub use ranges::merge_ranges;
 use tantivy::{Index, tokenizer::TextAnalyzer};
 pub use types::{MatchDetails, SearchCandidate};
@@ -74,4 +75,6 @@ pub struct Searcher {
     pub(crate) tree_paths: HashMap<String, PathBuf>,
     /// Boost applied to non-global tree hits.
     pub(crate) local_boost: f32,
+    /// Field boost weights for scoring.
+    pub(crate) boosts: FieldBoosts,
 }

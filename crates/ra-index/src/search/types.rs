@@ -60,6 +60,8 @@ pub struct SearchCandidate {
     /// Hierarchy path from document root to this chunk.
     /// Each element is a title in the path. The last element is this chunk's title.
     pub hierarchy: Vec<String>,
+    /// Heading level: 0 for document node, 1-6 for h1-h6.
+    pub depth: u64,
     /// Tree name this chunk belongs to.
     pub tree: String,
     /// File path within the tree.
@@ -97,12 +99,6 @@ impl SearchCandidate {
     /// Returns the chunk's title (the last element of the hierarchy).
     pub fn title(&self) -> &str {
         self.hierarchy.last().map(|s| s.as_str()).unwrap_or("")
-    }
-
-    /// Returns the hierarchy depth.
-    /// Document nodes have depth 0, h1 headings have depth 1, etc.
-    pub fn depth(&self) -> usize {
-        self.hierarchy.len().saturating_sub(1)
     }
 
     /// Returns the breadcrumb string by joining hierarchy elements.

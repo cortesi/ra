@@ -113,6 +113,7 @@ mod tests {
             doc_id: format!("{tree}:{id}"),
             parent_id: None,
             hierarchy: vec!["Doc".to_string(), format!("Title {id}")],
+            depth: 1,
             tree: tree.to_string(),
             path: format!("{id}.md"),
             body: "Body content".to_string(),

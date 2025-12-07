@@ -118,6 +118,7 @@ mod test {
                 None
             },
             hierarchy,
+            depth,
             tree: "local".to_string(),
             path: "test.md".to_string(),
             body: "Body content".to_string(),
@@ -147,7 +148,7 @@ mod test {
         assert_eq!(c.title(), "Title local:test.md#intro");
         assert_eq!(c.tree, "local");
         assert_eq!(c.path, "test.md");
-        assert_eq!(c.depth(), 1);
+        assert_eq!(c.depth, 1);
         assert!(!result.is_aggregated());
         assert!(result.constituents().is_none());
     }
@@ -166,7 +167,7 @@ mod test {
         assert_eq!(c.score, 8.0);
         assert_eq!(c.doc_id, "local:test.md");
         assert!(c.parent_id.is_none()); // Document node has no parent
-        assert_eq!(c.depth(), 0);
+        assert_eq!(c.depth, 0);
         assert!(result.is_aggregated());
 
         let constituents = result.constituents().unwrap();

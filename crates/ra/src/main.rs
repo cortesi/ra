@@ -2944,10 +2944,10 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
 
     // Display each chunk in search result format
     for chunk in &chunks {
-        let chunk_label = if chunk.depth() == 0 {
+        let chunk_label = if chunk.depth == 0 {
             format!("{} (document)", chunk.id)
         } else {
-            format!("{} (depth {})", chunk.id, chunk.depth())
+            format!("{} (depth {})", chunk.id, chunk.depth)
         };
         println!("--- {} ---", header(&chunk_label));
         // Build breadcrumb from hierarchy

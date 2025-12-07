@@ -46,6 +46,7 @@ Each chunk is indexed with these fields:
 | `path` | Relative file path | Full-text | Yes |
 | `tree` | Tree name | Exact match | Yes |
 | `body` | Chunk content | Full-text | Yes |
+| `depth` | Heading level (0-6) | No | Yes |
 | `mtime` | Modification time | Filter/sort | No |
 
 The `hierarchy` field is a multi-value text field where each element represents a level in the
@@ -72,12 +73,12 @@ simultaneously. Terms within a query are combined with AND.
 ```
 BooleanQuery(MUST):
 ├── MultiFieldQuery("rust")
-│   ├── hierarchy:"rust" (boosted 10.0×)
+│   ├── hierarchy:"rust" (boosted 3.0×)
 │   ├── tags:"rust" (boosted 5.0×)
 │   ├── path:"rust" (boosted 8.0×)
 │   └── body:"rust" (boosted 1.0×)
 └── MultiFieldQuery("async")
-    ├── hierarchy:"async" (boosted 10.0×)
+    ├── hierarchy:"async" (boosted 3.0×)
     ├── tags:"async" (boosted 5.0×)
     ├── path:"async" (boosted 8.0×)
     └── body:"async" (boosted 1.0×)
@@ -111,14 +112,36 @@ considers:
 
 ### Field Boosting
 
-| Field | Boost |
-|-------|-------|
-| hierarchy | 10.0× |
-| path | 8.0× |
-| tags | 5.0× |
-| body | 1.0× |
+Field boosts are applied at query time to weight matches in different fields:
 
-A match in the hierarchy contributes 10× as much to the score as the same match in the body.
+| Field | Boost | Rationale |
+|-------|-------|-----------|
+| path | 8.0× | Filename matches are strong relevance signals |
+| tags | 5.0× | Intentional metadata from frontmatter |
+| hierarchy | 3.0× | Matches in document headings |
+| body | 1.0× | Baseline for content matches |
+
+A match in the path contributes 8× as much to the score as the same match in the body.
+
+### Heading Depth Boost
+
+Each chunk has a heading depth (0 for document root, 1-6 for h1-h6). Higher-level headings
+receive a score multiplier that decays exponentially with depth:
+
+| Depth | Heading | Boost |
+|-------|---------|-------|
+| 0 | Document | 5.0× |
+| 1 | h1 | 5.0× |
+| 2 | h2 | 3.5× |
+| 3 | h3 | 2.45× |
+| 4 | h4 | 1.72× |
+| 5 | h5 | 1.20× |
+| 6 | h6 | 0.84× |
+
+The formula is: `5.0 × 0.7^(depth - 1)` for depth > 1, or `5.0` for depth ≤ 1.
+
+This prioritizes top-level sections (which are typically more significant topic divisions) over
+deeply nested subsections.
 
 ### Tree Locality Boost
 
@@ -126,6 +149,71 @@ Local trees (defined in project `.ra.toml`) receive a boost over global trees (d
 `~/.ra.toml`). Default: 1.5×.
 
 This prioritizes project-specific documentation over general reference material.
+
+### Final Score Calculation
+
+The final score for a chunk combines all boost factors:
+
+```
+final_score = bm25_score × heading_boost × locality_boost
+```
+
+Where:
+- `bm25_score`: Base score from BM25 with field boosting
+- `heading_boost`: Depth-based multiplier (5.0 down to 0.84)
+- `locality_boost`: 1.5× for local trees, 1.0× for global trees
+
+
+## Boost Configuration
+
+All boost values are configurable via `.ra.toml` under the `[search]` section. There are two
+categories of boosts:
+
+### Index Field Boosts
+
+These control how matches in different index fields contribute to the search score:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `boost_hierarchy` | 3.0 | Boost for matches in document headings |
+| `boost_path` | 8.0 | Boost for matches in file path/name |
+| `boost_tags` | 5.0 | Boost for matches in frontmatter tags |
+| `boost_body` | 1.0 | Boost for matches in document body |
+| `boost_heading_max` | 5.0 | Maximum boost for top-level headings (depth 0-1) |
+| `boost_heading_decay` | 0.7 | Decay factor per heading level |
+
+The heading depth boost is calculated as:
+- Depth 0-1: `boost_heading_max` (5.0)
+- Depth 2+: `boost_heading_max × boost_heading_decay^(depth-1)`
+
+### Markdown Parser Weights
+
+These control term weighting during context extraction from markdown files:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `markdown_h1` | 3.0 | Weight for terms in H1 headings |
+| `markdown_h2_h3` | 2.0 | Weight for terms in H2-H3 headings |
+| `markdown_h4_h6` | 1.5 | Weight for terms in H4-H6 headings |
+| `markdown_body` | 1.0 | Weight for terms in body text |
+
+These weights affect the `ra context` command, which extracts key terms from source files
+to build contextual search queries.
+
+### Example Configuration
+
+```toml
+[search]
+# Increase importance of path matches (good for code documentation)
+boost_path = 10.0
+
+# Flatten heading hierarchy (make all headings equal)
+boost_heading_max = 2.0
+boost_heading_decay = 1.0
+
+# Give more weight to H1 headings in context extraction
+markdown_h1 = 5.0
+```
 
 
 ## Multi-Topic Search

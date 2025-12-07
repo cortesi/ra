@@ -26,6 +26,8 @@ pub struct ChunkDocument {
     /// Hierarchy path from document root to this chunk.
     /// Each element is a title in the path. The last element is this chunk's title.
     pub hierarchy: Vec<String>,
+    /// Heading level: 0 for document node, 1-6 for h1-h6.
+    pub depth: u8,
     /// Document tags from frontmatter.
     pub tags: Vec<String>,
     /// File path within the tree.
@@ -53,12 +55,6 @@ impl ChunkDocument {
         self.hierarchy.last().map(|s| s.as_str()).unwrap_or("")
     }
 
-    /// Returns the hierarchy depth (0 for document, 1+ for nested content).
-    #[cfg(test)]
-    pub fn depth(&self) -> usize {
-        self.hierarchy.len().saturating_sub(1)
-    }
-
     /// Creates a `ChunkDocument` from a `TreeChunk` and document metadata.
     ///
     /// # Arguments
@@ -73,6 +69,7 @@ impl ChunkDocument {
             doc_id: chunk.doc_id.clone(),
             parent_id: chunk.parent_id.clone(),
             hierarchy: chunk.hierarchy.clone(),
+            depth: chunk.depth,
             tags: document.tags.clone(),
             path: path_str,
             tree: document.tree.clone(),
@@ -145,7 +142,7 @@ How to handle errors in API handlers."#;
         assert_eq!(chunk_doc.path, "docs/api/handlers.md");
         assert_eq!(chunk_doc.tree, "local");
         assert!(chunk_doc.body.contains("Introduction"));
-        assert_eq!(chunk_doc.depth(), 0); // Document node is depth 0
+        assert_eq!(chunk_doc.depth, 0); // Document node is depth 0
         assert_eq!(chunk_doc.position, 0); // First in pre-order traversal
         assert_eq!(chunk_doc.mtime, SystemTime::UNIX_EPOCH);
     }
@@ -159,7 +156,7 @@ How to handle errors in API handlers."#;
         assert_eq!(chunk_docs.len(), 2);
         // Document node (preamble)
         assert_eq!(chunk_docs[0].id, "local:docs/api/handlers.md");
-        assert_eq!(chunk_docs[0].depth(), 0);
+        assert_eq!(chunk_docs[0].depth, 0);
         assert!(chunk_docs[0].parent_id.is_none());
 
         // Heading node
@@ -167,7 +164,7 @@ How to handle errors in API handlers."#;
             chunk_docs[1].id,
             "local:docs/api/handlers.md#error-handling"
         );
-        assert_eq!(chunk_docs[1].depth(), 1);
+        assert_eq!(chunk_docs[1].depth, 1);
         assert_eq!(
             chunk_docs[1].hierarchy,
             vec!["API Handlers", "Error Handling"]

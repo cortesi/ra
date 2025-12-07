@@ -19,7 +19,7 @@ use super::{
     ranges::{extract_match_ranges, merge_ranges},
     types::{FieldMatch, MatchDetails, SearchCandidate},
 };
-use crate::{IndexError, schema::boost};
+use crate::IndexError;
 
 /// Default maximum number of characters in a snippet.
 const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
@@ -314,10 +314,10 @@ impl Searcher {
         let mut field_scores: HashMap<String, f32> = HashMap::new();
 
         for (field_name, text, field_boost) in [
-            ("hierarchy", hierarchy_text.as_str(), boost::HIERARCHY),
-            ("body", body.as_str(), boost::BODY),
-            ("tags", tags_text.as_str(), boost::TAGS),
-            ("path", path.as_str(), boost::PATH),
+            ("hierarchy", hierarchy_text.as_str(), self.boosts.hierarchy),
+            ("body", body.as_str(), self.boosts.body),
+            ("tags", tags_text.as_str(), self.boosts.tags),
+            ("path", path.as_str(), self.boosts.path),
         ] {
             let freqs = self.count_term_frequency_in_text(text, &all_matched_terms);
             if !freqs.is_empty() {
@@ -375,7 +375,7 @@ impl Searcher {
                 let term = Term::from_field_text(self.schema.body, term_text);
                 let query: Box<dyn Query> =
                     Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
-                let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, boost::BODY));
+                let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, self.boosts.body));
                 (Occur::Should, boosted)
             })
             .collect();
@@ -424,16 +424,19 @@ impl Searcher {
         let tree = self.get_text_field(doc, self.schema.tree);
         let path = self.get_text_field(doc, self.schema.path);
         let body = self.get_text_field(doc, self.schema.body);
+        let depth = self.get_u64_field(doc, self.schema.depth);
         let position = self.get_u64_field(doc, self.schema.position);
         let byte_start = self.get_u64_field(doc, self.schema.byte_start);
         let byte_end = self.get_u64_field(doc, self.schema.byte_end);
         let sibling_count = self.get_u64_field(doc, self.schema.sibling_count);
 
         let is_global = self.tree_is_global.get(&tree).copied().unwrap_or(false);
+        // Apply heading depth boost and local tree boost
+        let heading_boost = self.boosts.heading_boost(depth);
         let score = if is_global {
-            base_score
+            base_score * heading_boost
         } else {
-            base_score * self.local_boost
+            base_score * heading_boost * self.local_boost
         };
 
         let snippet = snippet_generator.as_ref().map(|generator| {
@@ -452,6 +455,7 @@ impl Searcher {
             doc_id,
             parent_id,
             hierarchy,
+            depth,
             tree,
             path,
             body,

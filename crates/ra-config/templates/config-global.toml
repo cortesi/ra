@@ -13,5 +13,24 @@ default_limit = 5
 # Search settings
 [search]
 stemmer = "english"
+fuzzy_distance = 1
 limit = 10                 # final results after aggregation
 max_candidates = 50        # candidates passed into aggregation phase
+cutoff_ratio = 0.3         # score ratio threshold for elbow cutoff (0.0-1.0)
+aggregation_threshold = 0.5  # sibling ratio for hierarchical aggregation
+
+# Index field boosts - control how matches in different fields affect score
+boost_hierarchy = 3.0      # matches in document headings
+boost_path = 8.0           # matches in file path/name
+boost_tags = 5.0           # matches in frontmatter tags
+boost_body = 1.0           # matches in document body
+
+# Heading depth boost - prioritize top-level sections
+boost_heading_max = 5.0    # max boost for document/h1
+boost_heading_decay = 0.7  # decay factor per level (h2 = max*0.7, h3 = max*0.7², ...)
+
+# Markdown parser weights - term weighting for context extraction
+markdown_h1 = 3.0          # weight for H1 heading terms
+markdown_h2_h3 = 2.0       # weight for H2-H3 heading terms
+markdown_h4_h6 = 1.5       # weight for H4-H6 heading terms
+markdown_body = 1.0        # weight for body text terms

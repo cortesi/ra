@@ -67,6 +67,7 @@ mod tests {
             parent_id: Some("docs:guide.md".into()),
             body: "You need Rust installed.".into(),
             hierarchy: vec!["Getting Started".into(), "Installation".into()],
+            depth: 1,
             position: 1,
             byte_start: 0,
             byte_end: 100,
@@ -74,7 +75,7 @@ mod tests {
         };
         assert!(chunk.id.contains('#'));
         assert_eq!(chunk.title(), "Installation");
-        assert_eq!(chunk.depth(), 1);
+        assert_eq!(chunk.depth, 1);
     }
 
     #[test]
@@ -85,6 +86,7 @@ mod tests {
             parent_id: None,
             body: "This guide helps you get started.".into(),
             hierarchy: vec!["Getting Started".into()],
+            depth: 0,
             position: 0,
             byte_start: 0,
             byte_end: 50,
@@ -92,7 +94,7 @@ mod tests {
         };
         assert!(!chunk.id.contains('#'));
         assert_eq!(chunk.title(), "Getting Started");
-        assert_eq!(chunk.depth(), 0);
+        assert_eq!(chunk.depth, 0);
         assert!(chunk.parent_id.is_none());
     }
 }
