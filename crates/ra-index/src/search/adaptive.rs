@@ -1,14 +1,15 @@
 //! Adaptive hierarchical aggregation for search results.
 //!
-//! This module implements a streaming aggregation algorithm that processes candidates
-//! one-by-one in score order, building results incrementally until the limit is reached.
+//! This module implements an aggregation algorithm that processes all candidates
+//! in score order, building aggregated results. Candidates are processed after
+//! elbow cutoff has determined the "relevant" set.
 //!
 //! # Key Features
 //!
-//! 1. **Streams candidates**: Process one at a time, stopping when we have enough results
+//! 1. **Processes all relevant candidates**: No early termination during aggregation
 //! 2. **Claims descendants**: When a parent enters results, all descendants are skipped
 //! 3. **Cascades upward**: Aggregating siblings may trigger further aggregation with grandparents
-//! 4. **Early termination**: Stops as soon as `limit` results are accumulated
+//! 4. **Ancestor subsumption**: When an ancestor arrives after its descendants, it subsumes them
 //!
 //! # Algorithm
 //!
@@ -17,14 +18,14 @@
 //!     if candidate is claimed (ancestor in results):
 //!         skip
 //!
+//!     if candidate has descendants in results:
+//!         subsume descendants into candidate
+//!
 //!     siblings = find siblings already in results
 //!     if should_aggregate(candidate, siblings):
 //!         aggregate into parent, cascade if needed
 //!     else:
 //!         add as single result
-//!
-//!     if results.len() >= limit:
-//!         break
 //! ```
 
 use std::collections::{HashMap, HashSet};
@@ -38,10 +39,10 @@ use crate::{SearchCandidate, result::SearchResult};
 /// this threshold, the matches are aggregated into their parent.
 pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
 
-/// Adaptive aggregator that builds results incrementally.
+/// Adaptive aggregator that builds results from candidates.
 ///
-/// Processes candidates one at a time, aggregating siblings when appropriate
-/// and stopping when the target limit is reached.
+/// Processes all candidates, aggregating siblings when appropriate.
+/// The input candidates should already be filtered by elbow cutoff.
 pub struct AdaptiveAggregator {
     /// Accumulated search results.
     results: Vec<SearchResult>,
@@ -51,8 +52,6 @@ pub struct AdaptiveAggregator {
     result_index: HashMap<String, usize>,
     /// Aggregation threshold (fraction of siblings needed to aggregate).
     threshold: f32,
-    /// Target number of results.
-    limit: usize,
 }
 
 impl AdaptiveAggregator {
@@ -60,14 +59,12 @@ impl AdaptiveAggregator {
     ///
     /// # Arguments
     /// * `threshold` - Minimum ratio of matching/total siblings to trigger aggregation (0.0 to 1.0)
-    /// * `limit` - Target number of results to accumulate
-    pub fn new(threshold: f32, limit: usize) -> Self {
+    pub fn new(threshold: f32) -> Self {
         Self {
-            results: Vec::with_capacity(limit),
+            results: Vec::new(),
             claimed: HashSet::new(),
             result_index: HashMap::new(),
             threshold,
-            limit,
         }
     }
 
@@ -162,11 +159,6 @@ impl AdaptiveAggregator {
     #[cfg(test)]
     pub fn result_count(&self) -> usize {
         self.results.len()
-    }
-
-    /// Returns true if we've reached the target limit.
-    pub fn is_full(&self) -> bool {
-        self.results.len() >= self.limit
     }
 
     /// Adds a candidate as a single (non-aggregated) result.
@@ -289,8 +281,15 @@ impl AdaptiveAggregator {
         self.add_aggregated(grandparent, constituents, parent_lookup)
     }
 
-    /// Consumes the aggregator and returns the accumulated results.
-    pub fn into_results(self) -> Vec<SearchResult> {
+    /// Consumes the aggregator and returns the accumulated results sorted by score.
+    pub fn into_results(mut self) -> Vec<SearchResult> {
+        // Sort by score descending - results may be out of order after aggregation/cascading
+        self.results.sort_by(|a, b| {
+            b.candidate()
+                .score
+                .partial_cmp(&a.candidate().score)
+                .unwrap()
+        });
         self.results
     }
 
@@ -302,12 +301,12 @@ impl AdaptiveAggregator {
 
     /// Processes candidates through the adaptive aggregation algorithm.
     ///
-    /// Iterates through candidates in order (should be sorted by score descending),
-    /// building results incrementally. For each candidate:
+    /// Iterates through all candidates in order (should be sorted by score descending),
+    /// building aggregated results. For each candidate:
     /// - Skip if claimed (ancestor already in results)
+    /// - Subsume any descendants already in results
     /// - Check if it should aggregate with existing siblings
     /// - Either add as single result or aggregate with siblings
-    /// - Stop when limit is reached
     ///
     /// # Arguments
     /// * `candidates` - Candidates to process (should be sorted by score descending)
@@ -317,10 +316,6 @@ impl AdaptiveAggregator {
         F: Fn(&str) -> Option<SearchCandidate>,
     {
         for candidate in candidates {
-            if self.is_full() {
-                break;
-            }
-
             // Skip if this candidate is already in results (e.g., added via cascade)
             if self.result_index.contains_key(&candidate.id) {
                 continue;
@@ -373,27 +368,27 @@ impl AdaptiveAggregator {
 /// Performs adaptive hierarchical aggregation on search candidates.
 ///
 /// This is the main entry point for the adaptive aggregation algorithm. It processes
-/// candidates in score order, aggregating siblings when appropriate and stopping
-/// when the limit is reached.
+/// all candidates in score order, aggregating siblings when appropriate.
+///
+/// The candidates should already be filtered by elbow cutoff to include only
+/// relevant results. This function aggregates everything that passes through.
 ///
 /// # Arguments
-/// * `candidates` - Raw search candidates (should be sorted by score descending)
+/// * `candidates` - Search candidates (should be sorted by score descending, already filtered)
 /// * `threshold` - Minimum ratio of matching/total siblings to trigger aggregation (0.0 to 1.0)
-/// * `limit` - Target number of results
 /// * `parent_lookup` - Function to look up parent nodes by ID
 ///
 /// # Returns
-/// Aggregated search results, up to `limit` items.
+/// Aggregated search results (sorted by score descending).
 pub fn adaptive_aggregate<F>(
     candidates: Vec<SearchCandidate>,
     threshold: f32,
-    limit: usize,
     parent_lookup: F,
 ) -> Vec<SearchResult>
 where
     F: Fn(&str) -> Option<SearchCandidate>,
 {
-    let mut aggregator = AdaptiveAggregator::new(threshold, limit);
+    let mut aggregator = AdaptiveAggregator::new(threshold);
     aggregator.process(candidates, &parent_lookup);
     aggregator.into_results()
 }
@@ -442,24 +437,13 @@ mod tests {
 
     #[test]
     fn new_creates_empty_aggregator() {
-        let agg = AdaptiveAggregator::new(0.5, 10);
+        let agg = AdaptiveAggregator::new(0.5);
         assert_eq!(agg.result_count(), 0);
-        assert!(!agg.is_full());
-    }
-
-    #[test]
-    fn is_full_at_limit() {
-        let mut agg = AdaptiveAggregator::new(0.5, 2);
-        agg.add_single(make_candidate("local:a.md", None, 5.0, 1));
-        assert!(!agg.is_full());
-
-        agg.add_single(make_candidate("local:b.md", None, 4.0, 1));
-        assert!(agg.is_full());
     }
 
     #[test]
     fn is_claimed_direct() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
         agg.claimed.insert("local:test.md#intro".to_string());
 
         let candidate = make_candidate("local:test.md#intro", Some("local:test.md"), 5.0, 2);
@@ -468,7 +452,7 @@ mod tests {
 
     #[test]
     fn is_claimed_via_ancestor() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Add document as result
         let doc = make_candidate("local:test.md", None, 5.0, 1);
@@ -490,7 +474,7 @@ mod tests {
 
     #[test]
     fn is_not_claimed_different_doc() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Add one document as result
         let doc_a = make_candidate("local:a.md", None, 5.0, 1);
@@ -503,14 +487,14 @@ mod tests {
 
     #[test]
     fn find_sibling_indices_empty() {
-        let agg = AdaptiveAggregator::new(0.5, 10);
+        let agg = AdaptiveAggregator::new(0.5);
         let candidate = make_candidate("local:test.md#intro", Some("local:test.md"), 5.0, 2);
         assert!(agg.find_sibling_indices(&candidate).is_empty());
     }
 
     #[test]
     fn find_sibling_indices_finds_siblings() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Add two siblings
         agg.add_single(make_candidate(
@@ -534,7 +518,7 @@ mod tests {
 
     #[test]
     fn find_sibling_indices_ignores_non_siblings() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Add chunk from different parent
         agg.add_single(make_candidate(
@@ -551,7 +535,7 @@ mod tests {
 
     #[test]
     fn should_aggregate_at_threshold() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Add one sibling (1 of 2)
         agg.add_single(make_candidate(
@@ -569,7 +553,7 @@ mod tests {
 
     #[test]
     fn should_aggregate_below_threshold() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Add one sibling (1 of 5)
         agg.add_single(make_candidate(
@@ -587,7 +571,7 @@ mod tests {
 
     #[test]
     fn should_aggregate_document_level() {
-        let agg = AdaptiveAggregator::new(0.5, 10);
+        let agg = AdaptiveAggregator::new(0.5);
 
         // Document-level node (no parent) can't aggregate further
         let doc = make_candidate("local:test.md", None, 5.0, 1);
@@ -596,7 +580,7 @@ mod tests {
 
     #[test]
     fn add_single_updates_state() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         let candidate = make_candidate("local:test.md#intro", Some("local:test.md"), 5.0, 2);
         agg.add_single(candidate);
@@ -608,7 +592,7 @@ mod tests {
 
     #[test]
     fn remove_results_removes_and_reindexes() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         agg.add_single(make_candidate("local:a.md", None, 5.0, 1));
         agg.add_single(make_candidate("local:b.md", None, 4.0, 1));
@@ -629,7 +613,7 @@ mod tests {
 
     #[test]
     fn add_aggregated_creates_aggregated_result() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         let parent = make_candidate("local:test.md", None, 0.0, 1);
         let constituents = vec![
@@ -648,7 +632,7 @@ mod tests {
 
     #[test]
     fn cascade_aggregation() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // First, add section1 as an aggregated result
         let section1 = make_candidate("local:test.md#s1", Some("local:test.md"), 0.0, 2);
@@ -688,7 +672,7 @@ mod tests {
 
     #[test]
     fn into_results_returns_accumulated() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         agg.add_single(make_candidate("local:a.md", None, 5.0, 1));
         agg.add_single(make_candidate("local:b.md", None, 4.0, 1));
@@ -701,14 +685,14 @@ mod tests {
 
     #[test]
     fn process_empty_candidates() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
         agg.process(vec![], &|_| None);
         assert_eq!(agg.result_count(), 0);
     }
 
     #[test]
     fn process_single_candidate() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
         let candidates = vec![make_candidate("local:test.md", None, 5.0, 1)];
 
         agg.process(candidates, &|_| None);
@@ -718,8 +702,8 @@ mod tests {
     }
 
     #[test]
-    fn process_stops_at_limit() {
-        let mut agg = AdaptiveAggregator::new(0.5, 2);
+    fn process_handles_multiple_candidates() {
+        let mut agg = AdaptiveAggregator::new(0.5);
         let candidates = vec![
             make_candidate("local:a.md", None, 5.0, 1),
             make_candidate("local:b.md", None, 4.0, 1),
@@ -729,14 +713,13 @@ mod tests {
 
         agg.process(candidates, &|_| None);
 
-        assert_eq!(agg.result_count(), 2);
-        assert_eq!(agg.results()[0].candidate().id, "local:a.md");
-        assert_eq!(agg.results()[1].candidate().id, "local:b.md");
+        // All candidates should be processed (no limit)
+        assert_eq!(agg.result_count(), 4);
     }
 
     #[test]
     fn process_skips_claimed_descendants() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Document first, then its children - children should be skipped
         let candidates = vec![
@@ -756,7 +739,7 @@ mod tests {
 
     #[test]
     fn process_aggregates_siblings() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         let doc = make_candidate("local:test.md", None, 0.0, 1);
 
@@ -782,7 +765,7 @@ mod tests {
 
     #[test]
     fn process_no_aggregate_below_threshold() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         let doc = make_candidate("local:test.md", None, 0.0, 1);
 
@@ -808,7 +791,7 @@ mod tests {
 
     #[test]
     fn process_interleaved_documents() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         let doc_a = make_candidate("local:a.md", None, 0.0, 1);
         let doc_b = make_candidate("local:b.md", None, 0.0, 1);
@@ -835,7 +818,7 @@ mod tests {
 
     #[test]
     fn process_cascading_aggregation() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         let doc = make_candidate("local:test.md", None, 0.0, 1);
         let s1 = make_candidate("local:test.md#s1", Some("local:test.md"), 0.0, 2);
@@ -873,7 +856,7 @@ mod tests {
             make_candidate("local:test.md#s2", Some("local:test.md"), 4.0, 2),
         ];
 
-        let results = adaptive_aggregate(candidates, 0.5, 10, |id| {
+        let results = adaptive_aggregate(candidates, 0.5, |id| {
             if id == "local:test.md" {
                 Some(doc.clone())
             } else {
@@ -886,21 +869,22 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_aggregate_respects_limit() {
+    fn adaptive_aggregate_processes_all() {
         let candidates = vec![
             make_candidate("local:a.md", None, 5.0, 1),
             make_candidate("local:b.md", None, 4.0, 1),
             make_candidate("local:c.md", None, 3.0, 1),
         ];
 
-        let results = adaptive_aggregate(candidates, 0.5, 2, |_| None);
+        let results = adaptive_aggregate(candidates, 0.5, |_| None);
 
-        assert_eq!(results.len(), 2);
+        // All candidates processed (no limit in aggregation)
+        assert_eq!(results.len(), 3);
     }
 
     #[test]
     fn process_parent_not_found_adds_single() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Two siblings that should aggregate, but parent lookup fails
         let candidates = vec![
@@ -923,7 +907,7 @@ mod tests {
         // - Child A (high score) arrives first, added as single
         // - Child B arrives, added as single
         // - Parent arrives later with lower score, should subsume children
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Children arrive first with high scores
         let candidates = vec![
@@ -946,7 +930,7 @@ mod tests {
     #[test]
     fn ancestor_subsumes_nested_descendants() {
         // Document arrives after both children and grandchildren
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         let doc = make_candidate("local:test.md", None, 1.0, 1);
         let s1 = make_candidate("local:test.md#s1", Some("local:test.md"), 0.0, 2);
@@ -975,7 +959,7 @@ mod tests {
 
     #[test]
     fn find_descendant_indices_works() {
-        let mut agg = AdaptiveAggregator::new(0.5, 10);
+        let mut agg = AdaptiveAggregator::new(0.5);
 
         // Add some children
         agg.add_single(make_candidate(

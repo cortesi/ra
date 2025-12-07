@@ -143,12 +143,14 @@ Breadcrumbs are stored for display but not indexed.
 
 ## Search Result Processing
 
-After retrieving candidates from the index, ra applies two post-processing phases.
+After retrieving candidates from the index, ra applies elbow cutoff to determine the
+"relevant" set, then aggregates all relevant candidates hierarchically.
 
-### Phase 2: Elbow Cutoff
+### Elbow Cutoff
 
 BM25 scores follow a long-tail distribution. Rather than using arbitrary thresholds, ra
-detects the natural "elbow" where relevant results end.
+detects the natural "elbow" where relevance drops significantly. This happens **before**
+aggregation, determining which candidates are worth aggregating.
 
 **Algorithm:**
 
@@ -159,8 +161,8 @@ detects the natural "elbow" where relevant results end.
 
 **Edge cases:**
 
-- All ratios ≥ `cutoff_ratio`: return up to `max_results`
-- First ratio < threshold: return only the first result
+- All ratios ≥ `cutoff_ratio`: return up to `max_candidates`
+- First ratio < threshold: return only the first candidate
 - Zero or negative scores: immediate cutoff
 
 **Example with `cutoff_ratio = 0.5`:**
@@ -171,44 +173,61 @@ Ratios:  [0.94, 0.93, 0.46, ...]
                       ↑
                       First ratio < 0.5
 
-Result: first 3 candidates (8.0, 7.5, 7.0)
+Result: first 3 candidates pass through to aggregation
 ```
 
-### Phase 3: Hierarchical Aggregation
+### Adaptive Hierarchical Aggregation
 
-When multiple siblings match a query, ra merges them into their parent. This provides
-unified context instead of fragmented results.
+After elbow cutoff, ra processes **all** relevant candidates in score order, aggregating
+siblings when appropriate:
 
 **Algorithm:**
 
 ```
-for current_depth from max_depth down to 1:
-    for each parent with matching children at current_depth:
-        match_fraction = matching_children / total_children
+results = []
 
-        if match_fraction >= aggregation_threshold:
-            replace children with aggregated parent result
+for candidate in relevant_candidates (sorted by score descending):
+    if candidate.id already in results:
+        skip  # Added via earlier cascade
 
-filter out any result whose ancestor also appears in results
-sort by score descending
+    if any ancestor of candidate is in results:
+        skip  # Ancestor already covers this
+
+    if candidate has descendants in results:
+        remove descendants from results
+        add candidate as aggregated result with descendants as constituents
+        check for cascade (may aggregate with siblings)
+        continue
+
+    siblings_in_results = find siblings of candidate in results
+    if (siblings.count + 1) / sibling_count >= threshold:
+        remove siblings from results
+        add parent as aggregated result
+        check for cascade (parent may aggregate with its siblings)
+    else:
+        add candidate as single result
 ```
 
 **Key behaviors:**
 
-- Works bottom-up, deepest matches first
-- When siblings aggregate into a parent, that parent may itself aggregate with its siblings
-- After aggregation, descendants of included results are filtered out
+- **Processes all relevant candidates**: No early termination during aggregation
+- **Ancestor subsumption**: When an ancestor arrives after its descendants, descendants are
+  replaced by the ancestor
+- **Cascade**: When siblings aggregate into a parent, that parent may itself trigger
+  aggregation with its siblings
+- **No duplicate documents**: A document never appears both as parent and child in results
 - Parent's score = maximum of constituent scores
 
 **Example with `aggregation_threshold = 0.5`:**
 
 ```
-Document
-├── Section A (matches)
-│   ├── Subsection A1 (matches)  }
-│   └── Subsection A2 (matches)  } → 2/2 = 100%, aggregate to Section A
-└── Section B
-    └── Subsection B1 (matches)    (1/1 = 100%, keep as-is)
+Relevant candidates (post-elbow):
+1. Subsection A1 (score 10) → add as single
+2. Subsection A2 (score 9)  → sibling A1 in results, 2/2 ≥ 0.5 → aggregate to Section A
+3. Section A (score 5)      → already in results via cascade, skip
+4. Subsection B1 (score 4)  → add as single (only 1 sibling, 1/1 but no siblings in results)
+
+Result: [Section A (aggregated), Subsection B1 (single)]
 ```
 
 ### Aggregated Result Structure
@@ -224,26 +243,31 @@ Aggregated results include:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `candidate_limit` | 100 | Maximum candidates from index before cutoff |
-| `cutoff_ratio` | 0.5 | Score ratio threshold for elbow detection |
-| `max_results` | 20 | Fallback limit when no elbow detected |
+| `limit` | 10 | Target number of final results |
+| `cutoff_ratio` | 0.3 | Score ratio threshold for elbow detection |
+| `max_candidates` | 50 | Hard cap on results entering elbow cutoff |
 | `aggregation_threshold` | 0.5 | Sibling fraction required to trigger aggregation |
 
 
 ## Complete Search Flow
 
 ```
-1. Query Tantivy index (limit = candidate_limit)
+1. Query Tantivy index (limit × 5 candidates)
    → Candidates ranked by BM25
 
-2. Elbow cutoff (cutoff_ratio)
-   → Relevant matches only
+2. Score normalization (multi-tree only)
+   → Each tree's best result normalized to 1.0
 
-3. Hierarchical aggregation (aggregation_threshold)
-   → Individual chunks + aggregated parents
+3. Elbow cutoff on raw candidates
+   → Detect relevance drop-off
+   → Determines the "relevant" set
 
-4. Filter descendants of included ancestors
+4. Adaptive aggregation (all relevant candidates)
+   → Process all post-elbow candidates
+   → Aggregate siblings when threshold met
+   → Ancestors subsume descendants
+   → Cascade upward when possible
 
-5. Sort by score descending
-   → Final results
+5. Final limit truncation
+   → Return up to `limit` results
 ```

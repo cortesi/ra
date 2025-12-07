@@ -186,12 +186,39 @@ For example, with `limit = 10`, the pipeline fetches 50 candidates from the inde
 **Config**: `cutoff_ratio` | **Default**: 0.3
 **Config**: `max_candidates` | **Default**: 50
 
-Controls how aggressively ra filters results based on score drops. When the ratio between
-consecutive result scores falls below `cutoff_ratio`, ra truncates the result list there.
-The `max_candidates` parameter sets a hard cap on results entering Phase 3.
+Controls how aggressively ra filters **raw candidates** based on score drops. When the
+ratio between consecutive candidate scores falls below `cutoff_ratio`, ra truncates there.
+The `max_candidates` parameter sets a hard cap on candidates entering aggregation.
 
-The algorithm detects the "elbow" in the score curve—the point where relevance drops
-significantly:
+This phase determines the "relevant" set of candidates that will be aggregated.
+
+
+### Phase 3: Adaptive Aggregation
+
+**Config**: `aggregation_threshold` | **Default**: 0.5
+
+Controls hierarchical aggregation of sibling matches into parent sections. All candidates
+that pass elbow cutoff are processed in score order:
+
+- When siblings meet the threshold, they're merged into their parent
+- When an ancestor arrives after its descendants, it subsumes them
+- Aggregation can cascade upward through multiple levels
+- All relevant candidates are processed (no early termination)
+
+See [chunking.md](chunking.md) for the complete aggregation specification.
+
+
+### Phase 4: Final Limit
+
+**Config**: `limit` | **Default**: 10
+
+The maximum number of results to return after aggregation. This is the final output limit
+that controls how many results the user sees.
+
+
+### Elbow Detection Details
+
+The elbow algorithm detects the point in the score curve where relevance drops significantly:
 
 ```
 Score curve with elbow at position 4:
@@ -209,29 +236,7 @@ Tuning guidance for `cutoff_ratio`:
 - **0.5**: Aggressive filtering; only tightly clustered high-relevance results
 - **0.3**: Balanced (default); allows gradual score decline
 - **0.1**: Permissive; includes results with significant score gaps
-- **0.0**: Disabled; return up to `max_candidates` results regardless of score distribution
-
-
-### Phase 3: Aggregation
-
-**Config**: `aggregation_threshold` | **Default**: 0.5
-
-Controls hierarchical aggregation of sibling matches into parent sections. When this fraction
-of a parent's children match the query, the children are merged into a single parent result.
-
-See [chunking.md](chunking.md) for the complete aggregation specification.
-
-
-### Phase 4: Final Limit
-
-**Config**: `limit` | **Default**: 10
-
-The maximum number of results to return after aggregation. This is the final output limit
-that controls how many results the user sees.
-
-The aggregation phase may produce fewer results than this limit (when siblings are merged),
-or more (if many unrelated matches survive elbow cutoff). This final truncation ensures
-predictable output size.
+- **0.0**: Disabled; return up to `max_candidates` candidates regardless of score distribution
 
 
 ### Multi-Tree Score Normalization
@@ -261,16 +266,15 @@ scores.
 
 ## Hierarchical Aggregation
 
-ra implements a five-phase search algorithm that automatically aggregates sibling matches
-into their parent sections when appropriate. See [chunking.md](chunking.md) for the complete
-specification.
+ra implements an adaptive algorithm that automatically aggregates sibling matches
+into their parent sections. See [chunking.md](chunking.md) for the complete specification.
 
-### Five Phases
+### Pipeline Phases
 
 1. **Query**: Retrieve candidates from the index (derived from `limit × 5`)
 2. **Normalize**: For multi-tree searches, normalize scores per tree
-3. **Elbow cutoff**: Apply relevance cutoff, capped at `max_candidates`
-4. **Aggregation**: Merge sibling matches into parent nodes when threshold is met
+3. **Elbow cutoff**: Apply relevance cutoff to raw candidates
+4. **Adaptive aggregation**: Process all relevant candidates, aggregating siblings
 5. **Limit**: Truncate to final `limit` results
 
 ### Aggregated Results

@@ -16,8 +16,8 @@
 //!
 //! The function returns the first 3 results (indices 0, 1, 2).
 
-#[cfg(test)]
 use crate::SearchCandidate;
+#[cfg(test)]
 use crate::result::SearchResult;
 
 /// Default cutoff ratio for elbow detection.
@@ -51,7 +51,6 @@ pub const DEFAULT_CUTOFF_RATIO: f32 = 0.5;
 /// # Note
 /// This function operates on raw SearchCandidates. For aggregated SearchResults,
 /// use [`elbow_cutoff_results`] instead.
-#[cfg(test)]
 pub fn elbow_cutoff(
     candidates: Vec<SearchCandidate>,
     cutoff_ratio: f32,
@@ -113,6 +112,7 @@ pub fn elbow_cutoff(
 /// # Returns
 /// A vector containing results up to (but not including) the elbow point,
 /// or up to `max_results` if no elbow is found.
+#[cfg(test)]
 pub fn elbow_cutoff_results(
     results: Vec<SearchResult>,
     cutoff_ratio: f32,
