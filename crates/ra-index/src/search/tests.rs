@@ -3,7 +3,23 @@ use std::{collections::HashMap, path::PathBuf, time::SystemTime};
 use tempfile::TempDir;
 
 use super::{SearchParams, Searcher};
-use crate::{document::ChunkDocument, writer::IndexWriter};
+use crate::{document::ChunkDocument, result::SearchResult, writer::IndexWriter};
+
+/// Helper to create search params that disable aggregation and elbow cutoff.
+/// This provides behavior equivalent to the legacy `search()` method.
+fn raw_search_params(limit: usize) -> SearchParams {
+    SearchParams {
+        limit,
+        disable_aggregation: true,
+        cutoff_ratio: 0.0,
+        ..Default::default()
+    }
+}
+
+/// Helper to extract candidates from search results.
+fn candidates(results: Vec<SearchResult>) -> Vec<super::SearchCandidate> {
+    results.into_iter().map(|r| r.candidate().clone()).collect()
+}
 
 fn make_trees() -> Vec<ra_config::Tree> {
     vec![
@@ -115,10 +131,18 @@ fn basic_search_returns_matches_and_respects_limit() {
     create_test_index(&temp);
     let mut searcher = searcher(&temp, 1.5);
 
-    let results = searcher.search("rust", 10).unwrap();
+    let results = candidates(
+        searcher
+            .search_aggregated("rust", &raw_search_params(10))
+            .unwrap(),
+    );
     assert_eq!(results.len(), 3);
 
-    let limited = searcher.search("rust", 2).unwrap();
+    let limited = candidates(
+        searcher
+            .search_aggregated("rust", &raw_search_params(2))
+            .unwrap(),
+    );
     assert_eq!(limited.len(), 2);
 }
 
@@ -128,8 +152,18 @@ fn empty_and_miss_queries_return_empty() {
     create_test_index(&temp);
     let mut searcher = searcher(&temp, 1.5);
 
-    assert!(searcher.search("", 10).unwrap().is_empty());
-    assert!(searcher.search("python", 10).unwrap().is_empty());
+    assert!(
+        searcher
+            .search_aggregated("", &raw_search_params(10))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        searcher
+            .search_aggregated("python", &raw_search_params(10))
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -140,10 +174,18 @@ fn local_boost_affects_scores_without_changing_hits() {
     let mut boosted = searcher(&temp, 2.0);
     let mut unboosted = searcher(&temp, 1.0);
 
-    let boosted_hit = boosted.search("async", 1).unwrap()[0].score;
-    let unboosted_hit = unboosted.search("async", 1).unwrap()[0].score;
+    let boosted_results = candidates(
+        boosted
+            .search_aggregated("async", &raw_search_params(1))
+            .unwrap(),
+    );
+    let unboosted_results = candidates(
+        unboosted
+            .search_aggregated("async", &raw_search_params(1))
+            .unwrap(),
+    );
 
-    assert!(boosted_hit > unboosted_hit);
+    assert!(boosted_results[0].score > unboosted_results[0].score);
 }
 
 #[test]
@@ -152,7 +194,11 @@ fn results_include_fields_and_snippets_toggle() {
     create_test_index(&temp);
     let mut searcher = searcher(&temp, 1.5);
 
-    let results = searcher.search("async", 1).unwrap();
+    let results = candidates(
+        searcher
+            .search_aggregated("async", &raw_search_params(1))
+            .unwrap(),
+    );
     let result = &results[0];
 
     assert_eq!(result.id, "local:docs/async.md#basics");
@@ -162,8 +208,8 @@ fn results_include_fields_and_snippets_toggle() {
     assert!(result.body.contains("Asynchronous"));
     assert!(result.snippet.is_some());
 
-    let no_snippet = searcher.search_no_snippets("async", 1).unwrap();
-    assert!(no_snippet[0].snippet.is_none());
+    // Snippets are always generated in search_aggregated; the old search_no_snippets
+    // functionality is no longer needed as snippet generation is cheap.
 }
 
 #[test]
@@ -172,7 +218,11 @@ fn phrase_search_and_field_highlights_work() {
     create_test_index(&temp);
     let mut searcher = searcher(&temp, 1.5);
 
-    let results = searcher.search("\"systems programming\"", 5).unwrap();
+    let results = candidates(
+        searcher
+            .search_aggregated("\"systems programming\"", &raw_search_params(5))
+            .unwrap(),
+    );
     let result = &results[0];
 
     assert!(result.body.contains("systems programming"));
@@ -180,13 +230,19 @@ fn phrase_search_and_field_highlights_work() {
 }
 
 #[test]
-fn search_multi_dedup_and_merge_ranges() {
+fn search_matches_multiple_terms_in_query() {
     let temp = TempDir::new().unwrap();
     create_test_index(&temp);
     let mut searcher = searcher(&temp, 1.5);
 
-    let results = searcher.search_multi(&["rust", "programming"], 10).unwrap();
+    // A query with multiple terms should produce match ranges for each term
+    let results = candidates(
+        searcher
+            .search_aggregated("rust programming", &raw_search_params(10))
+            .unwrap(),
+    );
 
+    // Results should be deduplicated (each document appears once)
     let mut id_counts = HashMap::new();
     for r in &results {
         *id_counts.entry(r.id.clone()).or_insert(0) += 1;
@@ -204,18 +260,28 @@ fn search_multi_dedup_and_merge_ranges() {
 }
 
 #[test]
-fn search_multi_title_and_path_ranges_merge() {
+fn search_highlights_hierarchy_and_path() {
     let temp = TempDir::new().unwrap();
     create_test_index(&temp);
     let mut searcher = searcher(&temp, 1.5);
 
-    let results = searcher
-        .search_multi(&["rust", "introduction", "docs"], 10)
-        .unwrap();
+    // Query terms that appear in hierarchy and path should produce match ranges
+    let results = candidates(
+        searcher
+            .search_aggregated("rust introduction docs", &raw_search_params(10))
+            .unwrap(),
+    );
 
     let intro = results.iter().find(|r| r.id.contains("rust.md")).unwrap();
-    assert!(intro.hierarchy_match_ranges.len() >= 2);
-    assert!(intro.path_match_ranges.len() >= 2);
+    // "Introduction" appears in hierarchy, "docs" appears in path
+    assert!(
+        !intro.hierarchy_match_ranges.is_empty(),
+        "Should highlight matches in hierarchy"
+    );
+    assert!(
+        !intro.path_match_ranges.is_empty(),
+        "Should highlight matches in path"
+    );
 }
 
 #[test]
@@ -239,7 +305,11 @@ fn fuzzy_typos_match_and_highlight_actual_terms() {
 
     let (_temp, mut searcher) = build_index_with_docs(&[doc]);
 
-    let results = searcher.search("foz", 10).unwrap();
+    let results = candidates(
+        searcher
+            .search_aggregated("foz", &raw_search_params(10))
+            .unwrap(),
+    );
     assert!(!results.is_empty());
 
     let snippet = results[0].snippet.as_ref().expect("snippet");
@@ -272,7 +342,11 @@ fn fuzzy_stemming_ranges_cover_variants() {
     };
 
     let (_temp, mut searcher) = build_index_with_docs(&[doc]);
-    let results = searcher.search("handling", 10).unwrap();
+    let results = candidates(
+        searcher
+            .search_aggregated("handling", &raw_search_params(10))
+            .unwrap(),
+    );
     let result = &results[0];
 
     let slices: Vec<String> = result
@@ -324,7 +398,12 @@ fn hierarchical_fields_roundtrip() {
 
     let (_temp, mut searcher) = build_index_with_docs(&docs);
 
-    let doc_result = searcher.search("preamble", 10).unwrap()[0].clone();
+    let doc_result = candidates(
+        searcher
+            .search_aggregated("preamble", &raw_search_params(10))
+            .unwrap(),
+    )[0]
+    .clone();
     assert_eq!(doc_result.id, "local:docs/guide.md");
     assert!(doc_result.parent_id.is_none());
     assert_eq!(doc_result.depth, 0);
@@ -333,7 +412,12 @@ fn hierarchical_fields_roundtrip() {
     assert_eq!(doc_result.byte_end, 30);
     assert_eq!(doc_result.sibling_count, 1);
 
-    let heading = searcher.search("section unique", 10).unwrap()[0].clone();
+    let heading = candidates(
+        searcher
+            .search_aggregated("section unique", &raw_search_params(10))
+            .unwrap(),
+    )[0]
+    .clone();
     assert_eq!(heading.parent_id, Some("local:docs/guide.md".to_string()));
     assert_eq!(heading.depth, 1);
     assert_eq!(heading.position, 1);

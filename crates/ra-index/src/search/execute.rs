@@ -1,10 +1,6 @@
 //! Query execution paths and result conversion.
 
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    mem,
-};
+use std::collections::{HashMap, HashSet};
 
 use tantivy::{
     TantivyDocument, Term,
@@ -16,7 +12,7 @@ use tantivy::{
 
 use super::{
     Searcher,
-    ranges::{extract_match_ranges, merge_ranges},
+    ranges::extract_match_ranges,
     types::{FieldMatch, MatchDetails, SearchCandidate},
 };
 use crate::IndexError;
@@ -25,103 +21,6 @@ use crate::IndexError;
 const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
 
 impl Searcher {
-    /// Searches the index for documents matching the query.
-    pub fn search(
-        &mut self,
-        query_str: &str,
-        limit: usize,
-    ) -> Result<Vec<SearchCandidate>, IndexError> {
-        let query = match self.build_query(query_str)? {
-            Some(q) => q,
-            None => return Ok(Vec::new()),
-        };
-
-        let query_terms = self.tokenize_query(query_str);
-
-        self.execute_query_with_highlights(&*query, &query_terms, limit)
-    }
-
-    /// Searches the index for documents matching multiple topics.
-    ///
-    /// Each topic is searched independently and results are combined with deduplication.
-    /// When a document matches multiple topics, the match ranges from all topics are merged
-    /// and the highest score is kept.
-    pub fn search_multi(
-        &mut self,
-        topics: &[&str],
-        limit: usize,
-    ) -> Result<Vec<SearchCandidate>, IndexError> {
-        if topics.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut results_by_id: HashMap<String, SearchCandidate> = HashMap::new();
-
-        for topic in topics {
-            let topic_results = self.search(topic, limit)?;
-
-            for result in topic_results {
-                results_by_id
-                    .entry(result.id.clone())
-                    .and_modify(|existing| {
-                        if result.score > existing.score {
-                            existing.score = result.score;
-                        }
-
-                        existing.match_ranges = merge_ranges(
-                            mem::take(&mut existing.match_ranges),
-                            result.match_ranges.clone(),
-                        );
-                        existing.hierarchy_match_ranges = merge_ranges(
-                            mem::take(&mut existing.hierarchy_match_ranges),
-                            result.hierarchy_match_ranges.clone(),
-                        );
-                        existing.path_match_ranges = merge_ranges(
-                            mem::take(&mut existing.path_match_ranges),
-                            result.path_match_ranges.clone(),
-                        );
-
-                        if let (Some(existing_snippet), Some(new_snippet)) =
-                            (&existing.snippet, &result.snippet)
-                        {
-                            existing.snippet = Some(format!("{existing_snippet} … {new_snippet}"));
-                        } else if existing.snippet.is_none() {
-                            existing.snippet = result.snippet.clone();
-                        }
-                    })
-                    .or_insert(result);
-            }
-        }
-
-        let mut results: Vec<SearchCandidate> = results_by_id.into_values().collect();
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.id.cmp(&b.id))
-        });
-
-        results.truncate(limit);
-
-        Ok(results)
-    }
-
-    /// Searches without generating snippets (faster).
-    pub fn search_no_snippets(
-        &mut self,
-        query_str: &str,
-        limit: usize,
-    ) -> Result<Vec<SearchCandidate>, IndexError> {
-        let query = match self.build_query(query_str)? {
-            Some(q) => q,
-            None => return Ok(Vec::new()),
-        };
-
-        let query_terms = self.tokenize_query(query_str);
-
-        self.execute_query_no_highlights(&*query, &query_terms, limit)
-    }
-
     /// Executes a query with snippet and highlight generation.
     pub(crate) fn execute_query_with_highlights(
         &self,
