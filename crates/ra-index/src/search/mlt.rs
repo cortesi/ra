@@ -231,12 +231,21 @@ impl Searcher {
         exclude_ids: &HashSet<String>,
         params: &SearchParams,
     ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+        use super::execute::ExecutionOptions;
+
         let query = self.apply_tree_filter(query, &params.trees);
 
         // Execute query and get raw candidates
         let effective_candidate_limit = params.effective_candidate_limit();
-        let raw_results =
-            self.execute_query_no_highlights(&*query, &[], effective_candidate_limit)?;
+
+        let options = ExecutionOptions {
+            with_snippets: false,
+            with_details: false,
+            original_query: None,
+            include_explanation: false,
+        };
+
+        let raw_results = self.execute_query(&*query, &[], effective_candidate_limit, options)?;
 
         // Filter out excluded documents
         let candidates: Vec<SearchCandidate> = raw_results

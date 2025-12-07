@@ -69,21 +69,35 @@ impl Searcher {
         display_query: &str,
         params: &SearchParams,
     ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+        use super::execute::ExecutionOptions;
+
         let query = self.apply_tree_filter(content_query, &params.trees);
 
         // Execute query and get raw candidates
         let effective_candidate_limit = params.effective_candidate_limit();
-        let candidates = if params.verbosity > 0 {
-            self.execute_query_with_details(
-                &*query,
-                display_query,
-                query_terms,
-                effective_candidate_limit,
-                params.verbosity >= 2,
-            )?
+
+        let options = if params.verbosity > 0 {
+            ExecutionOptions {
+                with_snippets: true,
+                with_details: true,
+                original_query: Some(display_query),
+                include_explanation: params.verbosity >= 2,
+            }
         } else {
-            self.execute_query_with_highlights(&*query, query_terms, effective_candidate_limit)?
+            ExecutionOptions {
+                with_snippets: true,
+                with_details: false,
+                original_query: None,
+                include_explanation: false,
+            }
         };
+
+        let candidates = self.execute_query(
+            &*query,
+            query_terms,
+            effective_candidate_limit,
+            options,
+        )?;
 
         // Process through unified pipeline
         Ok(process_candidates(candidates, params, |parent_id| {

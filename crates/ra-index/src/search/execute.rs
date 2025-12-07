@@ -23,6 +23,19 @@ use crate::IndexError;
 /// Default maximum number of characters in a snippet.
 const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
 
+/// Options for executing a query.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ExecutionOptions<'a> {
+    /// Whether to generate snippets and match ranges (expensive).
+    pub with_snippets: bool,
+    /// Whether to collect full match details (very expensive).
+    pub with_details: bool,
+    /// Original query string for details (if with_details is true).
+    pub original_query: Option<&'a str>,
+    /// Whether to include score explanation (if with_details is true).
+    pub include_explanation: bool,
+}
+
 /// Merges two sets of byte ranges, combining overlapping or adjacent ranges.
 ///
 /// The result is sorted by start position with no overlaps.
@@ -77,35 +90,13 @@ pub(super) fn extract_match_ranges(
 }
 
 impl Searcher {
-    /// Executes a query with snippet and highlight generation.
-    pub(crate) fn execute_query_with_highlights(
+    /// Executes a query with configurable options.
+    pub(crate) fn execute_query(
         &self,
         query: &dyn Query,
         query_terms: &[String],
         limit: usize,
-    ) -> Result<Vec<SearchCandidate>, IndexError> {
-        self.execute_query_core(query, query_terms, limit, true)
-    }
-
-    /// Executes a query without generating snippets or highlights (faster).
-    pub(crate) fn execute_query_no_highlights(
-        &self,
-        query: &dyn Query,
-        query_terms: &[String],
-        limit: usize,
-    ) -> Result<Vec<SearchCandidate>, IndexError> {
-        self.execute_query_core(query, query_terms, limit, false)
-    }
-
-    /// Executes a query with full match detail collection.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn execute_query_with_details(
-        &mut self,
-        query: &dyn Query,
-        original_query: &str,
-        query_terms: &[String],
-        limit: usize,
-        include_explanation: bool,
+        options: ExecutionOptions<'_>,
     ) -> Result<Vec<SearchCandidate>, IndexError> {
         let reader = self
             .index
@@ -118,22 +109,44 @@ impl Searcher {
             .search(query, &TopDocs::with_limit(limit))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        let term_mappings = self.find_term_mappings(&searcher, query_terms);
+        // Determine matched terms
+        let (matched_terms, term_mappings) = if options.with_details {
+            let mappings = self.find_term_mappings(&searcher, query_terms);
+            let mut terms: HashSet<String> = mappings.values().flatten().cloned().collect();
+            let extra_terms = self.find_matched_terms(
+                &searcher,
+                query_terms,
+                &[self.schema.hierarchy, self.schema.path],
+            );
+            terms.extend(extra_terms);
+            (terms, Some(mappings))
+        } else {
+            let terms = self.find_matched_terms(
+                &searcher,
+                query_terms,
+                &[self.schema.body, self.schema.hierarchy, self.schema.path],
+            );
+            (terms, None)
+        };
 
-        let mut matched_terms: HashSet<String> =
-            term_mappings.values().flatten().cloned().collect();
-        let extra_terms = self.find_matched_terms(
-            &searcher,
-            query_terms,
-            &[self.schema.hierarchy, self.schema.path],
-        );
-        matched_terms.extend(extra_terms);
-
-        let highlight_query = self.build_highlight_query(&matched_terms);
-
-        let snippet_generator = self.build_snippet_generator(&searcher, &highlight_query)?;
+        // Setup highlighting
+        let (highlight_query, snippet_generator) = if options.with_snippets || options.with_details
+        {
+            let hq = self.build_highlight_query(&matched_terms);
+            let sg = self.build_snippet_generator(&searcher, &hq)?;
+            (hq, sg)
+        } else {
+            (None, None)
+        };
 
         let mut results = Vec::with_capacity(top_docs.len());
+
+        // Prepare analyzer for details if needed (must be mutable, so we clone it)
+        let mut details_analyzer = if options.with_details {
+            Some(self.analyzer.clone())
+        } else {
+            None
+        };
 
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher
@@ -142,74 +155,36 @@ impl Searcher {
 
             let mut result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
 
-            let is_global = self
-                .tree_is_global
-                .get(&result.tree)
-                .copied()
-                .unwrap_or(false);
-            let local_boost = if is_global { 1.0 } else { self.local_boost };
+            if options.with_details {
+                if let (Some(mappings), Some(original_query), Some(analyzer)) = (
+                    &term_mappings,
+                    options.original_query,
+                    details_analyzer.as_mut(),
+                ) {
+                    let is_global = self
+                        .tree_is_global
+                        .get(&result.tree)
+                        .copied()
+                        .unwrap_or(false);
+                    let local_boost = if is_global { 1.0 } else { self.local_boost };
 
-            let details = self.collect_match_details(
-                &doc,
-                query,
-                original_query,
-                query_terms,
-                &term_mappings,
-                score,
-                local_boost,
-                &searcher,
-                doc_address,
-                include_explanation,
-            );
-            result.match_details = Some(details);
+                    let details = self.collect_match_details(
+                        &doc,
+                        query,
+                        original_query,
+                        query_terms,
+                        mappings,
+                        score,
+                        local_boost,
+                        &searcher,
+                        doc_address,
+                        options.include_explanation,
+                        analyzer,
+                    );
+                    result.match_details = Some(details);
+                }
+            }
 
-            results.push(result);
-        }
-
-        Ok(results)
-    }
-
-    /// Shared execution path for searches with optional snippet generation.
-    fn execute_query_core(
-        &self,
-        query: &dyn Query,
-        query_terms: &[String],
-        limit: usize,
-        with_snippets: bool,
-    ) -> Result<Vec<SearchCandidate>, IndexError> {
-        let reader = self
-            .index
-            .reader()
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-
-        let searcher = reader.searcher();
-
-        let matched_terms = self.find_matched_terms(
-            &searcher,
-            query_terms,
-            &[self.schema.body, self.schema.hierarchy, self.schema.path],
-        );
-
-        let highlight_query = if with_snippets {
-            self.build_highlight_query(&matched_terms)
-        } else {
-            None
-        };
-
-        let snippet_generator = self.build_snippet_generator(&searcher, &highlight_query)?;
-
-        let top_docs = searcher
-            .search(query, &TopDocs::with_limit(limit))
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-
-        let mut results = Vec::with_capacity(top_docs.len());
-
-        for (score, doc_address) in top_docs {
-            let doc: TantivyDocument = searcher
-                .doc(doc_address)
-                .map_err(|e| IndexError::Write(e.to_string()))?;
-
-            let result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
             results.push(result);
         }
 
@@ -235,7 +210,7 @@ impl Searcher {
     /// Collects detailed match information for a search result.
     #[allow(clippy::too_many_arguments)]
     fn collect_match_details(
-        &mut self,
+        &self,
         doc: &TantivyDocument,
         query: &dyn Query,
         original_query: &str,
@@ -246,6 +221,7 @@ impl Searcher {
         searcher: &tantivy::Searcher,
         doc_address: tantivy::DocAddress,
         include_explanation: bool,
+        analyzer: &mut TextAnalyzer,
     ) -> MatchDetails {
         let all_matched_terms: HashSet<String> =
             term_mappings.values().flatten().cloned().collect();
@@ -271,6 +247,7 @@ impl Searcher {
             &body,
             &tags_text,
             &path,
+            analyzer,
         );
 
         let score_explanation = if include_explanation {
@@ -328,12 +305,13 @@ impl Searcher {
     ///
     /// Returns field match details and per-field scores based on term frequencies and boosts.
     fn analyze_field_matches(
-        &mut self,
+        &self,
         matched_terms: &HashSet<String>,
         hierarchy_text: &str,
         body: &str,
         tags_text: &str,
         path: &str,
+        analyzer: &mut TextAnalyzer,
     ) -> (HashMap<String, FieldMatch>, HashMap<String, f32>) {
         let mut field_matches = HashMap::new();
         let mut field_scores = HashMap::new();
@@ -344,7 +322,7 @@ impl Searcher {
             ("tags", tags_text, self.boosts.tags),
             ("path", path, self.boosts.path),
         ] {
-            let freqs = self.count_term_frequency_in_text(text, matched_terms);
+            let freqs = self.count_term_frequency_in_text(text, matched_terms, analyzer);
             if !freqs.is_empty() {
                 let score: f32 = freqs.values().map(|&c| c as f32).sum::<f32>() * field_boost;
                 field_scores.insert(field_name.to_string(), score);
@@ -362,12 +340,13 @@ impl Searcher {
 
     /// Counts how often matched terms occur in the provided text.
     fn count_term_frequency_in_text(
-        &mut self,
+        &self,
         text: &str,
         terms: &HashSet<String>,
+        analyzer: &mut TextAnalyzer,
     ) -> HashMap<String, u32> {
         let mut freqs: HashMap<String, u32> = HashMap::new();
-        let mut stream = self.analyzer.token_stream(text);
+        let mut stream = analyzer.token_stream(text);
         while let Some(token) = stream.next() {
             if terms.contains(&token.text) {
                 *freqs.entry(token.text.clone()).or_insert(0) += 1;
