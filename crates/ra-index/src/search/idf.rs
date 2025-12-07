@@ -141,6 +141,8 @@ impl Searcher {
     }
 
     /// Retrieves all chunks from a document by path.
+    ///
+    /// Uses a term query on doc_id for efficient lookup instead of scanning all documents.
     pub fn get_by_path(&self, tree: &str, path: &str) -> Result<Vec<SearchCandidate>, IndexError> {
         let reader = self
             .index
@@ -149,22 +151,19 @@ impl Searcher {
 
         let searcher = reader.searcher();
 
-        let id_prefix = format!("{tree}:{path}");
+        let doc_id = format!("{tree}:{path}");
+        let term = Term::from_field_text(self.schema.doc_id, &doc_id);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
 
-        let all_docs = searcher
-            .search(&AllQuery, &TopDocs::with_limit(MAX_BULK_LOOKUP))
+        let matching_docs = searcher
+            .search(&query, &TopDocs::with_limit(MAX_BULK_LOOKUP))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        let mut results: Vec<SearchCandidate> = all_docs
+        let mut results: Vec<SearchCandidate> = matching_docs
             .into_iter()
             .filter_map(|(_, doc_address)| {
                 let doc: tantivy::TantivyDocument = searcher.doc(doc_address).ok()?;
-                let candidate = self.read_candidate_from_doc(&doc);
-                if candidate.id == id_prefix || candidate.id.starts_with(&format!("{id_prefix}#")) {
-                    Some(candidate)
-                } else {
-                    None
-                }
+                Some(self.read_candidate_from_doc(&doc))
             })
             .collect();
 

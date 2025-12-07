@@ -265,27 +265,13 @@ impl Searcher {
             .join(" ");
         let path = self.get_text_field(doc, self.schema.path);
 
-        let mut field_matches: HashMap<String, FieldMatch> = HashMap::new();
-        let mut field_scores: HashMap<String, f32> = HashMap::new();
-
-        for (field_name, text, field_boost) in [
-            ("hierarchy", hierarchy_text.as_str(), self.boosts.hierarchy),
-            ("body", body.as_str(), self.boosts.body),
-            ("tags", tags_text.as_str(), self.boosts.tags),
-            ("path", path.as_str(), self.boosts.path),
-        ] {
-            let freqs = self.count_term_frequency_in_text(text, &all_matched_terms);
-            if !freqs.is_empty() {
-                let score: f32 = freqs.values().map(|&c| c as f32).sum::<f32>() * field_boost;
-                field_scores.insert(field_name.to_string(), score);
-                field_matches.insert(
-                    field_name.to_string(),
-                    FieldMatch {
-                        term_frequencies: freqs,
-                    },
-                );
-            }
-        }
+        let (field_matches, field_scores) = self.analyze_field_matches(
+            &all_matched_terms,
+            &hierarchy_text,
+            &body,
+            &tags_text,
+            &path,
+        );
 
         let score_explanation = if include_explanation {
             query
@@ -336,6 +322,42 @@ impl Searcher {
             .collect();
 
         Some(Box::new(BooleanQuery::new(clauses)))
+    }
+
+    /// Analyzes term matches across all searchable fields.
+    ///
+    /// Returns field match details and per-field scores based on term frequencies and boosts.
+    fn analyze_field_matches(
+        &mut self,
+        matched_terms: &HashSet<String>,
+        hierarchy_text: &str,
+        body: &str,
+        tags_text: &str,
+        path: &str,
+    ) -> (HashMap<String, FieldMatch>, HashMap<String, f32>) {
+        let mut field_matches = HashMap::new();
+        let mut field_scores = HashMap::new();
+
+        for (field_name, text, field_boost) in [
+            ("hierarchy", hierarchy_text, self.boosts.hierarchy),
+            ("body", body, self.boosts.body),
+            ("tags", tags_text, self.boosts.tags),
+            ("path", path, self.boosts.path),
+        ] {
+            let freqs = self.count_term_frequency_in_text(text, matched_terms);
+            if !freqs.is_empty() {
+                let score: f32 = freqs.values().map(|&c| c as f32).sum::<f32>() * field_boost;
+                field_scores.insert(field_name.to_string(), score);
+                field_matches.insert(
+                    field_name.to_string(),
+                    FieldMatch {
+                        term_frequencies: freqs,
+                    },
+                );
+            }
+        }
+
+        (field_matches, field_scores)
     }
 
     /// Counts how often matched terms occur in the provided text.

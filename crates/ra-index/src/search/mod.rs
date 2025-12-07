@@ -9,19 +9,18 @@
 //! The search process follows these phases:
 //!
 //! 1. **Query Execution**: Run the query against the index, applying tree filters
-//!    and field boosting to get raw BM25 scores.
+//!    and field boosting to get raw BM25 scores. See [`execute`] module.
 //!
 //! 2. **Score Normalization** (multi-tree only): When searching across multiple trees,
 //!    normalize scores so each tree's best result gets 1.0. This makes cross-tree
-//!    comparison fair regardless of content density differences. See [`normalize`]
-//!    for details.
+//!    comparison fair regardless of content density differences. See [`pipeline`] module.
 //!
 //! 3. **Elbow Cutoff**: Find the "elbow" point where relevance drops significantly
 //!    and truncate results there. With normalized scores, this works correctly
 //!    across trees. See [`crate::elbow`] for the algorithm.
 //!
 //! 4. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
-//!    enough siblings match. See [`crate::aggregate`] for details.
+//!    enough siblings match. See [`adaptive`] module.
 
 mod adaptive;
 mod aggregate_api;
