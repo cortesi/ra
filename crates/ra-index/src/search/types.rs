@@ -113,7 +113,7 @@ impl SearchCandidate {
     /// - AND either:
     ///   - This candidate is the document node (id == doc_id)
     ///   - OR this candidate's slug is a prefix of the other's slug followed by `-`
-    pub fn is_ancestor_of(&self, other: &SearchCandidate) -> bool {
+    pub fn is_ancestor_of(&self, other: &Self) -> bool {
         // Same ID is not an ancestor relationship
         if self.id == other.id {
             return false;

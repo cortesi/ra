@@ -25,7 +25,7 @@ const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
 
 /// Options for executing a query.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ExecutionOptions<'a> {
+pub struct ExecutionOptions<'a> {
     /// Whether to generate snippets and match ranges (expensive).
     pub with_snippets: bool,
     /// Whether to collect full match details (very expensive).
@@ -96,7 +96,7 @@ impl Searcher {
         query: &dyn Query,
         query_terms: &[String],
         limit: usize,
-        options: ExecutionOptions<'_>,
+        options: &ExecutionOptions<'_>,
     ) -> Result<Vec<SearchCandidate>, IndexError> {
         let reader = self
             .index
@@ -130,7 +130,7 @@ impl Searcher {
         };
 
         // Setup highlighting
-        let (highlight_query, snippet_generator) = if options.with_snippets || options.with_details
+        let (_highlight_query, snippet_generator) = if options.with_snippets || options.with_details
         {
             let hq = self.build_highlight_query(&matched_terms);
             let sg = self.build_snippet_generator(&searcher, &hq)?;
@@ -155,34 +155,32 @@ impl Searcher {
 
             let mut result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
 
-            if options.with_details {
-                if let (Some(mappings), Some(original_query), Some(analyzer)) = (
-                    &term_mappings,
-                    options.original_query,
-                    details_analyzer.as_mut(),
-                ) {
-                    let is_global = self
-                        .tree_is_global
-                        .get(&result.tree)
-                        .copied()
-                        .unwrap_or(false);
-                    let local_boost = if is_global { 1.0 } else { self.local_boost };
+            if let (Some(mappings), Some(original_query), Some(analyzer)) = (
+                &term_mappings,
+                options.original_query,
+                details_analyzer.as_mut(),
+            ) {
+                let is_global = self
+                    .tree_is_global
+                    .get(&result.tree)
+                    .copied()
+                    .unwrap_or(false);
+                let local_boost = if is_global { 1.0 } else { self.local_boost };
 
-                    let details = self.collect_match_details(
-                        &doc,
-                        query,
-                        original_query,
-                        query_terms,
-                        mappings,
-                        score,
-                        local_boost,
-                        &searcher,
-                        doc_address,
-                        options.include_explanation,
-                        analyzer,
-                    );
-                    result.match_details = Some(details);
-                }
+                let details = self.collect_match_details(
+                    &doc,
+                    query,
+                    original_query,
+                    query_terms,
+                    mappings,
+                    score,
+                    local_boost,
+                    &searcher,
+                    doc_address,
+                    options.include_explanation,
+                    analyzer,
+                );
+                result.match_details = Some(details);
             }
 
             results.push(result);
