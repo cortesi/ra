@@ -145,7 +145,7 @@ impl ChunkTree {
     /// Extracts all chunks from the tree with their metadata.
     ///
     /// This produces `TreeChunk` structs ready for indexing, including
-    /// body text extraction and breadcrumb generation.
+    /// body text extraction and hierarchy generation.
     ///
     /// All nodes are extracted, including those with empty bodies. This ensures
     /// that document and section titles are searchable even when they have no
@@ -153,16 +153,14 @@ impl ChunkTree {
     pub fn extract_chunks(&self, doc_title: &str) -> Vec<TreeChunk> {
         self.iter_preorder()
             .map(|node| {
-                let breadcrumb = self.build_breadcrumb(node, doc_title);
+                let hierarchy = self.build_hierarchy(node, doc_title);
                 let body = self.body(node);
                 TreeChunk {
                     id: node.id.clone(),
                     doc_id: node.doc_id.clone(),
                     parent_id: node.parent_id.clone(),
-                    title: node.title.clone(),
                     body: body.to_string(),
-                    breadcrumb,
-                    depth: node.depth,
+                    hierarchy,
                     position: node.position,
                     byte_start: node.byte_start,
                     byte_end: node.byte_end,
@@ -172,14 +170,12 @@ impl ChunkTree {
             .collect()
     }
 
-    /// Builds a breadcrumb string for a node.
+    /// Builds the hierarchy path for a node.
     ///
-    /// Format: `> Doc Title › Parent › Current`
-    ///
+    /// Returns a vector of titles from document root to this node.
     /// The document title always comes first. If the first h1 heading matches
-    /// the document title, it's omitted to avoid duplication. The node's own
-    /// title appears last (omitted for document-level chunks).
-    fn build_breadcrumb(&self, node: &Node, doc_title: &str) -> String {
+    /// the document title, it's omitted to avoid duplication.
+    fn build_hierarchy(&self, node: &Node, doc_title: &str) -> Vec<String> {
         let mut parts = vec![doc_title.to_string()];
 
         // Collect ancestor titles
@@ -200,7 +196,7 @@ impl ChunkTree {
             }
         }
 
-        format!("> {}", parts.join(" › "))
+        parts
     }
 
     /// Collects ancestor nodes from root to parent (not including self).
@@ -246,14 +242,13 @@ pub struct TreeChunk {
     pub doc_id: String,
     /// Parent node's ID, or None for the document node.
     pub parent_id: Option<String>,
-    /// The chunk title (document title or heading text).
-    pub title: String,
     /// The chunk body text (content within span, excluding child spans).
     pub body: String,
-    /// Breadcrumb showing hierarchy path.
-    pub breadcrumb: String,
-    /// Hierarchy depth (0 for document, 1-6 for headings).
-    pub depth: u8,
+    /// Hierarchy path from document root to this chunk.
+    /// Each element is a title in the path. The last element is this chunk's title.
+    /// For document nodes, contains just the document title.
+    /// For headings, contains [doc_title, ancestor_titles..., this_title].
+    pub hierarchy: Vec<String>,
     /// Document order index (0-based, pre-order traversal).
     pub position: usize,
     /// Byte offset where this chunk's span starts.
@@ -262,6 +257,19 @@ pub struct TreeChunk {
     pub byte_end: usize,
     /// Number of siblings including this chunk.
     pub sibling_count: usize,
+}
+
+impl TreeChunk {
+    /// Returns the chunk's title (the last element of the hierarchy).
+    pub fn title(&self) -> &str {
+        self.hierarchy.last().map(|s| s.as_str()).unwrap_or("")
+    }
+
+    /// Returns the hierarchy depth.
+    /// Document nodes have depth 0, h1 headings have depth 1, etc.
+    pub fn depth(&self) -> usize {
+        self.hierarchy.len().saturating_sub(1)
+    }
 }
 
 /// Builder for constructing chunk trees from parsed heading data.
@@ -485,7 +493,7 @@ mod tests {
     }
 
     #[test]
-    fn test_breadcrumb_simple() {
+    fn test_hierarchy_simple() {
         let path = PathBuf::from("test.md");
         // Content structure: "preamble\n# Section\nheading content"
         let content = "preamble\n# Section\nheading content";
@@ -500,19 +508,19 @@ mod tests {
 
         let tree = ChunkTree::new(root, content.to_string());
 
-        // Document breadcrumb
-        assert_eq!(tree.build_breadcrumb(tree.root(), "My Doc"), "> My Doc");
+        // Document hierarchy
+        assert_eq!(tree.build_hierarchy(tree.root(), "My Doc"), vec!["My Doc"]);
 
-        // Heading breadcrumb
+        // Heading hierarchy
         let h1_node = tree.get_node("test:test.md#section").unwrap();
         assert_eq!(
-            tree.build_breadcrumb(h1_node, "My Doc"),
-            "> My Doc › Section"
+            tree.build_hierarchy(h1_node, "My Doc"),
+            vec!["My Doc", "Section"]
         );
     }
 
     #[test]
-    fn test_breadcrumb_nested() {
+    fn test_hierarchy_nested() {
         let path = PathBuf::from("test.md");
         let content = "x".repeat(300);
         let mut root = Node::document("test", &path, "Doc".to_string(), 300);
@@ -535,13 +543,13 @@ mod tests {
 
         let h2_node = tree.get_node("test:test.md#child").unwrap();
         assert_eq!(
-            tree.build_breadcrumb(h2_node, "Doc"),
-            "> Doc › Parent › Child"
+            tree.build_hierarchy(h2_node, "Doc"),
+            vec!["Doc", "Parent", "Child"]
         );
     }
 
     #[test]
-    fn test_breadcrumb_dedup_h1() {
+    fn test_hierarchy_dedup_h1() {
         // When h1 title matches doc title, it should be omitted
         let path = PathBuf::from("test.md");
         let content = "x".repeat(200);
@@ -565,13 +573,13 @@ mod tests {
 
         // H1 with same title as doc should just show doc title
         let h1_node = tree.get_node("test:test.md#my-title").unwrap();
-        assert_eq!(tree.build_breadcrumb(h1_node, "My Title"), "> My Title");
+        assert_eq!(tree.build_hierarchy(h1_node, "My Title"), vec!["My Title"]);
 
         // H2 under duplicate H1 should skip the H1
         let h2_node = tree.get_node("test:test.md#details").unwrap();
         assert_eq!(
-            tree.build_breadcrumb(h2_node, "My Title"),
-            "> My Title › Details"
+            tree.build_hierarchy(h2_node, "My Title"),
+            vec!["My Title", "Details"]
         );
     }
 
@@ -599,16 +607,18 @@ mod tests {
 
         // Document chunk (preamble)
         assert_eq!(chunks[0].id, "test:test.md");
-        assert_eq!(chunks[0].title, "Doc");
+        assert_eq!(chunks[0].hierarchy, vec!["Doc"]);
+        assert_eq!(chunks[0].title(), "Doc");
         assert_eq!(chunks[0].body, "preamble content\n");
-        assert_eq!(chunks[0].depth, 0);
+        assert_eq!(chunks[0].depth(), 0);
         assert_eq!(chunks[0].position, 0);
 
         // Heading chunk
         assert_eq!(chunks[1].id, "test:test.md#section");
-        assert_eq!(chunks[1].title, "Section");
+        assert_eq!(chunks[1].hierarchy, vec!["Doc", "Section"]);
+        assert_eq!(chunks[1].title(), "Section");
         assert_eq!(chunks[1].body, "heading content here");
-        assert_eq!(chunks[1].depth, 1);
+        assert_eq!(chunks[1].depth(), 1);
         assert_eq!(chunks[1].position, 1);
     }
 

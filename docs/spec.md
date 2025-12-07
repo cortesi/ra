@@ -113,7 +113,7 @@ the global config exists, the index is stored in `~/.ra/index/`.
 
 ra uses Tantivy for full-text search with:
 
-- Field boosting (title > tags > path > body)
+- Field boosting (hierarchy > path > tags > body)
 - Configurable stemming (18 languages supported)
 - Fuzzy matching with configurable Levenshtein distance
 - Incremental updates based on file modification times
@@ -124,13 +124,17 @@ ra uses Tantivy for full-text search with:
 | Field | Searchable | Stored | Boost |
 |-------|------------|--------|-------|
 | id | Exact match | Yes | — |
-| title | Full-text | Yes | 10.0× |
+| hierarchy | Full-text (multi-value) | Yes | 10.0× |
 | tags | Full-text | Yes | 5.0× |
 | path | Full-text | Yes | 8.0× |
 | tree | Exact match | Yes | — |
 | body | Full-text | Yes | 1.0× |
-| breadcrumb | No | Yes | — |
 | mtime | Filter/sort | No | — |
+
+The `hierarchy` field is a multi-value text field containing the path from document root to the
+chunk. For a section "Installation" under "Getting Started", this stores `["Getting Started",
+"Installation"]` as separate indexed values. Searches match both the chunk's title and its
+ancestors. BM25 naturally ranks shallower matches higher due to field-length normalization.
 
 
 ## Search

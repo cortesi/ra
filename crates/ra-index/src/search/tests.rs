@@ -30,14 +30,15 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
             id: "local:docs/rust.md#intro".to_string(),
             doc_id: "local:docs/rust.md".to_string(),
             parent_id: Some("local:docs/rust.md".to_string()),
-            title: "Introduction to Rust".to_string(),
+            hierarchy: vec![
+                "Getting Started".to_string(),
+                "Introduction to Rust".to_string(),
+            ],
             tags: vec!["rust".to_string(), "programming".to_string()],
             path: "docs/rust.md".to_string(),
             tree: "local".to_string(),
             body: "Rust is a systems programming language focused on safety and performance."
                 .to_string(),
-            breadcrumb: "Getting Started › Introduction to Rust".to_string(),
-            depth: 1,
             position: 1,
             byte_start: 50,
             byte_end: 200,
@@ -48,14 +49,15 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
             id: "local:docs/async.md#basics".to_string(),
             doc_id: "local:docs/async.md".to_string(),
             parent_id: Some("local:docs/async.md".to_string()),
-            title: "Async Programming".to_string(),
+            hierarchy: vec![
+                "Advanced Topics".to_string(),
+                "Async Programming".to_string(),
+            ],
             tags: vec!["rust".to_string(), "async".to_string()],
             path: "docs/async.md".to_string(),
             tree: "local".to_string(),
             body: "Asynchronous programming in Rust uses futures and the async/await syntax."
                 .to_string(),
-            breadcrumb: "Advanced Topics › Async Programming".to_string(),
-            depth: 1,
             position: 1,
             byte_start: 30,
             byte_end: 150,
@@ -66,13 +68,11 @@ fn create_test_index(temp: &TempDir) -> Vec<ChunkDocument> {
             id: "global:reference/errors.md#handling".to_string(),
             doc_id: "global:reference/errors.md".to_string(),
             parent_id: Some("global:reference/errors.md".to_string()),
-            title: "Error Handling".to_string(),
+            hierarchy: vec!["Reference".to_string(), "Error Handling".to_string()],
             tags: vec!["rust".to_string(), "errors".to_string()],
             path: "reference/errors.md".to_string(),
             tree: "global".to_string(),
             body: "Rust error handling uses Result and Option types for safety.".to_string(),
-            breadcrumb: "Reference › Error Handling".to_string(),
-            depth: 1,
             position: 1,
             byte_start: 20,
             byte_end: 100,
@@ -211,7 +211,7 @@ fn search_multi_title_and_path_ranges_merge() {
         .unwrap();
 
     let intro = results.iter().find(|r| r.id.contains("rust.md")).unwrap();
-    assert!(intro.title_match_ranges.len() >= 2);
+    assert!(intro.hierarchy_match_ranges.len() >= 2);
     assert!(intro.path_match_ranges.len() >= 2);
 }
 
@@ -221,13 +221,11 @@ fn fuzzy_typos_match_and_highlight_actual_terms() {
         id: "local:docs/test.md".to_string(),
         doc_id: "local:docs/test.md".to_string(),
         parent_id: None,
-        title: "Test".to_string(),
+        hierarchy: vec!["Test".to_string()],
         tags: vec![],
         path: "docs/test.md".to_string(),
         tree: "local".to_string(),
         body: "The quick brown fox jumps over the lazy dog.".to_string(),
-        breadcrumb: "Test".to_string(),
-        depth: 0,
         position: 0,
         byte_start: 0,
         byte_end: 100,
@@ -256,13 +254,11 @@ fn fuzzy_stemming_ranges_cover_variants() {
         id: "local:docs/stems.md".to_string(),
         doc_id: "local:docs/stems.md".to_string(),
         parent_id: None,
-        title: "Stems".to_string(),
+        hierarchy: vec!["Stems".to_string()],
         tags: vec![],
         path: "docs/stems.md".to_string(),
         tree: "local".to_string(),
         body: "Handling handled handles".to_string(),
-        breadcrumb: "Stems".to_string(),
-        depth: 0,
         position: 0,
         byte_start: 0,
         byte_end: 64,
@@ -291,13 +287,11 @@ fn hierarchical_fields_roundtrip() {
             id: "local:docs/guide.md".to_string(),
             doc_id: "local:docs/guide.md".to_string(),
             parent_id: None,
-            title: "Guide".to_string(),
+            hierarchy: vec!["Guide".to_string()],
             tags: vec![],
             path: "docs/guide.md".to_string(),
             tree: "local".to_string(),
             body: "This is the preamble content.".to_string(),
-            breadcrumb: "> Guide".to_string(),
-            depth: 0,
             position: 0,
             byte_start: 0,
             byte_end: 30,
@@ -308,13 +302,11 @@ fn hierarchical_fields_roundtrip() {
             id: "local:docs/guide.md#section-one".to_string(),
             doc_id: "local:docs/guide.md".to_string(),
             parent_id: Some("local:docs/guide.md".to_string()),
-            title: "Section One".to_string(),
+            hierarchy: vec!["Guide".to_string(), "Section One".to_string()],
             tags: vec![],
             path: "docs/guide.md".to_string(),
             tree: "local".to_string(),
             body: "Section one unique content here.".to_string(),
-            breadcrumb: "> Guide › Section One".to_string(),
-            depth: 1,
             position: 1,
             byte_start: 30,
             byte_end: 100,
@@ -328,7 +320,7 @@ fn hierarchical_fields_roundtrip() {
     let doc_result = searcher.search("preamble", 10).unwrap()[0].clone();
     assert_eq!(doc_result.id, "local:docs/guide.md");
     assert!(doc_result.parent_id.is_none());
-    assert_eq!(doc_result.depth, 0);
+    assert_eq!(doc_result.depth(), 0);
     assert_eq!(doc_result.position, 0);
     assert_eq!(doc_result.byte_start, 0);
     assert_eq!(doc_result.byte_end, 30);
@@ -336,7 +328,7 @@ fn hierarchical_fields_roundtrip() {
 
     let heading = searcher.search("section unique", 10).unwrap()[0].clone();
     assert_eq!(heading.parent_id, Some("local:docs/guide.md".to_string()));
-    assert_eq!(heading.depth, 1);
+    assert_eq!(heading.depth(), 1);
     assert_eq!(heading.position, 1);
     assert_eq!(heading.byte_start, 30);
     assert_eq!(heading.byte_end, 100);
@@ -419,7 +411,7 @@ mod mlt_tests {
                 id: "local:docs/rust-intro.md".to_string(),
                 doc_id: "local:docs/rust-intro.md".to_string(),
                 parent_id: None,
-                title: "Introduction to Rust Programming".to_string(),
+                hierarchy: vec!["Introduction to Rust Programming".to_string()],
                 tags: vec!["rust".to_string(), "programming".to_string()],
                 path: "docs/rust-intro.md".to_string(),
                 tree: "local".to_string(),
@@ -427,8 +419,6 @@ mod mlt_tests {
                        concurrency. It prevents memory errors without garbage collection. \
                        Rust's ownership system ensures memory safety at compile time."
                     .to_string(),
-                breadcrumb: "Introduction to Rust Programming".to_string(),
-                depth: 0,
                 position: 0,
                 byte_start: 0,
                 byte_end: 200,
@@ -439,7 +429,7 @@ mod mlt_tests {
                 id: "local:docs/rust-ownership.md".to_string(),
                 doc_id: "local:docs/rust-ownership.md".to_string(),
                 parent_id: None,
-                title: "Understanding Rust Ownership".to_string(),
+                hierarchy: vec!["Understanding Rust Ownership".to_string()],
                 tags: vec!["rust".to_string(), "ownership".to_string()],
                 path: "docs/rust-ownership.md".to_string(),
                 tree: "local".to_string(),
@@ -447,8 +437,6 @@ mod mlt_tests {
                        has a variable that's its owner. Memory safety is guaranteed through \
                        the borrow checker. Rust prevents data races at compile time."
                     .to_string(),
-                breadcrumb: "Understanding Rust Ownership".to_string(),
-                depth: 0,
                 position: 0,
                 byte_start: 0,
                 byte_end: 200,
@@ -459,7 +447,7 @@ mod mlt_tests {
                 id: "local:docs/python-intro.md".to_string(),
                 doc_id: "local:docs/python-intro.md".to_string(),
                 parent_id: None,
-                title: "Introduction to Python".to_string(),
+                hierarchy: vec!["Introduction to Python".to_string()],
                 tags: vec!["python".to_string(), "scripting".to_string()],
                 path: "docs/python-intro.md".to_string(),
                 tree: "local".to_string(),
@@ -467,8 +455,6 @@ mod mlt_tests {
                        It uses dynamic typing and automatic garbage collection. Python is \
                        great for scripting, web development, and data science."
                     .to_string(),
-                breadcrumb: "Introduction to Python".to_string(),
-                depth: 0,
                 position: 0,
                 byte_start: 0,
                 byte_end: 200,
@@ -479,7 +465,7 @@ mod mlt_tests {
                 id: "global:docs/rust-web.md".to_string(),
                 doc_id: "global:docs/rust-web.md".to_string(),
                 parent_id: None,
-                title: "Rust Web Development".to_string(),
+                hierarchy: vec!["Rust Web Development".to_string()],
                 tags: vec!["rust".to_string(), "web".to_string()],
                 path: "docs/rust-web.md".to_string(),
                 tree: "global".to_string(),
@@ -487,8 +473,6 @@ mod mlt_tests {
                        Frameworks like Actix and Axum make web development in Rust productive. \
                        Rust's type system catches errors at compile time."
                     .to_string(),
-                breadcrumb: "Rust Web Development".to_string(),
-                depth: 0,
                 position: 0,
                 byte_start: 0,
                 byte_end: 200,
@@ -535,7 +519,7 @@ mod mlt_tests {
         // The Rust documents should rank higher than Python
         let rust_ids: HashSet<_> = results
             .iter()
-            .filter(|r| r.candidate().title.contains("Rust"))
+            .filter(|r| r.candidate().title().contains("Rust"))
             .map(|r| r.candidate().id.as_str())
             .collect();
         assert!(!rust_ids.is_empty(), "Should find other Rust documents");
@@ -590,7 +574,11 @@ mod mlt_tests {
             .unwrap();
 
         // Should find Rust-related documents
-        assert!(results.iter().any(|r| r.candidate().title.contains("Rust")));
+        assert!(
+            results
+                .iter()
+                .any(|r| r.candidate().title().contains("Rust"))
+        );
     }
 
     #[test]

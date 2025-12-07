@@ -71,11 +71,11 @@ where
     let mut aggregated_ids: HashMap<String, bool> = HashMap::new();
 
     // Track results at each stage - maps id -> (candidate or aggregated result, depth)
-    let mut current_results: HashMap<String, (ResultOrCandidate, u64)> = HashMap::new();
+    let mut current_results: HashMap<String, (ResultOrCandidate, usize)> = HashMap::new();
 
     // Initialize with all candidates
     for candidate in candidates {
-        let depth = candidate.depth;
+        let depth = candidate.depth();
         let id = candidate.id.clone();
         current_results.insert(id.clone(), (ResultOrCandidate::Candidate(candidate), depth));
         aggregated_ids.insert(id, false);
@@ -122,7 +122,7 @@ where
             if ratio >= threshold {
                 // Look up parent as a SearchCandidate
                 if let Some(parent_from_lookup) = parent_lookup(&parent_id) {
-                    let parent_depth = parent_from_lookup.depth;
+                    let parent_depth = parent_from_lookup.depth();
 
                     // Collect constituents
                     let mut constituents: Vec<SearchCandidate> = Vec::new();
@@ -273,19 +273,29 @@ mod test {
         id: &str,
         parent_id: Option<&str>,
         score: f32,
-        depth: u64,
+        depth: usize,
         sibling_count: u64,
     ) -> SearchCandidate {
+        // Build hierarchy based on depth
+        let mut hierarchy = vec!["Doc".to_string()];
+        for i in 0..depth {
+            hierarchy.push(format!("Section {}", i + 1));
+        }
+        if !id.is_empty() {
+            // Replace last element with actual title
+            if let Some(last) = hierarchy.last_mut() {
+                *last = format!("Title {id}");
+            }
+        }
+
         SearchCandidate {
             id: id.to_string(),
             doc_id: "local:test.md".to_string(),
             parent_id: parent_id.map(String::from),
-            title: format!("Title {id}"),
+            hierarchy,
             tree: "local".to_string(),
             path: "test.md".to_string(),
             body: format!("Body of {id}"),
-            breadcrumb: format!("> {id}"),
-            depth,
             position: 0,
             byte_start: 0,
             byte_end: 100,
@@ -293,7 +303,7 @@ mod test {
             score,
             snippet: None,
             match_ranges: vec![],
-            title_match_ranges: vec![],
+            hierarchy_match_ranges: vec![],
             path_match_ranges: vec![],
             match_details: None,
         }

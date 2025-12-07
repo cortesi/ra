@@ -97,6 +97,18 @@ mod test {
     use super::*;
 
     fn make_candidate(id: &str, score: f32, depth: u64) -> SearchCandidate {
+        // Build hierarchy based on depth
+        let mut hierarchy = vec!["Doc".to_string()];
+        for i in 0..depth {
+            hierarchy.push(format!("Section {}", i + 1));
+        }
+        if !id.is_empty()
+            && depth > 0
+            && let Some(last) = hierarchy.last_mut()
+        {
+            *last = format!("Title {id}");
+        }
+
         SearchCandidate {
             id: id.to_string(),
             doc_id: "local:test.md".to_string(),
@@ -105,12 +117,10 @@ mod test {
             } else {
                 None
             },
-            title: format!("Title {id}"),
+            hierarchy,
             tree: "local".to_string(),
             path: "test.md".to_string(),
             body: "Body content".to_string(),
-            breadcrumb: "> Test".to_string(),
-            depth,
             position: 0,
             byte_start: 0,
             byte_end: 100,
@@ -118,7 +128,7 @@ mod test {
             score,
             snippet: None,
             match_ranges: vec![],
-            title_match_ranges: vec![],
+            hierarchy_match_ranges: vec![],
             path_match_ranges: vec![],
             match_details: None,
         }
@@ -134,10 +144,10 @@ mod test {
         assert_eq!(c.score, 5.0);
         assert_eq!(c.doc_id, "local:test.md");
         assert_eq!(c.parent_id.as_deref(), Some("local:test.md"));
-        assert_eq!(c.title, "Title local:test.md#intro");
+        assert_eq!(c.title(), "Title local:test.md#intro");
         assert_eq!(c.tree, "local");
         assert_eq!(c.path, "test.md");
-        assert_eq!(c.depth, 1);
+        assert_eq!(c.depth(), 1);
         assert!(!result.is_aggregated());
         assert!(result.constituents().is_none());
     }
@@ -156,7 +166,7 @@ mod test {
         assert_eq!(c.score, 8.0);
         assert_eq!(c.doc_id, "local:test.md");
         assert!(c.parent_id.is_none()); // Document node has no parent
-        assert_eq!(c.depth, 0);
+        assert_eq!(c.depth(), 0);
         assert!(result.is_aggregated());
 
         let constituents = result.constituents().unwrap();
@@ -202,7 +212,7 @@ mod test {
     fn candidate_with_match_ranges() {
         let mut candidate = make_candidate("local:test.md#intro", 5.0, 1);
         candidate.match_ranges = vec![0..5, 10..15];
-        candidate.title_match_ranges = vec![0..5];
+        candidate.hierarchy_match_ranges = vec![0..5];
         candidate.path_match_ranges = vec![0..5];
         candidate.snippet = Some("highlighted <b>text</b>".to_string());
 
@@ -210,7 +220,7 @@ mod test {
 
         if let SearchResult::Single(c) = result {
             assert_eq!(c.match_ranges.len(), 2);
-            assert_eq!(c.title_match_ranges.len(), 1);
+            assert_eq!(c.hierarchy_match_ranges.len(), 1);
             assert_eq!(c.path_match_ranges.len(), 1);
             assert_eq!(c.snippet, Some("highlighted <b>text</b>".to_string()));
         } else {

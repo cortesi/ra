@@ -75,9 +75,9 @@ impl Searcher {
                             mem::take(&mut existing.match_ranges),
                             result.match_ranges.clone(),
                         );
-                        existing.title_match_ranges = merge_ranges(
-                            mem::take(&mut existing.title_match_ranges),
-                            result.title_match_ranges.clone(),
+                        existing.hierarchy_match_ranges = merge_ranges(
+                            mem::take(&mut existing.hierarchy_match_ranges),
+                            result.hierarchy_match_ranges.clone(),
                         );
                         existing.path_match_ranges = merge_ranges(
                             mem::take(&mut existing.path_match_ranges),
@@ -173,7 +173,7 @@ impl Searcher {
         let extra_terms = self.find_matched_terms(
             &searcher,
             query_terms,
-            &[self.schema.title, self.schema.path],
+            &[self.schema.hierarchy, self.schema.path],
         );
         matched_terms.extend(extra_terms);
 
@@ -235,7 +235,7 @@ impl Searcher {
         let matched_terms = self.find_matched_terms(
             &searcher,
             query_terms,
-            &[self.schema.body, self.schema.title, self.schema.path],
+            &[self.schema.body, self.schema.hierarchy, self.schema.path],
         );
 
         let highlight_query = if with_snippets {
@@ -298,7 +298,13 @@ impl Searcher {
         let all_matched_terms: HashSet<String> =
             term_mappings.values().flatten().cloned().collect();
 
-        let title = self.get_text_field(doc, self.schema.title);
+        // Get hierarchy as multi-value field
+        let hierarchy: Vec<String> = doc
+            .get_all(self.schema.hierarchy)
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect();
+        let hierarchy_text = hierarchy.join(" ");
         let body = self.get_text_field(doc, self.schema.body);
         let tags_text: String = doc
             .get_all(self.schema.tags)
@@ -311,7 +317,7 @@ impl Searcher {
         let mut field_scores: HashMap<String, f32> = HashMap::new();
 
         for (field_name, text, field_boost) in [
-            ("title", title.as_str(), boost::TITLE),
+            ("hierarchy", hierarchy_text.as_str(), boost::HIERARCHY),
             ("body", body.as_str(), boost::BODY),
             ("tags", tags_text.as_str(), boost::TAGS),
             ("path", path.as_str(), boost::PATH),
@@ -412,12 +418,15 @@ impl Searcher {
         } else {
             Some(parent_id_str)
         };
-        let title = self.get_text_field(doc, self.schema.title);
+        // Read hierarchy as multi-value field
+        let hierarchy: Vec<String> = doc
+            .get_all(self.schema.hierarchy)
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect();
         let tree = self.get_text_field(doc, self.schema.tree);
         let path = self.get_text_field(doc, self.schema.path);
         let body = self.get_text_field(doc, self.schema.body);
-        let breadcrumb = self.get_text_field(doc, self.schema.breadcrumb);
-        let depth = self.get_u64_field(doc, self.schema.depth);
         let position = self.get_u64_field(doc, self.schema.position);
         let byte_start = self.get_u64_field(doc, self.schema.byte_start);
         let byte_end = self.get_u64_field(doc, self.schema.byte_end);
@@ -436,19 +445,19 @@ impl Searcher {
         });
 
         let match_ranges = extract_match_ranges(&self.analyzer, &body, matched_terms);
-        let title_match_ranges = extract_match_ranges(&self.analyzer, &title, matched_terms);
+        // Extract match ranges for title (last element of hierarchy)
+        let title = hierarchy.last().map(|s| s.as_str()).unwrap_or("");
+        let hierarchy_match_ranges = extract_match_ranges(&self.analyzer, title, matched_terms);
         let path_match_ranges = extract_match_ranges(&self.analyzer, &path, matched_terms);
 
         SearchCandidate {
             id,
             doc_id,
             parent_id,
-            title,
+            hierarchy,
             tree,
             path,
             body,
-            breadcrumb,
-            depth,
             position,
             byte_start,
             byte_end,
@@ -456,7 +465,7 @@ impl Searcher {
             score,
             snippet,
             match_ranges,
-            title_match_ranges,
+            hierarchy_match_ranges,
             path_match_ranges,
             match_details: None,
         }

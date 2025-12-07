@@ -2,7 +2,7 @@
 //!
 //! The [`ChunkDocument`] struct represents a chunk ready for indexing, combining
 //! chunk-level data with document-level metadata (tags, path, tree) and
-//! hierarchical information (depth, position, parent_id, etc.).
+//! hierarchical information (position, parent_id, etc.).
 
 use std::time::SystemTime;
 
@@ -12,9 +12,9 @@ use ra_document::{Document, TreeChunk};
 ///
 /// This struct contains all the information needed to index a single chunk
 /// in Tantivy, including:
-/// - Chunk-specific fields (id, title, body)
+/// - Chunk-specific fields (id, hierarchy, body)
 /// - Document-level metadata (tags, path, tree, mtime)
-/// - Hierarchical information (doc_id, parent_id, depth, position, byte spans, sibling_count)
+/// - Hierarchical information (doc_id, parent_id, position, byte spans, sibling_count)
 #[derive(Debug, Clone)]
 pub struct ChunkDocument {
     /// Unique chunk identifier: `{tree}:{path}#{slug}` or `{tree}:{path}`.
@@ -23,8 +23,9 @@ pub struct ChunkDocument {
     pub doc_id: String,
     /// Parent chunk identifier, or None for document nodes.
     pub parent_id: Option<String>,
-    /// Chunk title.
-    pub title: String,
+    /// Hierarchy path from document root to this chunk.
+    /// Each element is a title in the path. The last element is this chunk's title.
+    pub hierarchy: Vec<String>,
     /// Document tags from frontmatter.
     pub tags: Vec<String>,
     /// File path within the tree.
@@ -33,10 +34,6 @@ pub struct ChunkDocument {
     pub tree: String,
     /// Chunk body content.
     pub body: String,
-    /// Breadcrumb showing hierarchy path.
-    pub breadcrumb: String,
-    /// Hierarchy depth: 0 for document, 1-6 for h1-h6.
-    pub depth: u8,
     /// Document order index (0-based pre-order traversal).
     pub position: usize,
     /// Byte offset where content span starts.
@@ -50,10 +47,22 @@ pub struct ChunkDocument {
 }
 
 impl ChunkDocument {
+    /// Returns the chunk's title (the last element of the hierarchy).
+    #[cfg(test)]
+    pub fn title(&self) -> &str {
+        self.hierarchy.last().map(|s| s.as_str()).unwrap_or("")
+    }
+
+    /// Returns the hierarchy depth (0 for document, 1+ for nested content).
+    #[cfg(test)]
+    pub fn depth(&self) -> usize {
+        self.hierarchy.len().saturating_sub(1)
+    }
+
     /// Creates a `ChunkDocument` from a `TreeChunk` and document metadata.
     ///
     /// # Arguments
-    /// * `chunk` - The tree chunk containing body, title, breadcrumb, hierarchical info, etc.
+    /// * `chunk` - The tree chunk containing body, hierarchy, etc.
     /// * `document` - The parent document containing metadata (tags, path, tree)
     /// * `mtime` - File modification time
     pub fn from_tree_chunk(chunk: &TreeChunk, document: &Document, mtime: SystemTime) -> Self {
@@ -63,13 +72,11 @@ impl ChunkDocument {
             id: chunk.id.clone(),
             doc_id: chunk.doc_id.clone(),
             parent_id: chunk.parent_id.clone(),
-            title: chunk.title.clone(),
+            hierarchy: chunk.hierarchy.clone(),
             tags: document.tags.clone(),
             path: path_str,
             tree: document.tree.clone(),
             body: chunk.body.clone(),
-            breadcrumb: chunk.breadcrumb.clone(),
-            depth: chunk.depth,
             position: chunk.position,
             byte_start: chunk.byte_start,
             byte_end: chunk.byte_end,
@@ -132,12 +139,13 @@ How to handle errors in API handlers."#;
         assert_eq!(chunk_doc.id, "local:docs/api/handlers.md");
         assert_eq!(chunk_doc.doc_id, "local:docs/api/handlers.md");
         assert!(chunk_doc.parent_id.is_none()); // Document node has no parent
-        assert_eq!(chunk_doc.title, "API Handlers");
+        assert_eq!(chunk_doc.hierarchy, vec!["API Handlers"]);
+        assert_eq!(chunk_doc.title(), "API Handlers");
         assert_eq!(chunk_doc.tags, vec!["api", "rust"]);
         assert_eq!(chunk_doc.path, "docs/api/handlers.md");
         assert_eq!(chunk_doc.tree, "local");
         assert!(chunk_doc.body.contains("Introduction"));
-        assert_eq!(chunk_doc.depth, 0); // Document node is depth 0
+        assert_eq!(chunk_doc.depth(), 0); // Document node is depth 0
         assert_eq!(chunk_doc.position, 0); // First in pre-order traversal
         assert_eq!(chunk_doc.mtime, SystemTime::UNIX_EPOCH);
     }
@@ -151,7 +159,7 @@ How to handle errors in API handlers."#;
         assert_eq!(chunk_docs.len(), 2);
         // Document node (preamble)
         assert_eq!(chunk_docs[0].id, "local:docs/api/handlers.md");
-        assert_eq!(chunk_docs[0].depth, 0);
+        assert_eq!(chunk_docs[0].depth(), 0);
         assert!(chunk_docs[0].parent_id.is_none());
 
         // Heading node
@@ -159,7 +167,11 @@ How to handle errors in API handlers."#;
             chunk_docs[1].id,
             "local:docs/api/handlers.md#error-handling"
         );
-        assert_eq!(chunk_docs[1].depth, 1);
+        assert_eq!(chunk_docs[1].depth(), 1);
+        assert_eq!(
+            chunk_docs[1].hierarchy,
+            vec!["API Handlers", "Error Handling"]
+        );
         assert_eq!(
             chunk_docs[1].parent_id,
             Some("local:docs/api/handlers.md".to_string())

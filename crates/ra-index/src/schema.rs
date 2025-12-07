@@ -4,13 +4,11 @@
 //! - `id`: Unique chunk identifier (stored only)
 //! - `doc_id`: Document identifier (stored)
 //! - `parent_id`: Parent chunk identifier (stored, optional)
-//! - `title`: Chunk title (text, stored, boosted 10x)
+//! - `hierarchy`: Hierarchy path as multi-value text (text, stored, boosted 10x)
 //! - `tags`: Document tags (text, stored, boosted 5x)
 //! - `path`: File path within tree (text, stored, boosted 8x)
 //! - `tree`: Tree name (string, stored, fast)
 //! - `body`: Chunk content (text, stored)
-//! - `breadcrumb`: Hierarchy path for display (stored)
-//! - `depth`: Hierarchy depth (u64, stored, indexed)
 //! - `position`: Document order index (u64, stored, indexed)
 //! - `byte_start`: Content span start (u64, stored)
 //! - `byte_end`: Content span end (u64, stored)
@@ -26,11 +24,11 @@ use crate::analyzer::RA_TOKENIZER;
 
 /// Field boost weights for search ranking.
 ///
-/// Title and path matches are weighted heavily since they indicate the document
+/// Hierarchy and path matches are weighted heavily since they indicate the document
 /// is specifically about the search term, not just mentioning it in passing.
 pub mod boost {
-    /// Title field boost - very strong signal that document is about this term.
-    pub const TITLE: f32 = 10.0;
+    /// Hierarchy field boost - very strong signal that document is about this term.
+    pub const HIERARCHY: f32 = 10.0;
     /// Path field boost - filename matches are strong relevance signals.
     pub const PATH: f32 = 8.0;
     /// Tags field boost - intentional metadata.
@@ -50,8 +48,9 @@ pub struct IndexSchema {
     pub doc_id: Field,
     /// Parent chunk identifier, or empty for document nodes.
     pub parent_id: Field,
-    /// Chunk title.
-    pub title: Field,
+    /// Hierarchy path as multi-value text field.
+    /// Each value is a title in the path from document root to this chunk.
+    pub hierarchy: Field,
     /// Document tags from frontmatter.
     pub tags: Field,
     /// File path within the tree.
@@ -60,10 +59,6 @@ pub struct IndexSchema {
     pub tree: Field,
     /// Chunk body content.
     pub body: Field,
-    /// Breadcrumb showing hierarchy path.
-    pub breadcrumb: Field,
-    /// Hierarchy depth: 0 for document, 1-6 for h1-h6.
-    pub depth: Field,
     /// Document order index (0-based pre-order traversal).
     pub position: Field,
     /// Byte offset where content span starts.
@@ -90,17 +85,18 @@ impl IndexSchema {
         // Parent ID field: stored, for hierarchy traversal (empty string for root nodes)
         let parent_id = builder.add_text_field("parent_id", STORED);
 
-        // Title field: text with positions, stored, boosted 3.0x
-        let title_options = TextOptions::default()
+        // Hierarchy field: multi-value text with positions, stored
+        // Each value is a title in the path from document root to this chunk
+        let hierarchy_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
                     .set_tokenizer(RA_TOKENIZER)
                     .set_index_option(IndexRecordOption::WithFreqsAndPositions),
             )
             .set_stored();
-        let title = builder.add_text_field("title", title_options);
+        let hierarchy = builder.add_text_field("hierarchy", hierarchy_options);
 
-        // Tags field: text with positions, stored, boosted 2.5x
+        // Tags field: text with positions, stored
         let tags_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
@@ -133,12 +129,6 @@ impl IndexSchema {
             .set_stored();
         let body = builder.add_text_field("body", body_options);
 
-        // Breadcrumb field: stored only (not searched, just for display)
-        let breadcrumb = builder.add_text_field("breadcrumb", STORED);
-
-        // Depth field: u64, stored and indexed for filtering by hierarchy level
-        let depth = builder.add_u64_field("depth", STORED | INDEXED);
-
         // Position field: u64, stored and indexed for ordering
         let position = builder.add_u64_field("position", STORED | INDEXED);
 
@@ -160,13 +150,11 @@ impl IndexSchema {
             id,
             doc_id,
             parent_id,
-            title,
+            hierarchy,
             tags,
             path,
             tree,
             body,
-            breadcrumb,
-            depth,
             position,
             byte_start,
             byte_end,
@@ -202,13 +190,11 @@ mod test {
         assert!(tantivy_schema.get_field("id").is_ok());
         assert!(tantivy_schema.get_field("doc_id").is_ok());
         assert!(tantivy_schema.get_field("parent_id").is_ok());
-        assert!(tantivy_schema.get_field("title").is_ok());
+        assert!(tantivy_schema.get_field("hierarchy").is_ok());
         assert!(tantivy_schema.get_field("tags").is_ok());
         assert!(tantivy_schema.get_field("path").is_ok());
         assert!(tantivy_schema.get_field("tree").is_ok());
         assert!(tantivy_schema.get_field("body").is_ok());
-        assert!(tantivy_schema.get_field("breadcrumb").is_ok());
-        assert!(tantivy_schema.get_field("depth").is_ok());
         assert!(tantivy_schema.get_field("position").is_ok());
         assert!(tantivy_schema.get_field("byte_start").is_ok());
         assert!(tantivy_schema.get_field("byte_end").is_ok());
@@ -238,7 +224,7 @@ mod test {
         let schema = IndexSchema::new();
 
         for (name, field) in [
-            ("title", schema.title),
+            ("hierarchy", schema.hierarchy),
             ("tags", schema.tags),
             ("path", schema.path),
             ("body", schema.body),
@@ -303,12 +289,6 @@ mod test {
         // parent_id: stored only (not indexed, just for lookup)
         let entry = schema.schema().get_field_entry(schema.parent_id);
         assert!(entry.is_stored());
-
-        // depth: u64, stored and indexed
-        let entry = schema.schema().get_field_entry(schema.depth);
-        assert!(entry.is_stored());
-        assert!(entry.is_indexed());
-        assert!(matches!(entry.field_type(), FieldType::U64(_)));
 
         // position: u64, stored and indexed
         let entry = schema.schema().get_field_entry(schema.position);

@@ -4,7 +4,7 @@ This guide explains how to structure markdown documents for optimal indexing and
 
 **Searchable fields (with boost):**
 
-- title (10x) - heading text or document title
+- hierarchy (10x) - heading text and ancestor headings (multi-value field)
 - path (8x) - file path within tree (tokenized on `/` and `.`)
 - tags (5x) - frontmatter tags
 - body (1x) - chunk content
@@ -53,9 +53,13 @@ Tags apply to all chunks in the document. Other frontmatter fields are ignored.
 
 ra chunks documents by heading hierarchy. Each heading creates a searchable chunk containing:
 
-- The heading text (becomes the chunk's title, 10x boost)
+- The heading text and all ancestor headings (stored as multi-value `hierarchy` field, 10x boost)
 - Content from the heading to the next heading of equal or higher level
 - Child headings as nested chunks
+
+The hierarchy field stores the path from document root to the chunk. For "Configuration" under
+"Getting Started", searches for either term match the chunk. BM25 ranks shallower matches higher
+due to field-length normalization (fewer hierarchy elements = higher score per match).
 
 ```markdown
 # Introduction           <-- chunk: depth 1

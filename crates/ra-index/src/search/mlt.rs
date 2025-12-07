@@ -12,7 +12,7 @@ use tantivy::{
     DocAddress, Term,
     collector::TopDocs,
     query::{MoreLikeThisQuery, Query, TermQuery},
-    schema::{Field, IndexRecordOption, OwnedValue},
+    schema::{Field, IndexRecordOption, OwnedValue, Value},
 };
 
 use super::{
@@ -244,7 +244,8 @@ impl Searcher {
         for (name, value) in fields {
             let field = match name {
                 "body" => self.schema.body,
-                "title" => self.schema.title,
+                // "title" is an alias for "hierarchy" for backwards compatibility
+                "title" | "hierarchy" => self.schema.hierarchy,
                 "tags" => self.schema.tags,
                 "path" => self.schema.path,
                 _ => {
@@ -290,7 +291,13 @@ impl Searcher {
             .doc(doc_address)
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        let title = self.get_text_field(&doc, self.schema.title);
+        // Read hierarchy as multi-value field and get title (last element)
+        let hierarchy: Vec<String> = doc
+            .get_all(self.schema.hierarchy)
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect();
+        let title = hierarchy.last().cloned().unwrap_or_default();
         let body = self.get_text_field(&doc, self.schema.body);
 
         // Build the MLT query and extract the generated query

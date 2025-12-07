@@ -41,13 +41,18 @@ Each chunk is indexed with these fields:
 | Field | Purpose | Searchable | Stored |
 |-------|---------|------------|--------|
 | `id` | Chunk identifier | Exact match | Yes |
-| `title` | Chunk/document title | Full-text | Yes |
+| `hierarchy` | Hierarchy path (multi-value) | Full-text | Yes |
 | `tags` | Frontmatter tags | Full-text | Yes |
 | `path` | Relative file path | Full-text | Yes |
 | `tree` | Tree name | Exact match | Yes |
 | `body` | Chunk content | Full-text | Yes |
-| `breadcrumb` | Hierarchy path | No | Yes |
 | `mtime` | Modification time | Filter/sort | No |
+
+The `hierarchy` field is a multi-value text field where each element represents a level in the
+document hierarchy. For a section "Installation" under "Getting Started", this indexes
+`["Getting Started", "Installation"]` as separate values. This allows searches to match both the
+section title and its ancestors. BM25 naturally ranks shallower matches higher (documents with
+fewer hierarchy elements score higher for the same term match).
 
 The `path` field is tokenized on path separators and dots. For `docs/api/handlers.md`, this
 indexes `["docs", "api", "handlers", "md"]`, allowing "api" to match files in the api directory.
@@ -59,7 +64,7 @@ ra supports a rich query syntax. See [query.md](query.md) for the complete refer
 
 ### Query Structure
 
-For each term, ra builds a multi-field query searching across title, tags, path, and body
+For each term, ra builds a multi-field query searching across hierarchy, tags, path, and body
 simultaneously. Terms within a query are combined with AND.
 
 **Example: `rust async`**
@@ -67,12 +72,12 @@ simultaneously. Terms within a query are combined with AND.
 ```
 BooleanQuery(MUST):
 ├── MultiFieldQuery("rust")
-│   ├── title:"rust" (boosted 10.0×)
+│   ├── hierarchy:"rust" (boosted 10.0×)
 │   ├── tags:"rust" (boosted 5.0×)
 │   ├── path:"rust" (boosted 8.0×)
 │   └── body:"rust" (boosted 1.0×)
 └── MultiFieldQuery("async")
-    ├── title:"async" (boosted 10.0×)
+    ├── hierarchy:"async" (boosted 10.0×)
     ├── tags:"async" (boosted 5.0×)
     ├── path:"async" (boosted 8.0×)
     └── body:"async" (boosted 1.0×)
@@ -108,12 +113,12 @@ considers:
 
 | Field | Boost |
 |-------|-------|
-| title | 10.0× |
+| hierarchy | 10.0× |
 | path | 8.0× |
 | tags | 5.0× |
 | body | 1.0× |
 
-A match in the title contributes 10× as much to the score as the same match in the body.
+A match in the hierarchy contributes 10× as much to the score as the same match in the body.
 
 ### Tree Locality Boost
 

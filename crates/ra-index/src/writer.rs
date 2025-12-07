@@ -118,7 +118,11 @@ impl IndexWriter {
             self.schema.parent_id,
             doc.parent_id.as_deref().unwrap_or(""),
         );
-        tantivy_doc.add_text(self.schema.title, &doc.title);
+
+        // Add hierarchy as multi-value field (each element is a separate value)
+        for element in &doc.hierarchy {
+            tantivy_doc.add_text(self.schema.hierarchy, element);
+        }
 
         // Add tags as a single concatenated string (each tag will be tokenized)
         let tags_str = doc.tags.join(" ");
@@ -127,10 +131,8 @@ impl IndexWriter {
         tantivy_doc.add_text(self.schema.path, &doc.path);
         tantivy_doc.add_text(self.schema.tree, &doc.tree);
         tantivy_doc.add_text(self.schema.body, &doc.body);
-        tantivy_doc.add_text(self.schema.breadcrumb, &doc.breadcrumb);
 
         // Hierarchical metadata
-        tantivy_doc.add_u64(self.schema.depth, doc.depth as u64);
         tantivy_doc.add_u64(self.schema.position, doc.position as u64);
         tantivy_doc.add_u64(self.schema.byte_start, doc.byte_start as u64);
         tantivy_doc.add_u64(self.schema.byte_end, doc.byte_end as u64);
@@ -228,13 +230,11 @@ mod test {
             id: "local:docs/test.md#intro".to_string(),
             doc_id: "local:docs/test.md".to_string(),
             parent_id: Some("local:docs/test.md".to_string()),
-            title: "Introduction".to_string(),
+            hierarchy: vec!["Test Document".to_string(), "Introduction".to_string()],
             tags: vec!["rust".to_string(), "tutorial".to_string()],
             path: "docs/test.md".to_string(),
             tree: "local".to_string(),
             body: "This is the introduction.".to_string(),
-            breadcrumb: "Test Document › Introduction".to_string(),
-            depth: 1,
             position: 1,
             byte_start: 50,
             byte_end: 150,
@@ -276,13 +276,11 @@ mod test {
                 id: "local:a.md#one".to_string(),
                 doc_id: "local:a.md".to_string(),
                 parent_id: Some("local:a.md".to_string()),
-                title: "One".to_string(),
+                hierarchy: vec!["A".to_string(), "One".to_string()],
                 tags: vec![],
                 path: "a.md".to_string(),
                 tree: "local".to_string(),
                 body: "First".to_string(),
-                breadcrumb: "A › One".to_string(),
-                depth: 1,
                 position: 1,
                 byte_start: 0,
                 byte_end: 50,
@@ -293,13 +291,11 @@ mod test {
                 id: "local:b.md#two".to_string(),
                 doc_id: "local:b.md".to_string(),
                 parent_id: Some("local:b.md".to_string()),
-                title: "Two".to_string(),
+                hierarchy: vec!["B".to_string(), "Two".to_string()],
                 tags: vec![],
                 path: "b.md".to_string(),
                 tree: "local".to_string(),
                 body: "Second".to_string(),
-                breadcrumb: "B › Two".to_string(),
-                depth: 1,
                 position: 1,
                 byte_start: 0,
                 byte_end: 60,

@@ -5,7 +5,7 @@
 //! - YAML frontmatter extraction (title, tags)
 //! - Hierarchical chunking based on heading structure
 //! - GitHub-compatible slug generation for chunk IDs
-//! - Breadcrumb generation for hierarchy display
+//! - Hierarchy path generation for search and display
 
 #![warn(missing_docs)]
 
@@ -65,18 +65,16 @@ mod tests {
             id: "docs:guide.md#installation".into(),
             doc_id: "docs:guide.md".into(),
             parent_id: Some("docs:guide.md".into()),
-            title: "Installation".into(),
             body: "You need Rust installed.".into(),
-            breadcrumb: "> Getting Started › Installation".into(),
-            depth: 1,
+            hierarchy: vec!["Getting Started".into(), "Installation".into()],
             position: 1,
             byte_start: 0,
             byte_end: 100,
             sibling_count: 1,
         };
         assert!(chunk.id.contains('#'));
-        assert!(chunk.breadcrumb.contains('›'));
-        assert_eq!(chunk.depth, 1);
+        assert_eq!(chunk.title(), "Installation");
+        assert_eq!(chunk.depth(), 1);
     }
 
     #[test]
@@ -85,18 +83,16 @@ mod tests {
             id: "docs:guide.md".into(),
             doc_id: "docs:guide.md".into(),
             parent_id: None,
-            title: "Getting Started".into(),
             body: "This guide helps you get started.".into(),
-            breadcrumb: "> Getting Started".into(),
-            depth: 0,
+            hierarchy: vec!["Getting Started".into()],
             position: 0,
             byte_start: 0,
             byte_end: 50,
             sibling_count: 1,
         };
         assert!(!chunk.id.contains('#'));
-        assert_eq!(chunk.breadcrumb, "> Getting Started");
-        assert_eq!(chunk.depth, 0);
+        assert_eq!(chunk.title(), "Getting Started");
+        assert_eq!(chunk.depth(), 0);
         assert!(chunk.parent_id.is_none());
     }
 }

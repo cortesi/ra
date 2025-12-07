@@ -202,7 +202,7 @@ Let's begin."#;
 
         // First chunk should be the document node (preamble)
         assert_eq!(chunks[0].id, "docs:doc.md");
-        assert_eq!(chunks[0].depth, 0);
+        assert_eq!(chunks[0].depth(), 0);
         assert!(chunks[0].body.contains("Intro text"));
     }
 
@@ -222,7 +222,7 @@ Let's begin."#;
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].id, "docs:notes.txt");
         assert!(!chunks[0].id.contains('#'));
-        assert_eq!(chunks[0].depth, 0);
+        assert_eq!(chunks[0].depth(), 0);
     }
 
     #[test]
@@ -237,13 +237,13 @@ Let's begin."#;
             .extract_chunks(&result.document.title);
 
         // Heading chunks should have fragment IDs
-        for chunk in chunks.iter().filter(|c| c.depth > 0) {
+        for chunk in chunks.iter().filter(|c| c.depth() > 0) {
             assert!(chunk.id.starts_with("my-tree:guide.md#"));
         }
     }
 
     #[test]
-    fn test_breadcrumbs_included() {
+    fn test_hierarchy_included() {
         let content =
             "# Parent\n\nParent content.\n\n## Child 1\n\nContent.\n\n## Child 2\n\nMore.";
 
@@ -254,9 +254,9 @@ Let's begin."#;
             .chunk_tree
             .extract_chunks(&result.document.title);
 
-        // All chunks should have breadcrumbs starting with >
+        // All chunks should have non-empty hierarchy
         for chunk in &chunks {
-            assert!(chunk.breadcrumb.starts_with("> "));
+            assert!(!chunk.hierarchy.is_empty());
         }
     }
 
@@ -393,7 +393,7 @@ Section 2 content.
         assert!(chunks.len() >= 5); // Should have at least 5 chunks
 
         // Check that some expected sections exist
-        let titles: Vec<&str> = chunks.iter().map(|c| c.title.as_str()).collect();
+        let titles: Vec<&str> = chunks.iter().map(|c| c.title()).collect();
         assert!(titles.contains(&"Overview"));
         assert!(titles.contains(&"Terminology"));
     }

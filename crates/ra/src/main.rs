@@ -799,15 +799,15 @@ fn json_from_aggregated_result(result: &AggregatedSearchResult, list: bool) -> J
     let content_field = if list {
         None
     } else {
-        Some(format!("> {}\n\n{}", c.breadcrumb, c.body))
+        Some(format!("> {}\n\n{}", c.breadcrumb(), c.body))
     };
 
     JsonSearchResult {
         id: c.id.clone(),
         tree: c.tree.clone(),
         path: c.path.clone(),
-        title: c.title.clone(),
-        breadcrumb: c.breadcrumb.clone(),
+        title: c.title().to_string(),
+        breadcrumb: c.breadcrumb(),
         score: c.score,
         snippet: if result.is_aggregated() {
             Some(format!("[Aggregated: {} matches]", constituents_count))
@@ -817,7 +817,7 @@ fn json_from_aggregated_result(result: &AggregatedSearchResult, list: bool) -> J
         body: Some(c.body.clone()),
         content: content_field,
         match_ranges,
-        title_match_ranges: Some(json_match_ranges(&c.title_match_ranges)),
+        title_match_ranges: Some(json_match_ranges(&c.hierarchy_match_ranges)),
         path_match_ranges: Some(json_match_ranges(&c.path_match_ranges)),
     }
 }
@@ -1473,7 +1473,7 @@ fn format_aggregated_result(
     }
 
     let breadcrumb_line =
-        highlight_breadcrumb_title(&c.breadcrumb, &c.title, &c.title_match_ranges);
+        highlight_breadcrumb_title(&c.breadcrumb(), c.title(), &c.hierarchy_match_ranges);
     if matches!(mode, DisplayMode::Matches) {
         output.push_str(&format!("{breadcrumb_line}\n\n"));
     } else {
@@ -2760,7 +2760,7 @@ fn cmd_ls_docs(long: bool) -> ExitCode {
             docs.push(DocInfo {
                 tree: chunk.tree.clone(),
                 path: chunk.path.clone(),
-                title: chunk.title.clone(),
+                title: chunk.title().to_string(),
                 chunk_count: 1,
                 total_size: chunk.body.len(),
             });
@@ -2826,7 +2826,7 @@ fn cmd_ls_chunks(long: bool) -> ExitCode {
             "{} {} {}",
             header(&chunk.id),
             dim("—"),
-            breadcrumb(&chunk.breadcrumb)
+            breadcrumb(&chunk.breadcrumb())
         );
         if long {
             println!("  {}", dim(&format!("{} chars", chunk.body.len())));
@@ -2944,13 +2944,15 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
 
     // Display each chunk in search result format
     for chunk in &chunks {
-        let chunk_label = if chunk.depth == 0 {
+        let chunk_label = if chunk.depth() == 0 {
             format!("{} (document)", chunk.id)
         } else {
-            format!("{} (depth {})", chunk.id, chunk.depth)
+            format!("{} (depth {})", chunk.id, chunk.depth())
         };
         println!("--- {} ---", header(&chunk_label));
-        println!("{}", breadcrumb(&chunk.breadcrumb));
+        // Build breadcrumb from hierarchy
+        let bc = chunk.hierarchy.join(" > ");
+        println!("{}", breadcrumb(&bc));
         println!("{}", dim(&format!("{} chars", chunk.body.len())));
         println!();
 

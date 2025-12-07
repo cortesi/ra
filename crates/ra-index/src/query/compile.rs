@@ -123,7 +123,7 @@ impl QueryCompiler {
 
         // Build phrase queries for each searchable field
         let fields_with_boosts: [(Field, f32); 4] = [
-            (self.schema.title, boost::TITLE),
+            (self.schema.hierarchy, boost::HIERARCHY),
             (self.schema.tags, boost::TAGS),
             (self.schema.path, boost::PATH),
             (self.schema.body, boost::BODY),
@@ -248,7 +248,10 @@ impl QueryCompiler {
         expr: &QueryExpr,
     ) -> Result<Option<Box<dyn Query>>, CompileError> {
         match name {
-            "title" => self.compile_single_field_query(self.schema.title, boost::TITLE, expr),
+            // "title" is an alias for "hierarchy" for backwards compatibility
+            "title" | "hierarchy" => {
+                self.compile_single_field_query(self.schema.hierarchy, boost::HIERARCHY, expr)
+            }
             "tags" => self.compile_single_field_query(self.schema.tags, boost::TAGS, expr),
             "body" => self.compile_single_field_query(self.schema.body, boost::BODY, expr),
             "path" => self.compile_single_field_query(self.schema.path, boost::PATH, expr),
@@ -396,7 +399,7 @@ impl QueryCompiler {
     /// Builds a multi-field term query with boosts and optional fuzzy matching.
     fn build_multi_field_term_query(&self, term_text: &str) -> Option<Box<dyn Query>> {
         let fields_with_boosts: [(Field, f32); 4] = [
-            (self.schema.title, boost::TITLE),
+            (self.schema.hierarchy, boost::HIERARCHY),
             (self.schema.tags, boost::TAGS),
             (self.schema.path, boost::PATH),
             (self.schema.body, boost::BODY),

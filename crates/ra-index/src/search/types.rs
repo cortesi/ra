@@ -57,18 +57,15 @@ pub struct SearchCandidate {
     pub doc_id: String,
     /// Parent chunk identifier, or None for document nodes.
     pub parent_id: Option<String>,
-    /// Chunk title.
-    pub title: String,
+    /// Hierarchy path from document root to this chunk.
+    /// Each element is a title in the path. The last element is this chunk's title.
+    pub hierarchy: Vec<String>,
     /// Tree name this chunk belongs to.
     pub tree: String,
     /// File path within the tree.
     pub path: String,
     /// Chunk body content.
     pub body: String,
-    /// Breadcrumb showing hierarchy path.
-    pub breadcrumb: String,
-    /// Hierarchy depth: 0 for document, 1-6 for h1-h6.
-    pub depth: u64,
     /// Document order index (0-based pre-order traversal).
     pub position: u64,
     /// Byte offset where content span starts.
@@ -88,10 +85,28 @@ pub struct SearchCandidate {
     /// lowercasing/stemming/fuzzy expansion, so consumers can safely highlight the original
     /// substrings using these offsets.
     pub match_ranges: Vec<Range<usize>>,
-    /// Byte ranges within `title` where search terms match.
-    pub title_match_ranges: Vec<Range<usize>>,
+    /// Byte ranges within `hierarchy` (specifically the title, last element) where search terms match.
+    pub hierarchy_match_ranges: Vec<Range<usize>>,
     /// Byte ranges within `path` where search terms match.
     pub path_match_ranges: Vec<Range<usize>>,
     /// Detailed match information for verbose output.
     pub match_details: Option<MatchDetails>,
+}
+
+impl SearchCandidate {
+    /// Returns the chunk's title (the last element of the hierarchy).
+    pub fn title(&self) -> &str {
+        self.hierarchy.last().map(|s| s.as_str()).unwrap_or("")
+    }
+
+    /// Returns the hierarchy depth.
+    /// Document nodes have depth 0, h1 headings have depth 1, etc.
+    pub fn depth(&self) -> usize {
+        self.hierarchy.len().saturating_sub(1)
+    }
+
+    /// Returns the breadcrumb string by joining hierarchy elements.
+    pub fn breadcrumb(&self) -> String {
+        self.hierarchy.join(" > ")
+    }
 }

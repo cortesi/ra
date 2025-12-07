@@ -15,7 +15,7 @@ use tantivy::{
     Term,
     collector::TopDocs,
     query::{Query, TermQuery},
-    schema::IndexRecordOption,
+    schema::{IndexRecordOption, Value},
 };
 
 use super::{
@@ -155,12 +155,15 @@ impl Searcher {
             } else {
                 Some(parent_id_str)
             };
-            let title = self.get_text_field(&doc, self.schema.title);
+            // Read hierarchy as multi-value field
+            let hierarchy: Vec<String> = doc
+                .get_all(self.schema.hierarchy)
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect();
             let tree = self.get_text_field(&doc, self.schema.tree);
             let path = self.get_text_field(&doc, self.schema.path);
             let body = self.get_text_field(&doc, self.schema.body);
-            let breadcrumb = self.get_text_field(&doc, self.schema.breadcrumb);
-            let depth = self.get_u64_field(&doc, self.schema.depth);
             let position = self.get_u64_field(&doc, self.schema.position);
             let byte_start = self.get_u64_field(&doc, self.schema.byte_start);
             let byte_end = self.get_u64_field(&doc, self.schema.byte_end);
@@ -170,12 +173,10 @@ impl Searcher {
                 id,
                 doc_id,
                 parent_id,
-                title,
+                hierarchy,
                 tree,
                 path,
                 body,
-                breadcrumb,
-                depth,
                 position,
                 byte_start,
                 byte_end,
@@ -183,7 +184,7 @@ impl Searcher {
                 score: 0.0,
                 snippet: None,
                 match_ranges: vec![],
-                title_match_ranges: vec![],
+                hierarchy_match_ranges: vec![],
                 path_match_ranges: vec![],
                 match_details: None,
             })

@@ -100,12 +100,10 @@ mod test {
             id: id.to_string(),
             doc_id: "local:test.md".to_string(),
             parent_id: Some("local:test.md".to_string()),
-            title: format!("Title {id}"),
+            hierarchy: vec!["Doc".to_string(), format!("Title {id}")],
             tree: "local".to_string(),
             path: "test.md".to_string(),
             body: "Body content".to_string(),
-            breadcrumb: "> Test".to_string(),
-            depth: 1,
             position: 0,
             byte_start: 0,
             byte_end: 100,
@@ -113,7 +111,7 @@ mod test {
             score,
             snippet: None,
             match_ranges: vec![],
-            title_match_ranges: vec![],
+            hierarchy_match_ranges: vec![],
             path_match_ranges: vec![],
             match_details: None,
         }
@@ -291,7 +289,7 @@ mod test {
     #[test]
     fn preserves_candidate_data() {
         let mut candidate = make_candidate("test-doc", 5.0);
-        candidate.title = "Specific Title".to_string();
+        candidate.hierarchy = vec!["Doc".to_string(), "Specific Title".to_string()];
         candidate.body = "Specific Body".to_string();
         candidate.snippet = Some("highlighted".to_string());
         candidate.match_ranges = vec![0..5, 10..15];
@@ -299,7 +297,7 @@ mod test {
         let result = elbow_cutoff(vec![candidate], 0.5, 20);
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].title, "Specific Title");
+        assert_eq!(result[0].title(), "Specific Title");
         assert_eq!(result[0].body, "Specific Body");
         assert_eq!(result[0].snippet, Some("highlighted".to_string()));
         assert_eq!(result[0].match_ranges, vec![0..5, 10..15]);
