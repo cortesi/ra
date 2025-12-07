@@ -399,14 +399,11 @@ impl Searcher {
         freqs
     }
 
-    /// Converts a Tantivy document plus scoring context into a `SearchCandidate`.
-    pub(crate) fn doc_to_result(
-        &self,
-        doc: &TantivyDocument,
-        base_score: f32,
-        snippet_generator: &Option<SnippetGenerator>,
-        matched_terms: &HashSet<String>,
-    ) -> SearchCandidate {
+    /// Reads all metadata fields from a Tantivy document into a `SearchCandidate`.
+    ///
+    /// Returns a candidate with zero score and empty match data. Use this as a base
+    /// for building search results or for parent lookups during aggregation.
+    pub(crate) fn read_candidate_from_doc(&self, doc: &TantivyDocument) -> SearchCandidate {
         let id = self.get_text_field(doc, self.schema.id);
         let doc_id = self.get_text_field(doc, self.schema.doc_id);
         let parent_id_str = self.get_text_field(doc, self.schema.parent_id);
@@ -415,7 +412,6 @@ impl Searcher {
         } else {
             Some(parent_id_str)
         };
-        // Read hierarchy as multi-value field
         let hierarchy: Vec<String> = doc
             .get_all(self.schema.hierarchy)
             .filter_map(|v| v.as_str())
@@ -430,26 +426,6 @@ impl Searcher {
         let byte_end = self.get_u64_field(doc, self.schema.byte_end);
         let sibling_count = self.get_u64_field(doc, self.schema.sibling_count);
 
-        let is_global = self.tree_is_global.get(&tree).copied().unwrap_or(false);
-        // Apply heading depth boost and local tree boost
-        let heading_boost = self.boosts.heading_boost(depth);
-        let score = if is_global {
-            base_score * heading_boost
-        } else {
-            base_score * heading_boost * self.local_boost
-        };
-
-        let snippet = snippet_generator.as_ref().map(|generator| {
-            let snippet = generator.snippet_from_doc(doc);
-            snippet.to_html()
-        });
-
-        let match_ranges = extract_match_ranges(&self.analyzer, &body, matched_terms);
-        // Extract match ranges for title (last element of hierarchy)
-        let title = hierarchy.last().map(|s| s.as_str()).unwrap_or("");
-        let hierarchy_match_ranges = extract_match_ranges(&self.analyzer, title, matched_terms);
-        let path_match_ranges = extract_match_ranges(&self.analyzer, &path, matched_terms);
-
         SearchCandidate {
             id,
             doc_id,
@@ -463,13 +439,54 @@ impl Searcher {
             byte_start,
             byte_end,
             sibling_count,
-            score,
-            snippet,
-            match_ranges,
-            hierarchy_match_ranges,
-            path_match_ranges,
+            score: 0.0,
+            snippet: None,
+            match_ranges: vec![],
+            hierarchy_match_ranges: vec![],
+            path_match_ranges: vec![],
             match_details: None,
         }
+    }
+
+    /// Converts a Tantivy document plus scoring context into a `SearchCandidate`.
+    pub(crate) fn doc_to_result(
+        &self,
+        doc: &TantivyDocument,
+        base_score: f32,
+        snippet_generator: &Option<SnippetGenerator>,
+        matched_terms: &HashSet<String>,
+    ) -> SearchCandidate {
+        let mut candidate = self.read_candidate_from_doc(doc);
+
+        // Apply heading depth boost and local tree boost
+        let is_global = self
+            .tree_is_global
+            .get(&candidate.tree)
+            .copied()
+            .unwrap_or(false);
+        let heading_boost = self.boosts.heading_boost(candidate.depth);
+        candidate.score = if is_global {
+            base_score * heading_boost
+        } else {
+            base_score * heading_boost * self.local_boost
+        };
+
+        // Generate snippet if generator provided
+        candidate.snippet = snippet_generator.as_ref().map(|generator| {
+            let snippet = generator.snippet_from_doc(doc);
+            snippet.to_html()
+        });
+
+        // Extract match ranges
+        candidate.match_ranges =
+            extract_match_ranges(&self.analyzer, &candidate.body, matched_terms);
+        let title = candidate.hierarchy.last().map(|s| s.as_str()).unwrap_or("");
+        candidate.hierarchy_match_ranges =
+            extract_match_ranges(&self.analyzer, title, matched_terms);
+        candidate.path_match_ranges =
+            extract_match_ranges(&self.analyzer, &candidate.path, matched_terms);
+
+        candidate
     }
 
     /// Reads a text field from a document, returning an empty string if missing.

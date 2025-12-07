@@ -1,7 +1,5 @@
 //! IDF helpers, tree filtering, and convenience lookups.
 
-use std::collections::HashSet;
-
 use ra_context::IdfProvider;
 use tantivy::{
     Term,
@@ -12,6 +10,14 @@ use tantivy::{
 
 use super::{SearchCandidate, Searcher};
 use crate::IndexError;
+
+/// Maximum number of documents to retrieve in bulk lookup operations.
+///
+/// This limit applies to `list_all()` and `get_by_path()` which scan the entire index.
+/// The value is set high enough to handle large knowledge bases while preventing
+/// unbounded memory usage. Indexes exceeding this limit will have results silently
+/// truncated.
+const MAX_BULK_LOOKUP: usize = 100_000;
 
 impl Searcher {
     /// Returns the number of documents in the index.
@@ -97,14 +103,12 @@ impl Searcher {
             .search(&query, &TopDocs::with_limit(1))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        if let Some((score, doc_address)) = top_docs.first() {
+        if let Some((_, doc_address)) = top_docs.first() {
             let doc: tantivy::TantivyDocument = searcher
                 .doc(*doc_address)
                 .map_err(|e| IndexError::Write(e.to_string()))?;
 
-            let empty_terms = HashSet::new();
-            let result = self.doc_to_result(&doc, *score, &None, &empty_terms);
-            Ok(Some(result))
+            Ok(Some(self.read_candidate_from_doc(&doc)))
         } else {
             Ok(None)
         }
@@ -120,15 +124,14 @@ impl Searcher {
         let searcher = reader.searcher();
 
         let all_docs = searcher
-            .search(&AllQuery, &TopDocs::with_limit(100_000))
+            .search(&AllQuery, &TopDocs::with_limit(MAX_BULK_LOOKUP))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
         let mut results: Vec<SearchCandidate> = all_docs
             .into_iter()
-            .filter_map(|(score, doc_address)| {
+            .filter_map(|(_, doc_address)| {
                 let doc: tantivy::TantivyDocument = searcher.doc(doc_address).ok()?;
-                let empty_terms = HashSet::new();
-                Some(self.doc_to_result(&doc, score, &None, &empty_terms))
+                Some(self.read_candidate_from_doc(&doc))
             })
             .collect();
 
@@ -149,17 +152,16 @@ impl Searcher {
         let id_prefix = format!("{tree}:{path}");
 
         let all_docs = searcher
-            .search(&AllQuery, &TopDocs::with_limit(10000))
+            .search(&AllQuery, &TopDocs::with_limit(MAX_BULK_LOOKUP))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
         let mut results: Vec<SearchCandidate> = all_docs
             .into_iter()
-            .filter_map(|(score, doc_address)| {
+            .filter_map(|(_, doc_address)| {
                 let doc: tantivy::TantivyDocument = searcher.doc(doc_address).ok()?;
-                let empty_terms = HashSet::new();
-                let result = self.doc_to_result(&doc, score, &None, &empty_terms);
-                if result.id == id_prefix || result.id.starts_with(&format!("{id_prefix}#")) {
-                    Some(result)
+                let candidate = self.read_candidate_from_doc(&doc);
+                if candidate.id == id_prefix || candidate.id.starts_with(&format!("{id_prefix}#")) {
+                    Some(candidate)
                 } else {
                     None
                 }
