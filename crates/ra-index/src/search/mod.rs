@@ -26,6 +26,7 @@
 mod aggregate_api;
 mod execute;
 mod fuzzy;
+mod hierarchy;
 mod idf;
 mod mlt;
 mod normalize;
