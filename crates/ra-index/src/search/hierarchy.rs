@@ -1,6 +1,3 @@
-// TODO: Remove allow(dead_code) once adaptive aggregation uses these functions
-#![allow(dead_code)]
-
 //! Chunk hierarchy utilities for ancestry detection.
 //!
 //! This module provides functions for working with chunk ID hierarchies,
@@ -84,6 +81,7 @@ pub fn is_ancestor_of(ancestor_id: &str, descendant_id: &str) -> bool {
 /// Checks if `descendant_id` is a descendant of `ancestor_id`.
 ///
 /// This is the inverse of [`is_ancestor_of`].
+#[cfg(test)]
 #[inline]
 pub fn is_descendant_of(descendant_id: &str, ancestor_id: &str) -> bool {
     is_ancestor_of(ancestor_id, descendant_id)

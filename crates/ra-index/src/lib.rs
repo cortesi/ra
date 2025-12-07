@@ -31,7 +31,6 @@
 
 #![warn(missing_docs)]
 
-mod aggregate;
 mod analyzer;
 mod config_hash;
 mod context;

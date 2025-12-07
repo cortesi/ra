@@ -1,14 +1,9 @@
-// TODO: Remove allow(dead_code) once this module is integrated into the pipeline
-#![allow(dead_code)]
-
 //! Adaptive hierarchical aggregation for search results.
 //!
 //! This module implements a streaming aggregation algorithm that processes candidates
 //! one-by-one in score order, building results incrementally until the limit is reached.
 //!
-//! # Key Differences from Batch Aggregation
-//!
-//! Unlike the batch algorithm in [`crate::aggregate`], this approach:
+//! # Key Features
 //!
 //! 1. **Streams candidates**: Process one at a time, stopping when we have enough results
 //! 2. **Claims descendants**: When a parent enters results, all descendants are skipped
@@ -36,6 +31,12 @@ use std::collections::{HashMap, HashSet};
 
 use super::hierarchy::is_ancestor_of;
 use crate::{SearchCandidate, result::SearchResult};
+
+/// Default aggregation threshold.
+///
+/// When the ratio of matching siblings to total siblings meets or exceeds
+/// this threshold, the matches are aggregated into their parent.
+pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
 
 /// Adaptive aggregator that builds results incrementally.
 ///
@@ -141,6 +142,7 @@ impl AdaptiveAggregator {
     }
 
     /// Returns the current number of results.
+    #[cfg(test)]
     pub fn result_count(&self) -> usize {
         self.results.len()
     }
@@ -276,6 +278,7 @@ impl AdaptiveAggregator {
     }
 
     /// Returns a reference to the current results.
+    #[cfg(test)]
     pub fn results(&self) -> &[SearchResult] {
         &self.results
     }

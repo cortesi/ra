@@ -1,6 +1,7 @@
 //! Parameter types for search execution.
 
-use crate::{aggregate::DEFAULT_AGGREGATION_THRESHOLD, elbow::DEFAULT_CUTOFF_RATIO};
+use super::adaptive::DEFAULT_AGGREGATION_THRESHOLD;
+use crate::elbow::DEFAULT_CUTOFF_RATIO;
 
 /// Default final result limit after aggregation.
 pub const DEFAULT_LIMIT: usize = 10;
