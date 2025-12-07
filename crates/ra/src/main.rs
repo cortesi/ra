@@ -1616,18 +1616,7 @@ fn cmd_context(
         return ExitCode::FAILURE;
     }
 
-    // Handle --explain mode
-    if explain {
-        return output_context_explain(&analysis, json);
-    }
-
-    // Check if any terms were extracted
-    if analysis.query_expr.is_none() {
-        println!("{}", dim("No context terms extracted."));
-        return ExitCode::SUCCESS;
-    }
-
-    // Execute the search with CLI overrides, then rule overrides, then config defaults
+    // Build search params with CLI overrides, then rule overrides, then config defaults
     let overrides = SearchParamsOverrides {
         limit,
         max_candidates,
@@ -1639,6 +1628,17 @@ fn cmd_context(
     };
     let params =
         overrides.build_params_with_rule_overrides(&config.search, &analysis.merged_rules.search);
+
+    // Handle --explain mode
+    if explain {
+        return output_context_explain(&analysis, &params, json);
+    }
+
+    // Check if any terms were extracted
+    if analysis.query_expr.is_none() {
+        println!("{}", dim("No context terms extracted."));
+        return ExitCode::SUCCESS;
+    }
 
     let (results, analysis) = match context_search.search_with_analysis(analysis, &params) {
         Ok(r) => r,
@@ -1664,7 +1664,11 @@ fn cmd_context(
 }
 
 /// Outputs explain mode information for context analysis.
-fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -> ExitCode {
+fn output_context_explain(
+    analysis_result: &ContextAnalysisResult,
+    params: &SearchParams,
+    json: bool,
+) -> ExitCode {
     if json {
         // JSON output for explain mode
         let json_output = JsonContextExplain {
@@ -1674,6 +1678,7 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
                 include: analysis_result.merged_rules.include.clone(),
                 search: JsonSearchOverrides::from_config(&analysis_result.merged_rules.search),
             },
+            search_params: JsonSearchParams::from_params(params),
             files: analysis_result
                 .files
                 .iter()
@@ -1738,6 +1743,29 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
             }
             print_search_overrides(&analysis_result.merged_rules.search, "  ");
         }
+        println!();
+
+        // Show search parameters (matching ra search --explain format)
+        println!("{}", subheader("Search Parameters:"));
+        println!(
+            "   Phase 1: candidate_limit = {}",
+            params.effective_candidate_limit()
+        );
+        println!("   Phase 2: cutoff_ratio = {}", params.cutoff_ratio);
+        println!("   Phase 2: max_candidates = {}", params.max_candidates);
+        println!(
+            "   Phase 3: aggregation_threshold = {}",
+            params.aggregation_threshold
+        );
+        println!("   Phase 4: limit = {}", params.limit);
+        println!(
+            "   Aggregation = {}",
+            if params.disable_aggregation {
+                "disabled"
+            } else {
+                "enabled"
+            }
+        );
         println!();
 
         for fa in &analysis_result.files {
@@ -1807,6 +1835,8 @@ fn output_context_explain(analysis_result: &ContextAnalysisResult, json: bool) -
 struct JsonContextExplain {
     /// Merged context rules across all files.
     merged_rules: JsonMatchedRules,
+    /// Resolved search parameters.
+    search_params: JsonSearchParams,
     /// Analysis results for each file.
     files: Vec<JsonFileAnalysis>,
 }
@@ -1871,6 +1901,41 @@ impl JsonSearchOverrides {
             max_candidates: overrides.max_candidates,
             cutoff_ratio: overrides.cutoff_ratio,
             aggregation_threshold: overrides.aggregation_threshold,
+        }
+    }
+}
+
+/// JSON output for resolved search parameters.
+#[derive(Serialize)]
+struct JsonSearchParams {
+    /// Maximum candidates to retrieve in Phase 1.
+    candidate_limit: usize,
+    /// Score ratio threshold for Phase 2 elbow detection.
+    cutoff_ratio: f32,
+    /// Maximum results after Phase 2, before aggregation.
+    max_candidates: usize,
+    /// Sibling ratio threshold for Phase 3 aggregation.
+    aggregation_threshold: f32,
+    /// Whether aggregation is disabled.
+    disable_aggregation: bool,
+    /// Final result limit after aggregation.
+    limit: usize,
+    /// Trees to limit results to.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    trees: Vec<String>,
+}
+
+impl JsonSearchParams {
+    /// Creates from resolved search parameters.
+    fn from_params(params: &SearchParams) -> Self {
+        Self {
+            candidate_limit: params.effective_candidate_limit(),
+            cutoff_ratio: params.cutoff_ratio,
+            max_candidates: params.max_candidates,
+            aggregation_threshold: params.aggregation_threshold,
+            disable_aggregation: params.disable_aggregation,
+            limit: params.limit,
+            trees: params.trees.clone(),
         }
     }
 }
@@ -2277,15 +2342,7 @@ fn output_likethis_explain(
                 max_word_length: explanation.mlt_params.max_word_length,
                 boost_factor: explanation.mlt_params.boost_factor,
             },
-            search_params: JsonSearchParams {
-                candidate_limit: search_params.effective_candidate_limit(),
-                cutoff_ratio: search_params.cutoff_ratio,
-                max_candidates: search_params.max_candidates,
-                limit: search_params.limit,
-                aggregation_threshold: search_params.aggregation_threshold,
-                disable_aggregation: search_params.disable_aggregation,
-                trees: search_params.trees.clone(),
-            },
+            search_params: JsonSearchParams::from_params(search_params),
         };
 
         match serde_json::to_string_pretty(&json_output) {
@@ -2400,25 +2457,6 @@ struct JsonMltParams {
     max_word_length: usize,
     /// Boost factor for terms.
     boost_factor: f32,
-}
-
-/// JSON output for search parameters.
-#[derive(Serialize)]
-struct JsonSearchParams {
-    /// Maximum candidates from index.
-    candidate_limit: usize,
-    /// Score ratio threshold for cutoff.
-    cutoff_ratio: f32,
-    /// Maximum candidates before aggregation.
-    max_candidates: usize,
-    /// Maximum results to return after aggregation.
-    limit: usize,
-    /// Sibling ratio threshold for aggregation.
-    aggregation_threshold: f32,
-    /// Whether aggregation is disabled.
-    disable_aggregation: bool,
-    /// Trees to limit results to.
-    trees: Vec<String>,
 }
 
 /// Implements the `ra init` command.
