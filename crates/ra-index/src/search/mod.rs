@@ -23,6 +23,7 @@
 //! 4. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
 //!    enough siblings match. See [`crate::aggregate`] for details.
 
+mod adaptive;
 mod aggregate_api;
 mod execute;
 mod fuzzy;
