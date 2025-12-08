@@ -37,7 +37,10 @@
 //! the maximum score within its tree, so the best result in each tree gets a score of 1.0.
 //! This preserves relative ordering within trees while making cross-tree comparison fair.
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 use super::{SearchCandidate, SearchParams, aggregation::adaptive_aggregate};
 use crate::{
@@ -183,7 +186,18 @@ where
     let raw_candidate_count = candidates.len();
 
     // Phase 1: Normalize scores across trees (only for multi-tree searches)
-    let normalized = normalize_scores_across_trees(candidates, params.trees.len());
+    let tree_count = if params.trees.is_empty() {
+        // Derive tree count from candidates when no explicit tree filter is set.
+        candidates
+            .iter()
+            .map(|c| c.tree.as_str())
+            .collect::<HashSet<_>>()
+            .len()
+    } else {
+        params.trees.len()
+    };
+
+    let normalized = normalize_scores_across_trees(candidates, tree_count);
 
     // Phase 2: Aggregate all candidates (before elbow cutoff)
     // This ensures siblings have a chance to accumulate and merge.

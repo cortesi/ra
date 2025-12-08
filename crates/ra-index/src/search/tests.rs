@@ -260,6 +260,71 @@ fn search_matches_multiple_terms_in_query() {
 }
 
 #[test]
+fn normalizes_multi_tree_scores_when_trees_unspecified() {
+    use crate::search::types::SearchCandidate;
+
+    // Two candidates from different trees with different raw scores.
+    let candidates = vec![
+        SearchCandidate {
+            id: "local:docs/a.md".to_string(),
+            doc_id: "local:docs/a.md".to_string(),
+            parent_id: None,
+            hierarchy: vec!["A".to_string()],
+            depth: 0,
+            tree: "local".to_string(),
+            path: "docs/a.md".to_string(),
+            body: "a".to_string(),
+            position: 0,
+            byte_start: 0,
+            byte_end: 1,
+            sibling_count: 0,
+            score: 10.0,
+            snippet: None,
+            match_ranges: vec![],
+            hierarchy_match_ranges: vec![],
+            path_match_ranges: vec![],
+            match_details: None,
+        },
+        SearchCandidate {
+            id: "global:docs/b.md".to_string(),
+            doc_id: "global:docs/b.md".to_string(),
+            parent_id: None,
+            hierarchy: vec!["B".to_string()],
+            depth: 0,
+            tree: "global".to_string(),
+            path: "docs/b.md".to_string(),
+            body: "b".to_string(),
+            position: 0,
+            byte_start: 0,
+            byte_end: 1,
+            sibling_count: 0,
+            score: 5.0,
+            snippet: None,
+            match_ranges: vec![],
+            hierarchy_match_ranges: vec![],
+            path_match_ranges: vec![],
+            match_details: None,
+        },
+    ];
+
+    // No explicit tree filter to reproduce default cross-tree search.
+    let params = SearchParams {
+        disable_aggregation: true,
+        cutoff_ratio: 0.0,
+        aggregation_pool_size: 10,
+        limit: 10,
+        ..Default::default()
+    };
+
+    let (results, _) =
+        super::pipeline::process_candidates_with_stats(candidates, &params, |_| None);
+
+    // Scores should be normalized per tree (both top hits become 1.0).
+    let scores: Vec<f32> = results.iter().map(|r| r.candidate().score).collect();
+    assert!(scores.iter().all(|s| (*s - 1.0).abs() < f32::EPSILON));
+}
+
+#[test]
 fn search_highlights_hierarchy_and_path() {
     let temp = TempDir::new().unwrap();
     create_test_index(&temp);
