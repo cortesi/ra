@@ -11,6 +11,20 @@ use keyword_extraction::{
     yake::{Yake, YakeParams},
 };
 
+/// Extended punctuation list including box-drawing characters and other markdown artifacts.
+///
+/// The default punctuation in `keyword_extraction` only covers Latin/Germanic languages.
+/// This list adds Unicode box-drawing characters commonly found in markdown tables.
+static PUNCTUATION: &[&str] = &[
+    // Standard punctuation
+    ".", ",", ":", ";", "!", "?", "(", ")", "[", "]", "{", "}", "\"", "'", "`", "-", "—", "–", "/",
+    "\\", "|", "@", "#", "$", "%", "^", "&", "*", "+", "=", "<", ">", "~", "_",
+    // Box-drawing characters (markdown tables)
+    "─", "│", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼", "═", "║", "╔", "╗", "╚", "╝", "╠", "╣",
+    "╦", "╩", "╬", "╒", "╓", "╕", "╖", "╘", "╙", "╛", "╜", "╞", "╟", "╡", "╢", "╤", "╥", "╧", "╨",
+    "╪", "╫",
+];
+
 use super::ScoredKeyword;
 use crate::Stopwords;
 
@@ -90,9 +104,18 @@ impl RakeExtractor {
 pub struct TextRankExtractor {
     /// Stopwords to filter out.
     stopwords: Vec<String>,
-    /// Maximum phrase length to consider.
-    phrase_length: Option<usize>,
+    /// Punctuation characters that delimit phrases.
+    punctuation: Vec<String>,
 }
+
+/// Default window size for TextRank co-occurrence graph.
+const DEFAULT_WINDOW_SIZE: usize = 2;
+/// Default damping factor for PageRank iteration.
+const DEFAULT_DAMPING_FACTOR: f32 = 0.85;
+/// Default convergence tolerance.
+const DEFAULT_TOLERANCE: f32 = 0.00005;
+/// Default maximum phrase length.
+const DEFAULT_PHRASE_LENGTH: usize = 3;
 
 impl Default for TextRankExtractor {
     fn default() -> Self {
@@ -101,11 +124,11 @@ impl Default for TextRankExtractor {
 }
 
 impl TextRankExtractor {
-    /// Creates a new TextRank extractor with default stopwords.
+    /// Creates a new TextRank extractor with default stopwords and extended punctuation.
     pub fn new() -> Self {
         Self {
             stopwords: Stopwords::new().as_vec(),
-            phrase_length: Some(3),
+            punctuation: PUNCTUATION.iter().map(|s| (*s).to_string()).collect(),
         }
     }
 
@@ -113,22 +136,23 @@ impl TextRankExtractor {
     pub fn with_stopwords(stopwords: &Stopwords) -> Self {
         Self {
             stopwords: stopwords.as_vec(),
-            phrase_length: Some(3),
+            punctuation: PUNCTUATION.iter().map(|s| (*s).to_string()).collect(),
         }
-    }
-
-    /// Sets the maximum phrase length.
-    pub fn with_phrase_length(mut self, length: Option<usize>) -> Self {
-        self.phrase_length = length;
-        self
     }
 
     /// Extracts keywords from text using TextRank.
     ///
     /// Returns keywords sorted by score (highest first).
     pub fn extract(&self, text: &str) -> Vec<ScoredKeyword> {
-        let params =
-            TextRankParams::WithDefaultsAndPhraseLength(text, &self.stopwords, self.phrase_length);
+        let params = TextRankParams::All(
+            text,
+            &self.stopwords,
+            Some(&self.punctuation),
+            DEFAULT_WINDOW_SIZE,
+            DEFAULT_DAMPING_FACTOR,
+            DEFAULT_TOLERANCE,
+            Some(DEFAULT_PHRASE_LENGTH),
+        );
         let text_rank = TextRank::new(params);
 
         text_rank
@@ -142,8 +166,15 @@ impl TextRankExtractor {
     ///
     /// Returns phrases sorted by score (highest first).
     pub fn extract_phrases(&self, text: &str) -> Vec<ScoredKeyword> {
-        let params =
-            TextRankParams::WithDefaultsAndPhraseLength(text, &self.stopwords, self.phrase_length);
+        let params = TextRankParams::All(
+            text,
+            &self.stopwords,
+            Some(&self.punctuation),
+            DEFAULT_WINDOW_SIZE,
+            DEFAULT_DAMPING_FACTOR,
+            DEFAULT_TOLERANCE,
+            Some(DEFAULT_PHRASE_LENGTH),
+        );
         let text_rank = TextRank::new(params);
 
         text_rank
