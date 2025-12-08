@@ -1,6 +1,6 @@
 //! Parameter types for search execution.
 
-use super::adaptive::DEFAULT_AGGREGATION_THRESHOLD;
+use super::aggregation::DEFAULT_AGGREGATION_THRESHOLD;
 use crate::elbow::DEFAULT_CUTOFF_RATIO;
 
 /// Default final result limit after aggregation.

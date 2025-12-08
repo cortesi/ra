@@ -30,7 +30,7 @@
 
 use std::{cmp::Ordering, collections::HashMap};
 
-use super::{SearchCandidate, SearchParams, adaptive::adaptive_aggregate};
+use super::{SearchCandidate, SearchParams, aggregation::adaptive_aggregate};
 use crate::{elbow::elbow_cutoff, result::SearchResult as AggregatedSearchResult};
 
 /// Normalizes scores across multiple trees using top-score normalization.

@@ -20,9 +20,9 @@
 //!    across trees. See [`crate::elbow`] for the algorithm.
 //! 
 //! 4. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
-//!    enough siblings match. See [`adaptive`] module.
+//!    enough siblings match. See [`aggregation`] module.
 
-mod adaptive;
+mod aggregation;
 mod execute;
 mod params;
 mod pipeline;
