@@ -9,8 +9,11 @@ use std::{
 };
 
 use crate::{
-    Document, DocumentError, Frontmatter, build_chunk_tree, extract_headings, node::Node,
-    parse_frontmatter, tree::ChunkTree,
+    Document, DocumentError,
+    build::{build_chunk_tree, extract_headings},
+    frontmatter::{Frontmatter, parse_frontmatter},
+    node::Node,
+    tree::ChunkTree,
 };
 
 /// Result of parsing a document, including metadata about the parsing process.
@@ -18,8 +21,6 @@ use crate::{
 pub struct ParseResult {
     /// The parsed document.
     pub document: Document,
-    /// Whether the document has any chunks (nodes with body text).
-    pub has_chunks: bool,
 }
 
 /// Parses a markdown string into a document.
@@ -40,7 +41,6 @@ pub fn parse_markdown(content: &str, path: &Path, tree: &str) -> ParseResult {
     // Note: We use the full content (including frontmatter) as the spec says
     // frontmatter bytes are included in the document node's body
     let chunk_tree = build_chunk_tree(content, tree, path, &title);
-    let has_chunks = chunk_tree.chunk_count() > 0;
 
     let document = Document {
         path: path.to_path_buf(),
@@ -50,10 +50,7 @@ pub fn parse_markdown(content: &str, path: &Path, tree: &str) -> ParseResult {
         chunk_tree,
     };
 
-    ParseResult {
-        document,
-        has_chunks,
-    }
+    ParseResult { document }
 }
 
 /// Parses a plain text file into a document.
@@ -69,7 +66,6 @@ pub fn parse_text(content: &str, path: &Path, tree: &str) -> ParseResult {
     // Create a document node for the entire file
     let root = Node::document(tree, path, title.clone(), content.len());
     let chunk_tree = ChunkTree::new(root, content.to_string());
-    let has_chunks = chunk_tree.chunk_count() > 0;
 
     let document = Document {
         path: path.to_path_buf(),
@@ -79,10 +75,7 @@ pub fn parse_text(content: &str, path: &Path, tree: &str) -> ParseResult {
         chunk_tree,
     };
 
-    ParseResult {
-        document,
-        has_chunks,
-    }
+    ParseResult { document }
 }
 
 /// Parses a file from disk, detecting type by extension.
@@ -150,7 +143,7 @@ Let's begin."#;
         assert_eq!(result.document.title, "My Guide");
         assert_eq!(result.document.tags, vec!["rust", "tutorial"]);
         assert_eq!(result.document.tree, "docs");
-        assert!(result.has_chunks);
+        assert!(result.document.chunk_tree.chunk_count() > 0);
 
         // Extract chunks from the tree
         let chunks = result
@@ -213,7 +206,7 @@ Let's begin."#;
         let result = parse_text(content, Path::new("notes.txt"), "docs");
 
         assert_eq!(result.document.title, "notes");
-        assert!(result.has_chunks);
+        assert!(result.document.chunk_tree.chunk_count() > 0);
 
         let chunks = result
             .document
@@ -291,7 +284,6 @@ Let's begin."#;
         let result = parse_markdown(content, Path::new("empty.md"), "docs");
 
         // Empty document has no chunks
-        assert!(!result.has_chunks);
         assert_eq!(result.document.chunk_tree.chunk_count(), 0);
     }
 
@@ -302,7 +294,6 @@ Let's begin."#;
         let result = parse_markdown(content, Path::new("whitespace.md"), "docs");
 
         // Whitespace-only document has no chunks
-        assert!(!result.has_chunks);
         assert_eq!(result.document.chunk_tree.chunk_count(), 0);
     }
 
@@ -314,7 +305,6 @@ Let's begin."#;
         let result = parse_markdown(content, Path::new("headings.md"), "docs");
 
         // No chunks because all headings have empty spans
-        assert!(!result.has_chunks);
         assert_eq!(result.document.chunk_tree.chunk_count(), 0);
     }
 
@@ -324,7 +314,6 @@ Let's begin."#;
 
         let result = parse_text(content, Path::new("empty.txt"), "docs");
 
-        assert!(!result.has_chunks);
         assert_eq!(result.document.chunk_tree.chunk_count(), 0);
     }
 
@@ -382,7 +371,7 @@ Section 2 content.
         let content = include_str!("../../../docs/chunking.md");
         let result = parse_markdown(content, Path::new("chunking.md"), "docs");
 
-        assert!(result.has_chunks);
+        assert!(result.document.chunk_tree.chunk_count() > 0);
         assert_eq!(result.document.title, "Chunking");
 
         // Should have hierarchical structure with multiple sections
@@ -404,7 +393,7 @@ Section 2 content.
         let content = include_str!("../../../docs/search.md");
         let result = parse_markdown(content, Path::new("search.md"), "docs");
 
-        assert!(result.has_chunks);
+        assert!(result.document.chunk_tree.chunk_count() > 0);
         assert_eq!(result.document.title, "Search");
 
         // Should have chunks
@@ -418,7 +407,7 @@ Section 2 content.
         let content = include_str!("../../../docs/spec.md");
         let result = parse_markdown(content, Path::new("spec.md"), "docs");
 
-        assert!(result.has_chunks);
+        assert!(result.document.chunk_tree.chunk_count() > 0);
 
         // Should have hierarchical structure
         let tree = &result.document.chunk_tree;

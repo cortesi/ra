@@ -27,6 +27,5 @@ mod lexer;
 mod parser;
 
 pub use ast::QueryExpr;
-pub use error::{LexError, ParseError, QueryError, QueryErrorKind};
-pub use lexer::{Token, tokenize};
+pub use error::{QueryError, QueryErrorKind};
 pub use parser::parse;

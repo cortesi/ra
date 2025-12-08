@@ -21,10 +21,10 @@ use ra_highlight::{
     Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader, theme, warning,
 };
 use ra_index::{
-    AggregatedSearchResult, ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats,
-    IndexStatus, Indexer, MoreLikeThisExplanation, MoreLikeThisParams, ProgressReporter,
-    SearchCandidate, SearchParams, Searcher, SilentReporter, detect_index_status, index_directory,
-    merge_ranges, open_searcher, parse_query,
+    ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats, IndexStatus, Indexer,
+    MoreLikeThisExplanation, MoreLikeThisParams, ProgressReporter, SearchCandidate, SearchParams,
+    SearchResult, Searcher, SilentReporter, detect_index_status, index_directory, merge_ranges,
+    open_searcher, parse_query,
 };
 use serde::Serialize;
 
@@ -788,11 +788,11 @@ fn json_match_ranges(ranges: &[Range<usize>]) -> Vec<JsonMatchRange> {
 }
 
 /// Builds a JSON result from an aggregated search result.
-fn json_from_aggregated_result(result: &AggregatedSearchResult, list: bool) -> JsonSearchResult {
+fn json_from_aggregated_result(result: &SearchResult, list: bool) -> JsonSearchResult {
     let constituents_count = result.constituents().map(|c| c.len()).unwrap_or(0);
     let match_ranges = match result {
-        AggregatedSearchResult::Single(c) => Some(json_match_ranges(&c.match_ranges)),
-        AggregatedSearchResult::Aggregated { .. } => None,
+        SearchResult::Single(c) => Some(json_match_ranges(&c.match_ranges)),
+        SearchResult::Aggregated { .. } => None,
     };
 
     let c = result.candidate();
@@ -835,7 +835,7 @@ enum DisplayMode {
 }
 
 /// Retrieves the full body for a search result, falling back to the indexed body.
-fn read_full_body(result: &AggregatedSearchResult, searcher: &Searcher) -> String {
+fn read_full_body(result: &SearchResult, searcher: &Searcher) -> String {
     let c = result.candidate();
     searcher
         .read_full_content(&c.tree, &c.path, c.byte_start, c.byte_end)
@@ -918,7 +918,7 @@ fn rebuild_index_and_open(
 /// - verbosity 1 (-v): Shows a summary of matched terms and stemming
 /// - verbosity 2 (-vv): Full match details including field breakdown and term frequencies
 /// - verbosity 3+ (-vvv): Adds raw Tantivy score explanation
-fn format_match_details(result: &AggregatedSearchResult, verbosity: u8) -> String {
+fn format_match_details(result: &SearchResult, verbosity: u8) -> String {
     let mut output = String::new();
 
     // Get match details from the result (or first constituent for aggregated)
@@ -1149,10 +1149,10 @@ fn highlight_breadcrumb_title(
 
 /// Sorts and merges overlapping or adjacent ranges.
 /// Computes highlight ranges for a search result, mapping child matches into the parent body.
-fn aggregated_match_ranges(result: &AggregatedSearchResult, full_body: &str) -> Vec<Range<usize>> {
+fn aggregated_match_ranges(result: &SearchResult, full_body: &str) -> Vec<Range<usize>> {
     match result {
-        AggregatedSearchResult::Single(candidate) => candidate.match_ranges.clone(),
-        AggregatedSearchResult::Aggregated {
+        SearchResult::Single(candidate) => candidate.match_ranges.clone(),
+        SearchResult::Aggregated {
             parent,
             constituents,
         } => {
@@ -1277,7 +1277,8 @@ fn cmd_search(
             Ok(Some(expr)) => {
                 println!("{}", subheader("Parsed AST:"));
                 // Indent each line of the AST output
-                for line in expr.to_string().lines() {
+                let expr_str = expr.to_string();
+                for line in expr_str.lines() {
                     println!("   {line}");
                 }
                 println!();
@@ -1359,7 +1360,7 @@ fn cmd_search(
 
 /// Outputs aggregated search results in various formats.
 fn output_aggregated_results(
-    results: &[AggregatedSearchResult],
+    results: &[SearchResult],
     query: &str,
     list: bool,
     matches: bool,
@@ -1398,7 +1399,7 @@ fn output_aggregated_results(
 
 /// Renders non-JSON search results for the selected display mode.
 fn output_text_results(
-    results: &[AggregatedSearchResult],
+    results: &[SearchResult],
     verbose: u8,
     searcher: &Searcher,
     mode: DisplayMode,
@@ -1453,7 +1454,7 @@ fn output_text_results(
 
 /// Formats an aggregated search result for the given display mode.
 fn format_aggregated_result(
-    result: &AggregatedSearchResult,
+    result: &SearchResult,
     verbose: u8,
     full_body: &str,
     mode: DisplayMode,
@@ -2018,10 +2019,7 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let aggregated: Vec<AggregatedSearchResult> = results
-        .into_iter()
-        .map(AggregatedSearchResult::Single)
-        .collect();
+    let aggregated: Vec<SearchResult> = results.into_iter().map(SearchResult::Single).collect();
 
     output_aggregated_results(&aggregated, id, false, false, json, 0, &searcher)
 }
@@ -2163,7 +2161,7 @@ fn search_more_like_this_by_file(
     search_params: &SearchParams,
     searcher: &mut Searcher,
     config: &Config,
-) -> Result<Vec<AggregatedSearchResult>, ExitCode> {
+) -> Result<Vec<SearchResult>, ExitCode> {
     let path = Path::new(file_path);
 
     // Check file exists
@@ -2198,7 +2196,7 @@ fn search_more_like_this_by_file(
     }
 
     // Add body from root chunk (concatenate all chunk bodies)
-    let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+    let chunks = doc.extract_chunks();
     let body: String = chunks
         .iter()
         .map(|c| c.body.as_str())
@@ -2302,7 +2300,7 @@ fn cmd_likethis_explain(
         };
 
         let doc = &parsed.document;
-        let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+        let chunks = doc.extract_chunks();
         let body: String = chunks
             .iter()
             .map(|c| c.body.as_str())
@@ -2969,12 +2967,12 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
     }
 
     // Extract chunks from the tree
-    let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+    let chunks = doc.extract_chunks();
 
     // Chunking info
     let chunk_info = format!(
         "hierarchical chunking -> {} nodes, {} chunks",
-        doc.chunk_tree.node_count(),
+        doc.node_count(),
         chunks.len()
     );
     println!("{}", dim(&chunk_info));

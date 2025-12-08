@@ -91,7 +91,7 @@ impl ChunkDocument {
     /// * `document` - The document to index
     /// * `mtime` - File modification time
     pub fn from_document(document: &Document, mtime: SystemTime) -> Vec<Self> {
-        let chunks = document.chunk_tree.extract_chunks(&document.title);
+        let chunks = document.extract_chunks();
         chunks
             .iter()
             .map(|chunk| Self::from_tree_chunk(chunk, document, mtime))
@@ -103,33 +103,39 @@ impl ChunkDocument {
 mod test {
     use std::path::PathBuf;
 
-    use ra_document::build_chunk_tree;
+    use ra_document::parse_markdown;
 
     use super::*;
 
     fn make_test_document() -> Document {
         let path = PathBuf::from("docs/api/handlers.md");
-        let content = r#"Introduction to API handlers.
+        let _content = r#"Introduction to API handlers.
 
 # Error Handling
 
 How to handle errors in API handlers."#;
-        let chunk_tree = build_chunk_tree(content, "local", &path, "API Handlers");
+        // Use parse_markdown to create the document
+        // We need to inject tags manually or use frontmatter in content
+        // Let's use frontmatter in content for cleaner construction
+        let content_with_fm = r#"---
+title: API Handlers
+tags: [api, rust]
 
-        Document {
-            path,
-            tree: "local".to_string(),
-            title: "API Handlers".to_string(),
-            tags: vec!["api".to_string(), "rust".to_string()],
-            chunk_tree,
-        }
+---
+Introduction to API handlers.
+
+# Error Handling
+
+How to handle errors in API handlers."#;
+
+        parse_markdown(content_with_fm, &path, "local").document
     }
 
     #[test]
     fn from_tree_chunk_preserves_data() {
         let doc = make_test_document();
         let mtime = SystemTime::UNIX_EPOCH;
-        let chunks = doc.chunk_tree.extract_chunks(&doc.title);
+        let chunks = doc.extract_chunks();
         let chunk_doc = ChunkDocument::from_tree_chunk(&chunks[0], &doc, mtime);
 
         // First chunk is the document node (preamble)

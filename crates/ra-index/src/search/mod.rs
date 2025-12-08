@@ -1,24 +1,24 @@
 //! Search execution for the ra index.
-//! 
+//!
 //! Provides the [`Searcher`] struct for querying the index and retrieving results.
 //! Supports field boosting, local tree boosting, snippet generation, and per-tree
 //! score normalization for multi-tree searches.
-//! 
+//!
 //! # Search Algorithm
-//! 
+//!
 //! The search process follows these phases:
-//! 
+//!
 //! 1. **Query Execution**: Run the query against the index, applying tree filters
 //!    and field boosting to get raw BM25 scores. See [`execute`] module.
-//! 
+//!
 //! 2. **Score Normalization** (multi-tree only): When searching across multiple trees,
 //!    normalize scores so each tree's best result gets 1.0. This makes cross-tree
 //!    comparison fair regardless of content density differences. See [`pipeline`] module.
-//! 
+//!
 //! 3. **Elbow Cutoff**: Find the "elbow" point where relevance drops significantly
 //!    and truncate results there. With normalized scores, this works correctly
 //!    across trees. See [`crate::elbow`] for the algorithm.
-//! 
+//!
 //! 4. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
 //!    enough siblings match. See [`aggregation`] module.
 
@@ -38,7 +38,9 @@ use std::{
 };
 
 use execute::ExecutionOptions;
+pub use execute::merge_ranges;
 use levenshtein_automata::LevenshteinAutomatonBuilder;
+pub use params::{MoreLikeThisParams, SearchParams};
 use pipeline::process_candidates;
 use ra_config::FieldBoosts;
 use ra_context::IdfProvider;
@@ -50,18 +52,15 @@ use tantivy::{
     schema::{Field, IndexRecordOption, OwnedValue, Value},
     tokenizer::TextAnalyzer,
 };
+pub use types::{MatchDetails, SearchCandidate};
 
 use crate::{
     IndexError, QueryError,
     analyzer::{RA_TOKENIZER, build_analyzer_from_name},
     query::QueryCompiler,
-    result::SearchResult as AggregatedSearchResult,
+    result::SearchResult,
     schema::IndexSchema,
 };
-
-pub use execute::merge_ranges;
-pub use params::{MoreLikeThisParams, SearchParams};
-pub use types::{MatchDetails, SearchCandidate};
 
 /// Maximum number of documents to retrieve in bulk lookup operations.
 const MAX_BULK_LOOKUP: usize = 100_000;
@@ -259,7 +258,7 @@ impl Searcher {
         &mut self,
         query_str: &str,
         params: &SearchParams,
-    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+    ) -> Result<Vec<SearchResult>, IndexError> {
         let content_query = match self.build_query(query_str)? {
             Some(q) => q,
             None => return Ok(Vec::new()),
@@ -275,7 +274,7 @@ impl Searcher {
         &mut self,
         expr: &ra_query::QueryExpr,
         params: &SearchParams,
-    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+    ) -> Result<Vec<SearchResult>, IndexError> {
         let content_query = match self.query_compiler.compile(expr).map_err(|e| {
             let query_err: QueryError = e.into();
             IndexError::Query(query_err)
@@ -297,7 +296,7 @@ impl Searcher {
         query_terms: &[String],
         display_query: &str,
         params: &SearchParams,
-    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+    ) -> Result<Vec<SearchResult>, IndexError> {
         let query = self.apply_tree_filter(content_query, &params.trees);
 
         // Execute query and get raw candidates
@@ -319,12 +318,8 @@ impl Searcher {
             }
         };
 
-        let candidates = self.execute_query(
-            &*query,
-            query_terms,
-            effective_candidate_limit,
-            &options,
-        )?;
+        let candidates =
+            self.execute_query(&*query, query_terms, effective_candidate_limit, &options)?;
 
         // Process through unified pipeline
         Ok(process_candidates(candidates, params, |parent_id| {
@@ -506,7 +501,7 @@ impl Searcher {
         id: &str,
         mlt_params: &MoreLikeThisParams,
         search_params: &SearchParams,
-    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+    ) -> Result<Vec<SearchResult>, IndexError> {
         let doc_address = self.get_doc_address(id)?.ok_or_else(|| {
             IndexError::Query(QueryError::compile(format!("document not found: {id}")))
         })?;
@@ -524,7 +519,7 @@ impl Searcher {
         mlt_params: &MoreLikeThisParams,
         search_params: &SearchParams,
         exclude_doc_ids: &HashSet<String>,
-    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+    ) -> Result<Vec<SearchResult>, IndexError> {
         let tantivy_fields = self.convert_field_names_to_tantivy(fields)?;
         let query = mlt_params.build_query_from_fields(tantivy_fields);
 
@@ -632,7 +627,7 @@ impl Searcher {
         query: Box<dyn Query>,
         exclude_ids: &HashSet<String>,
         params: &SearchParams,
-    ) -> Result<Vec<AggregatedSearchResult>, IndexError> {
+    ) -> Result<Vec<SearchResult>, IndexError> {
         let query = self.apply_tree_filter(query, &params.trees);
         let effective_candidate_limit = params.effective_candidate_limit();
 

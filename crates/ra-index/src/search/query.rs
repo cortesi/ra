@@ -49,7 +49,7 @@ impl Searcher {
         query_str: &str,
     ) -> Result<Option<Box<dyn Query>>, IndexError> {
         let expr = parse(query_str).map_err(|e| {
-            let query_err: QueryError = e.into();
+            let query_err: QueryError = e;
             IndexError::Query(query_err.with_query(query_str))
         })?;
 

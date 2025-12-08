@@ -19,7 +19,7 @@ mod tree;
 
 use std::path::PathBuf;
 
-pub use build::{HeadingInfo, build_chunk_tree, extract_headings};
+pub use build::{HeadingInfo, extract_headings};
 pub use error::DocumentError;
 pub use frontmatter::{Frontmatter, parse_frontmatter};
 pub use parse::{ParseResult, parse_file, parse_markdown, parse_text};
@@ -37,12 +37,25 @@ pub struct Document {
     /// Tags from frontmatter.
     pub tags: Vec<String>,
     /// The hierarchical chunk tree for this document.
-    pub chunk_tree: ChunkTree,
+    pub(crate) chunk_tree: ChunkTree,
+}
+
+impl Document {
+    /// Extracts all chunks from the document's tree, ready for indexing.
+    pub fn extract_chunks(&self) -> Vec<TreeChunk> {
+        self.chunk_tree.extract_chunks(&self.title)
+    }
+
+    /// Returns the total number of nodes in the document tree.
+    pub fn node_count(&self) -> usize {
+        self.chunk_tree.node_count()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::build_chunk_tree;
 
     #[test]
     fn test_document_creation() {

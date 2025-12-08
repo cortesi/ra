@@ -56,7 +56,7 @@ pub use indexer::{IndexStats, Indexer, ProgressReporter, SilentReporter};
 pub use location::index_directory;
 pub use query::{QueryError, QueryErrorKind, QueryExpr, parse as parse_query};
 pub use ra_context::is_binary_file;
-pub use result::SearchResult as AggregatedSearchResult;
+pub use result::SearchResult;
 pub use search::{
     MatchDetails, MoreLikeThisExplanation, MoreLikeThisParams, SearchCandidate, SearchParams,
     Searcher, TreeFilteredSearcher, merge_ranges, open_searcher,

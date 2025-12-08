@@ -29,7 +29,7 @@ pub struct ChunkTree {
 
 impl ChunkTree {
     /// Creates a new chunk tree with the given root node and content.
-    pub fn new(root: Node, content: String) -> Self {
+    pub(crate) fn new(root: Node, content: String) -> Self {
         Self {
             root,
             content,
@@ -38,7 +38,11 @@ impl ChunkTree {
     }
 
     /// Creates a new chunk tree with a known first heading position.
-    pub fn with_first_heading(root: Node, content: String, first_heading_start: usize) -> Self {
+    pub(crate) fn with_first_heading(
+        root: Node,
+        content: String,
+        first_heading_start: usize,
+    ) -> Self {
         Self {
             root,
             content,
@@ -129,7 +133,7 @@ impl ChunkTree {
     /// Assigns position values to all nodes via pre-order traversal.
     ///
     /// This should be called after the tree structure is fully built.
-    pub fn assign_positions(&mut self) {
+    pub(crate) fn assign_positions(&mut self) {
         for (position, node) in self.root.iter_preorder_mut().enumerate() {
             node.position = position;
         }
@@ -138,7 +142,7 @@ impl ChunkTree {
     /// Computes and assigns sibling_count for all nodes.
     ///
     /// This should be called after the tree structure is fully built.
-    pub fn assign_sibling_counts(&mut self) {
+    pub(crate) fn assign_sibling_counts(&mut self) {
         assign_sibling_counts_recursive(&mut self.root);
     }
 

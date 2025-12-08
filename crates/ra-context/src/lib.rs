@@ -186,7 +186,7 @@ impl ContextAnalyzer {
 /// - Directory components: weight 3.0 (source: "path:dir")
 ///
 /// Terms are filtered against stopwords and deduplicated.
-pub fn extract_path_terms(
+pub(crate) fn extract_path_terms(
     path: &Path,
     stopwords: &Stopwords,
     min_length: usize,

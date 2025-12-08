@@ -25,7 +25,7 @@ use std::mem;
 
 use crate::{
     ast::QueryExpr,
-    error::ParseError,
+    error::{ParseError, QueryError},
     lexer::{Token, tokenize},
 };
 
@@ -276,10 +276,10 @@ impl Parser {
 /// Parses a query string into an AST.
 ///
 /// Returns `Ok(None)` for empty queries, `Ok(Some(expr))` for valid queries,
-/// or `Err(ParseError)` for invalid syntax.
-pub fn parse(input: &str) -> Result<Option<QueryExpr>, ParseError> {
-    let tokens = tokenize(input)?;
-    Parser::new(tokens).parse()
+/// or `Err(QueryError)` for invalid syntax.
+pub fn parse(input: &str) -> Result<Option<QueryExpr>, QueryError> {
+    let tokens = tokenize(input).map_err(QueryError::from)?;
+    Parser::new(tokens).parse().map_err(QueryError::from)
 }
 
 #[cfg(test)]
@@ -535,37 +535,37 @@ mod tests {
     #[test]
     fn error_unclosed_paren() {
         let err = parse("(rust async").unwrap_err();
-        assert!(err.message.contains("closing parenthesis"));
+        assert!(err.message().contains("closing parenthesis"));
     }
 
     #[test]
     fn error_unexpected_rparen() {
         let err = parse("rust)").unwrap_err();
-        assert!(err.message.contains("unexpected"));
+        assert!(err.message().contains("unexpected"));
     }
 
     #[test]
     fn error_or_at_start() {
         let err = parse("OR rust").unwrap_err();
-        assert!(err.message.contains("OR"));
+        assert!(err.message().contains("OR"));
     }
 
     #[test]
     fn error_or_at_end() {
         let err = parse("rust OR").unwrap_err();
-        assert!(err.message.contains("end of query"));
+        assert!(err.message().contains("end of query"));
     }
 
     #[test]
     fn error_field_without_value() {
         let err = parse("title:").unwrap_err();
-        assert!(err.message.contains("expected"));
+        assert!(err.message().contains("expected"));
     }
 
     #[test]
     fn error_unclosed_quote() {
         let err = parse("\"unclosed").unwrap_err();
-        assert!(err.message.contains("unclosed"));
+        assert!(err.message().contains("unclosed"));
     }
 
     #[test]
@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn error_boost_at_start() {
         let err = parse("^2.5 rust").unwrap_err();
-        assert!(err.message.contains("boost"));
+        assert!(err.message().contains("boost"));
     }
 
     #[test]
