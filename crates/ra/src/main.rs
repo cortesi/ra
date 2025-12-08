@@ -21,10 +21,10 @@ use ra_highlight::{
     Highlighter, breadcrumb, dim, format_body, header, indent_content, subheader, theme, warning,
 };
 use ra_index::{
-    ContextAnalysisResult, ContextSearch, ContextWarning, IndexStats, IndexStatus, Indexer,
-    MoreLikeThisExplanation, MoreLikeThisParams, ProgressReporter, SearchCandidate, SearchParams,
-    SearchResult, Searcher, SilentReporter, detect_index_status, index_directory, merge_ranges,
-    open_searcher, parse_query,
+    ContextAnalysisResult, ContextSearch, ContextWarning, ElbowReason, IndexStats, IndexStatus,
+    Indexer, MoreLikeThisExplanation, MoreLikeThisParams, PipelineStats, ProgressReporter,
+    SearchCandidate, SearchParams, SearchResult, Searcher, SilentReporter, detect_index_status,
+    index_directory, merge_ranges, open_searcher, parse_query,
 };
 use serde::Serialize;
 
@@ -43,7 +43,7 @@ struct SearchParamsOverrides {
     /// Maximum results to return after aggregation.
     limit: Option<usize>,
     /// Maximum candidates to pass through Phase 2 into aggregation.
-    max_candidates: Option<usize>,
+    aggregation_pool_size: Option<usize>,
     /// Score ratio threshold for relevance cutoff.
     cutoff_ratio: Option<f32>,
     /// Sibling ratio threshold for aggregation.
@@ -64,9 +64,9 @@ impl SearchParamsOverrides {
         SearchParams {
             candidate_limit: None, // Let SearchParams derive from limit
             cutoff_ratio: self.cutoff_ratio.unwrap_or_else(|| defaults.cutoff_ratio()),
-            max_candidates: self
-                .max_candidates
-                .unwrap_or_else(|| defaults.max_candidates()),
+            aggregation_pool_size: self
+                .aggregation_pool_size
+                .unwrap_or_else(|| defaults.aggregation_pool_size()),
             aggregation_threshold: self
                 .aggregation_threshold
                 .unwrap_or_else(|| defaults.aggregation_threshold()),
@@ -92,10 +92,10 @@ impl SearchParamsOverrides {
                 .cutoff_ratio
                 .or(rule_overrides.cutoff_ratio)
                 .unwrap_or_else(|| defaults.cutoff_ratio()),
-            max_candidates: self
-                .max_candidates
-                .or(rule_overrides.max_candidates)
-                .unwrap_or_else(|| defaults.max_candidates()),
+            aggregation_pool_size: self
+                .aggregation_pool_size
+                .or(rule_overrides.aggregation_pool_size)
+                .unwrap_or_else(|| defaults.aggregation_pool_size()),
             limit: self
                 .limit
                 .or(rule_overrides.limit)
@@ -259,15 +259,15 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to pass through elbow cutoff into aggregation [default: 50]
+        /// Size of the aggregation pool (candidates available for hierarchical aggregation) [default: 500]
         #[arg(long)]
-        max_candidates: Option<usize>,
+        aggregation_pool_size: Option<usize>,
 
         /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
         cutoff_ratio: Option<f32>,
 
-        /// Sibling ratio threshold for aggregation [default: 0.5]
+        /// Sibling ratio threshold for aggregation [default: 0.1]
         #[arg(long)]
         aggregation_threshold: Option<f32>,
 
@@ -298,8 +298,8 @@ EXAMPLES:
         #[arg(long)]
         terms: Option<usize>,
 
-        /// Keyword extraction algorithm: tfidf (corpus-aware), rake (co-occurrence),
-        /// textrank (graph-based), yake (statistical) [default: tfidf]
+        /// Keyword extraction algorithm: textrank (graph-based), tfidf (corpus-aware),
+        /// rake (co-occurrence), yake (statistical) [default: textrank]
         #[arg(short = 'a', long, value_parser = parse_algorithm)]
         algorithm: Option<ra_context::KeywordAlgorithm>,
 
@@ -323,15 +323,15 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to pass through elbow cutoff into aggregation [default: 50]
+        /// Size of the aggregation pool (candidates available for hierarchical aggregation) [default: 500]
         #[arg(long)]
-        max_candidates: Option<usize>,
+        aggregation_pool_size: Option<usize>,
 
         /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
         cutoff_ratio: Option<f32>,
 
-        /// Sibling ratio threshold for aggregation [default: 0.5]
+        /// Sibling ratio threshold for aggregation [default: 0.1]
         #[arg(long)]
         aggregation_threshold: Option<f32>,
 
@@ -417,15 +417,15 @@ EXAMPLES:
         #[arg(long)]
         no_aggregation: bool,
 
-        /// Maximum candidates to pass through elbow cutoff into aggregation [default: 50]
+        /// Size of the aggregation pool (candidates available for hierarchical aggregation) [default: 500]
         #[arg(long)]
-        max_candidates: Option<usize>,
+        aggregation_pool_size: Option<usize>,
 
         /// Score ratio threshold for relevance cutoff (0.0-1.0) [default: 0.3]
         #[arg(long)]
         cutoff_ratio: Option<f32>,
 
-        /// Sibling ratio threshold for aggregation [default: 0.5]
+        /// Sibling ratio threshold for aggregation [default: 0.1]
         #[arg(long)]
         aggregation_threshold: Option<f32>,
 
@@ -586,7 +586,7 @@ fn main() -> ExitCode {
             json,
             explain,
             no_aggregation,
-            max_candidates,
+            aggregation_pool_size,
             cutoff_ratio,
             aggregation_threshold,
             fuzzy,
@@ -600,7 +600,7 @@ fn main() -> ExitCode {
 
             let overrides = SearchParamsOverrides {
                 limit,
-                max_candidates,
+                aggregation_pool_size,
                 cutoff_ratio,
                 aggregation_threshold,
                 no_aggregation,
@@ -622,7 +622,7 @@ fn main() -> ExitCode {
             json,
             explain,
             no_aggregation,
-            max_candidates,
+            aggregation_pool_size,
             cutoff_ratio,
             aggregation_threshold,
             fuzzy,
@@ -639,7 +639,7 @@ fn main() -> ExitCode {
                 json,
                 explain,
                 no_aggregation,
-                max_candidates,
+                aggregation_pool_size,
                 cutoff_ratio,
                 aggregation_threshold,
                 fuzzy,
@@ -662,7 +662,7 @@ fn main() -> ExitCode {
             json,
             explain,
             no_aggregation,
-            max_candidates,
+            aggregation_pool_size,
             cutoff_ratio,
             aggregation_threshold,
             verbose,
@@ -683,7 +683,7 @@ fn main() -> ExitCode {
                 json,
                 explain,
                 no_aggregation,
-                max_candidates,
+                aggregation_pool_size,
                 cutoff_ratio,
                 aggregation_threshold,
                 verbose,
@@ -1286,56 +1286,6 @@ fn cmd_search(
     verbose: u8,
     fuzzy: Option<u8>,
 ) -> ExitCode {
-    // Handle --explain mode: parse and display AST without executing search
-    if explain {
-        let combined_query = queries.join(" ");
-        println!("{}", subheader("Query:"));
-        println!("   {combined_query}");
-        println!();
-
-        match parse_query(&combined_query) {
-            Ok(Some(expr)) => {
-                println!("{}", subheader("Parsed AST:"));
-                // Indent each line of the AST output
-                let expr_str = expr.to_string();
-                for line in expr_str.lines() {
-                    println!("   {line}");
-                }
-                println!();
-
-                // Show search parameters
-                println!("{}", subheader("Search Parameters:"));
-                println!(
-                    "   Phase 1: candidate_limit = {}",
-                    params.effective_candidate_limit()
-                );
-                println!("   Phase 2: cutoff_ratio = {}", params.cutoff_ratio);
-                println!("   Phase 2: max_candidates = {}", params.max_candidates);
-                println!(
-                    "   Phase 3: aggregation_threshold = {}",
-                    params.aggregation_threshold
-                );
-                println!("   Phase 4: limit = {}", params.limit);
-                println!(
-                    "   Aggregation = {}",
-                    if params.disable_aggregation {
-                        "disabled"
-                    } else {
-                        "enabled"
-                    }
-                );
-            }
-            Ok(None) => {
-                println!("{}", dim("(empty query)"));
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        return ExitCode::SUCCESS;
-    }
-
     let (_, config) = match load_config_with_cwd(true) {
         Ok(res) => res,
         Err(code) => return code,
@@ -1358,13 +1308,77 @@ fn cmd_search(
             .collect::<Vec<_>>()
             .join(" OR ")
     };
-    let results = match searcher.search_aggregated(&combined_query, params) {
+    let (results, stats) = match searcher.search_aggregated_with_stats(&combined_query, params) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: search failed: {e}");
             return ExitCode::FAILURE;
         }
     };
+
+    // Handle --explain mode: show query AST, parameters, and pipeline stats
+    if explain {
+        println!("{}", subheader("Query:"));
+        println!("   {combined_query}");
+        println!();
+
+        match parse_query(&combined_query) {
+            Ok(Some(expr)) => {
+                println!("{}", subheader("Parsed AST:"));
+                let expr_str = expr.to_string();
+                for line in expr_str.lines() {
+                    println!("   {line}");
+                }
+                println!();
+            }
+            Ok(None) => {
+                println!("{}", dim("(empty query)"));
+                println!();
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+
+        // Show search parameters
+        println!("{}", subheader("Search Parameters:"));
+        println!(
+            "   Phase 1: candidate_limit = {}",
+            params.effective_candidate_limit()
+        );
+        println!("   Phase 2: cutoff_ratio = {}", params.cutoff_ratio);
+        println!(
+            "   Phase 2: aggregation_pool_size = {}",
+            params.aggregation_pool_size
+        );
+        println!(
+            "   Phase 3: aggregation_threshold = {}",
+            params.aggregation_threshold
+        );
+        println!("   Phase 4: limit = {}", params.limit);
+        println!(
+            "   Aggregation = {}",
+            if params.disable_aggregation {
+                "disabled"
+            } else {
+                "enabled"
+            }
+        );
+        println!();
+
+        // Show pipeline statistics from actual search execution
+        println!("{}", subheader("Pipeline Statistics:"));
+        println!("  Raw candidates:      {}", stats.raw_candidate_count);
+        println!("  After aggregation:   {}", stats.post_aggregation_count);
+        println!("  After elbow cutoff:  {}", stats.post_elbow_count);
+        println!("  Final results:       {}", stats.final_count);
+        println!();
+        println!("  Elbow: {}", format_elbow_reason(&stats.elbow.reason));
+        println!();
+
+        return ExitCode::SUCCESS;
+    }
 
     // Output results
     output_aggregated_results(
@@ -1375,10 +1389,12 @@ fn cmd_search(
         json,
         verbose,
         &searcher,
+        Some(&stats),
     )
 }
 
 /// Outputs aggregated search results in various formats.
+#[allow(clippy::too_many_arguments)]
 fn output_aggregated_results(
     results: &[SearchResult],
     query: &str,
@@ -1387,6 +1403,7 @@ fn output_aggregated_results(
     json: bool,
     verbose: u8,
     searcher: &Searcher,
+    stats: Option<&PipelineStats>,
 ) -> ExitCode {
     if json {
         let json_output = JsonSearchOutput {
@@ -1407,11 +1424,11 @@ fn output_aggregated_results(
             }
         }
     } else if list {
-        return output_text_results(results, verbose, searcher, DisplayMode::List);
+        return output_text_results(results, verbose, searcher, stats, DisplayMode::List);
     } else if matches {
-        return output_text_results(results, verbose, searcher, DisplayMode::Matches);
+        return output_text_results(results, verbose, searcher, stats, DisplayMode::Matches);
     } else {
-        return output_text_results(results, verbose, searcher, DisplayMode::Full);
+        return output_text_results(results, verbose, searcher, stats, DisplayMode::Full);
     }
 
     ExitCode::SUCCESS
@@ -1422,9 +1439,16 @@ fn output_text_results(
     results: &[SearchResult],
     verbose: u8,
     searcher: &Searcher,
+    stats: Option<&PipelineStats>,
     mode: DisplayMode,
 ) -> ExitCode {
     if results.is_empty() {
+        // Show pipeline stats even when no results, if verbose
+        if verbose > 0
+            && let Some(stats) = stats
+        {
+            print_pipeline_stats(stats);
+        }
         println!("{}", dim("No results found."));
         if matches!(mode, DisplayMode::List) {
             println!();
@@ -1454,15 +1478,19 @@ fn output_text_results(
     }
 
     if collect_totals {
-        println!(
-            "{}",
-            dim(&format!(
-                "─── Total: {} results, {} words, {} chars ───",
-                results.len(),
-                total_words,
-                total_chars
-            ))
-        );
+        let mut summary_parts = vec![
+            format!("{} results", results.len()),
+            format!("{} words", total_words),
+            format!("{} chars", total_chars),
+        ];
+
+        // Add pipeline stats to summary line
+        if let Some(stats) = stats {
+            let elbow_info = format_elbow_summary(&stats.elbow.reason);
+            summary_parts.push(elbow_info);
+        }
+
+        println!("{}", dim(&format!("─── {} ───", summary_parts.join(", "))));
     }
 
     if matches!(mode, DisplayMode::List) {
@@ -1470,6 +1498,62 @@ fn output_text_results(
     }
 
     ExitCode::SUCCESS
+}
+
+/// Prints detailed pipeline statistics.
+fn print_pipeline_stats(stats: &PipelineStats) {
+    println!("{}", dim("Pipeline:"));
+    println!(
+        "{}",
+        dim(&format!(
+            "  Raw candidates: {} → After aggregation: {} → After elbow: {} → Final: {}",
+            stats.raw_candidate_count,
+            stats.post_aggregation_count,
+            stats.post_elbow_count,
+            stats.final_count
+        ))
+    );
+    println!(
+        "{}",
+        dim(&format!(
+            "  Elbow: {}",
+            format_elbow_reason(&stats.elbow.reason)
+        ))
+    );
+    println!();
+}
+
+/// Formats the elbow reason as a short summary for the totals line.
+fn format_elbow_summary(reason: &ElbowReason) -> String {
+    match reason {
+        ElbowReason::RatioBelowThreshold { ratio, .. } => {
+            format!("elbow at ratio {:.2}", ratio)
+        }
+        ElbowReason::ZeroOrNegativeScore { .. } => "elbow at zero score".to_string(),
+        ElbowReason::MaxResultsReached => "no elbow (pool limit)".to_string(),
+        ElbowReason::TooFewCandidates => "no elbow (few candidates)".to_string(),
+    }
+}
+
+/// Formats the elbow reason for detailed display.
+fn format_elbow_reason(reason: &ElbowReason) -> String {
+    match reason {
+        ElbowReason::RatioBelowThreshold {
+            ratio,
+            score_before,
+            score_after,
+        } => {
+            format!(
+                "ratio {:.3} < threshold (scores {:.2} → {:.2})",
+                ratio, score_before, score_after
+            )
+        }
+        ElbowReason::ZeroOrNegativeScore { score } => {
+            format!("zero/negative score encountered ({:.2})", score)
+        }
+        ElbowReason::MaxResultsReached => "no elbow found, hit pool size limit".to_string(),
+        ElbowReason::TooFewCandidates => "too few candidates for elbow detection".to_string(),
+    }
 }
 
 /// Formats an aggregated search result for the given display mode.
@@ -1559,8 +1643,8 @@ fn print_search_overrides(overrides: &ra_config::SearchOverrides, indent: &str) 
     if let Some(limit) = overrides.limit {
         parts.push(format!("limit={limit}"));
     }
-    if let Some(max_candidates) = overrides.max_candidates {
-        parts.push(format!("max_candidates={max_candidates}"));
+    if let Some(aggregation_pool_size) = overrides.aggregation_pool_size {
+        parts.push(format!("aggregation_pool_size={aggregation_pool_size}"));
     }
     if let Some(cutoff_ratio) = overrides.cutoff_ratio {
         parts.push(format!("cutoff_ratio={cutoff_ratio}"));
@@ -1583,7 +1667,7 @@ fn cmd_context(
     json: bool,
     explain: bool,
     no_aggregation: bool,
-    max_candidates: Option<usize>,
+    aggregation_pool_size: Option<usize>,
     cutoff_ratio: Option<f32>,
     aggregation_threshold: Option<f32>,
     fuzzy: Option<u8>,
@@ -1645,7 +1729,7 @@ fn cmd_context(
     // Build search params with CLI overrides, then rule overrides, then config defaults
     let overrides = SearchParamsOverrides {
         limit,
-        max_candidates,
+        aggregation_pool_size,
         cutoff_ratio,
         aggregation_threshold,
         no_aggregation,
@@ -1655,9 +1739,24 @@ fn cmd_context(
     let params =
         overrides.build_params_with_rule_overrides(&config.search, &analysis.merged_rules.search);
 
-    // Handle --explain mode
+    // Run search (needed for both normal mode and explain mode to get pipeline stats)
+    let (results, analysis, stats) = if analysis.query_expr.is_some() {
+        match context_search.search_with_analysis_stats(analysis, &params) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: context search failed: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        // No query generated - return empty results with empty stats
+        let empty_stats = PipelineStats::empty(params.cutoff_ratio, params.aggregation_pool_size);
+        (Vec::new(), analysis, empty_stats)
+    };
+
+    // Handle --explain mode (now with pipeline stats from actual search)
     if explain {
-        return output_context_explain(&analysis, &params, json);
+        return output_context_explain(&analysis, &params, &stats, json);
     }
 
     // Check if any terms were extracted
@@ -1665,14 +1764,6 @@ fn cmd_context(
         println!("{}", dim("No context terms extracted."));
         return ExitCode::SUCCESS;
     }
-
-    let (results, analysis) = match context_search.search_with_analysis(analysis, &params) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("error: context search failed: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
 
     // Output results
     let query_display = analysis
@@ -1686,6 +1777,7 @@ fn cmd_context(
         json,
         verbose,
         context_search.searcher(),
+        Some(&stats),
     )
 }
 
@@ -1693,6 +1785,7 @@ fn cmd_context(
 fn output_context_explain(
     analysis_result: &ContextAnalysisResult,
     params: &SearchParams,
+    stats: &PipelineStats,
     json: bool,
 ) -> ExitCode {
     if json {
@@ -1708,30 +1801,58 @@ fn output_context_explain(
             files: analysis_result
                 .files
                 .iter()
-                .map(|fa| JsonFileAnalysis {
-                    file: fa.path.clone(),
-                    terms: fa
-                        .analysis
-                        .ranked_terms
-                        .iter()
-                        .map(|rt| JsonTermAnalysis {
-                            term: rt.term.term.clone(),
-                            source: rt.term.source.to_string(),
-                            weight: rt.term.weight,
-                            frequency: rt.term.frequency,
-                            idf: rt.idf,
-                            score: rt.score,
-                        })
-                        .collect(),
-                    query: fa.analysis.query_string().map(|s| s.to_string()),
-                    matched_rules: JsonMatchedRules {
-                        terms: fa.matched_rules.terms.clone(),
-                        trees: fa.matched_rules.trees.clone(),
-                        include: fa.matched_rules.include.clone(),
-                        search: JsonSearchOverrides::from_config(&fa.matched_rules.search),
-                    },
+                .map(|fa| {
+                    let is_tfidf = fa.analysis.algorithm == ra_context::KeywordAlgorithm::TfIdf;
+                    JsonFileAnalysis {
+                        file: fa.path.clone(),
+                        terms: fa
+                            .analysis
+                            .ranked_terms
+                            .iter()
+                            .map(|rt| {
+                                if is_tfidf {
+                                    JsonTermAnalysis {
+                                        term: rt.term.term.clone(),
+                                        source: Some(rt.term.source.to_string()),
+                                        weight: Some(rt.term.weight),
+                                        frequency: Some(rt.term.frequency),
+                                        idf: Some(rt.idf),
+                                        score: rt.score,
+                                    }
+                                } else {
+                                    JsonTermAnalysis {
+                                        term: rt.term.term.clone(),
+                                        source: None,
+                                        weight: None,
+                                        frequency: None,
+                                        idf: None,
+                                        score: rt.score,
+                                    }
+                                }
+                            })
+                            .collect(),
+                        query: fa.analysis.query_string().map(|s| s.to_string()),
+                        matched_rules: JsonMatchedRules {
+                            terms: fa.matched_rules.terms.clone(),
+                            trees: fa.matched_rules.trees.clone(),
+                            include: fa.matched_rules.include.clone(),
+                            search: JsonSearchOverrides::from_config(&fa.matched_rules.search),
+                        },
+                    }
                 })
                 .collect(),
+            pipeline: JsonPipelineStats {
+                raw_candidates: stats.raw_candidate_count,
+                after_aggregation: stats.post_aggregation_count,
+                after_elbow: stats.post_elbow_count,
+                final_count: stats.final_count,
+                elbow: JsonElbowStats {
+                    reason: format_elbow_summary(&stats.elbow.reason),
+                    input_count: stats.elbow.input_count,
+                    output_count: stats.elbow.output_count,
+                    cutoff_ratio: stats.elbow.cutoff_ratio,
+                },
+            },
         };
 
         match serde_json::to_string_pretty(&json_output) {
@@ -1778,7 +1899,10 @@ fn output_context_explain(
             params.effective_candidate_limit()
         );
         println!("   Phase 2: cutoff_ratio = {}", params.cutoff_ratio);
-        println!("   Phase 2: max_candidates = {}", params.max_candidates);
+        println!(
+            "   Phase 2: aggregation_pool_size = {}",
+            params.aggregation_pool_size
+        );
         println!(
             "   Phase 3: aggregation_threshold = {}",
             params.aggregation_threshold
@@ -1814,24 +1938,39 @@ fn output_context_explain(
                 println!();
             }
 
-            // Show ranked terms
-            println!("{}", subheader("Ranked terms:"));
+            // Show ranked terms with algorithm-appropriate columns
+            let algo_name = fa.analysis.algorithm.to_string();
+            println!("{}", subheader(&format!("Ranked terms ({algo_name}):")));
             if fa.analysis.ranked_terms.is_empty() {
                 println!("  {}", dim("(none)"));
             } else {
                 let mut table = Table::new();
                 table.load_preset(UTF8_FULL_CONDENSED);
-                table.set_header(vec!["Term", "Source", "Weight", "Freq", "IDF", "Score"]);
 
-                for rt in &fa.analysis.ranked_terms {
-                    table.add_row(vec![
-                        Cell::new(&rt.term.term),
-                        Cell::new(rt.term.source.to_string()),
-                        Cell::new(format!("{:.1}", rt.term.weight)),
-                        Cell::new(rt.term.frequency.to_string()),
-                        Cell::new(format!("{:.2}", rt.idf)),
-                        Cell::new(format!("{:.2}", rt.score)),
-                    ]);
+                // TF-IDF has additional columns (Weight, Freq, IDF)
+                // Other algorithms just have Term, Source, Score
+                let is_tfidf = fa.analysis.algorithm == ra_context::KeywordAlgorithm::TfIdf;
+
+                if is_tfidf {
+                    table.set_header(vec!["Term", "Source", "Weight", "Freq", "IDF", "Score"]);
+                    for rt in &fa.analysis.ranked_terms {
+                        table.add_row(vec![
+                            Cell::new(&rt.term.term),
+                            Cell::new(rt.term.source.to_string()),
+                            Cell::new(format!("{:.1}", rt.term.weight)),
+                            Cell::new(rt.term.frequency.to_string()),
+                            Cell::new(format!("{:.2}", rt.idf)),
+                            Cell::new(format!("{:.2}", rt.score)),
+                        ]);
+                    }
+                } else {
+                    table.set_header(vec!["Term", "Score"]);
+                    for rt in &fa.analysis.ranked_terms {
+                        table.add_row(vec![
+                            Cell::new(&rt.term.term),
+                            Cell::new(format!("{:.2}", rt.score)),
+                        ]);
+                    }
                 }
 
                 println!("{table}");
@@ -1851,6 +1990,16 @@ fn output_context_explain(
             }
             println!();
         }
+
+        // Show pipeline statistics from actual search execution
+        println!("{}", subheader("Pipeline Statistics:"));
+        println!("  Raw candidates:      {}", stats.raw_candidate_count);
+        println!("  After aggregation:   {}", stats.post_aggregation_count);
+        println!("  After elbow cutoff:  {}", stats.post_elbow_count);
+        println!("  Final results:       {}", stats.final_count);
+        println!();
+        println!("  Elbow: {}", format_elbow_reason(&stats.elbow.reason));
+        println!();
     }
 
     ExitCode::SUCCESS
@@ -1865,6 +2014,36 @@ struct JsonContextExplain {
     search_params: JsonSearchParams,
     /// Analysis results for each file.
     files: Vec<JsonFileAnalysis>,
+    /// Pipeline statistics from search execution.
+    pipeline: JsonPipelineStats,
+}
+
+/// JSON output for pipeline statistics.
+#[derive(Serialize)]
+struct JsonPipelineStats {
+    /// Raw candidates from query execution.
+    raw_candidates: usize,
+    /// Results after aggregation.
+    after_aggregation: usize,
+    /// Results after elbow cutoff.
+    after_elbow: usize,
+    /// Final result count.
+    final_count: usize,
+    /// Elbow cutoff details.
+    elbow: JsonElbowStats,
+}
+
+/// JSON output for elbow cutoff statistics.
+#[derive(Serialize)]
+struct JsonElbowStats {
+    /// Why the elbow cutoff terminated.
+    reason: String,
+    /// Input count to elbow phase.
+    input_count: usize,
+    /// Output count from elbow phase.
+    output_count: usize,
+    /// Cutoff ratio threshold used.
+    cutoff_ratio: f32,
 }
 
 /// JSON output for a single file's context analysis.
@@ -1902,7 +2081,7 @@ struct JsonSearchOverrides {
     limit: Option<usize>,
     /// Maximum candidates before aggregation.
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_candidates: Option<usize>,
+    aggregation_pool_size: Option<usize>,
     /// Elbow detection cutoff ratio.
     #[serde(skip_serializing_if = "Option::is_none")]
     cutoff_ratio: Option<f32>,
@@ -1915,7 +2094,7 @@ impl JsonSearchOverrides {
     /// Returns true if no overrides are set.
     fn is_empty(&self) -> bool {
         self.limit.is_none()
-            && self.max_candidates.is_none()
+            && self.aggregation_pool_size.is_none()
             && self.cutoff_ratio.is_none()
             && self.aggregation_threshold.is_none()
     }
@@ -1924,7 +2103,7 @@ impl JsonSearchOverrides {
     fn from_config(overrides: &ra_config::SearchOverrides) -> Self {
         Self {
             limit: overrides.limit,
-            max_candidates: overrides.max_candidates,
+            aggregation_pool_size: overrides.aggregation_pool_size,
             cutoff_ratio: overrides.cutoff_ratio,
             aggregation_threshold: overrides.aggregation_threshold,
         }
@@ -1939,7 +2118,7 @@ struct JsonSearchParams {
     /// Score ratio threshold for Phase 2 elbow detection.
     cutoff_ratio: f32,
     /// Maximum results after Phase 2, before aggregation.
-    max_candidates: usize,
+    aggregation_pool_size: usize,
     /// Sibling ratio threshold for Phase 3 aggregation.
     aggregation_threshold: f32,
     /// Whether aggregation is disabled.
@@ -1957,7 +2136,7 @@ impl JsonSearchParams {
         Self {
             candidate_limit: params.effective_candidate_limit(),
             cutoff_ratio: params.cutoff_ratio,
-            max_candidates: params.max_candidates,
+            aggregation_pool_size: params.aggregation_pool_size,
             aggregation_threshold: params.aggregation_threshold,
             disable_aggregation: params.disable_aggregation,
             limit: params.limit,
@@ -1972,14 +2151,22 @@ struct JsonTermAnalysis {
     /// The term text.
     term: String,
     /// Source location (PathFilename, MarkdownH1, Body, etc.).
-    source: String,
+    /// Only populated for TF-IDF algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
     /// Base weight from source.
-    weight: f32,
+    /// Only populated for TF-IDF algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    weight: Option<f32>,
     /// Frequency in the document.
-    frequency: u32,
+    /// Only populated for TF-IDF algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency: Option<u32>,
     /// IDF value from the index.
-    idf: f32,
-    /// Final TF-IDF score.
+    /// Only populated for TF-IDF algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idf: Option<f32>,
+    /// Final score (TF-IDF score for tfidf, algorithm score for others).
     score: f32,
 }
 
@@ -2046,7 +2233,7 @@ fn cmd_get(id: &str, full_document: bool, json: bool) -> ExitCode {
 
     let aggregated: Vec<SearchResult> = results.into_iter().map(SearchResult::Single).collect();
 
-    output_aggregated_results(&aggregated, id, false, false, json, 0, &searcher)
+    output_aggregated_results(&aggregated, id, false, false, json, 0, &searcher, None)
 }
 
 /// Implements the `ra likethis` command.
@@ -2059,7 +2246,7 @@ fn cmd_likethis(
     json: bool,
     explain: bool,
     no_aggregation: bool,
-    max_candidates: Option<usize>,
+    aggregation_pool_size: Option<usize>,
     cutoff_ratio: Option<f32>,
     aggregation_threshold: Option<f32>,
     verbose: u8,
@@ -2092,7 +2279,7 @@ fn cmd_likethis(
     // Build search parameters
     let overrides = SearchParamsOverrides {
         limit,
-        max_candidates,
+        aggregation_pool_size,
         cutoff_ratio,
         aggregation_threshold,
         no_aggregation,
@@ -2160,6 +2347,7 @@ fn cmd_likethis(
         json,
         verbose,
         &searcher,
+        None,
     )
 }
 
@@ -2424,8 +2612,8 @@ fn output_likethis_explain(
         );
         println!("   Phase 2: cutoff_ratio = {}", search_params.cutoff_ratio);
         println!(
-            "   Phase 2: max_candidates = {}",
-            search_params.max_candidates
+            "   Phase 2: aggregation_pool_size = {}",
+            search_params.aggregation_pool_size
         );
         println!(
             "   Phase 3: aggregation_threshold = {}",
@@ -3275,8 +3463,8 @@ fn cmd_update() -> ExitCode {
 mod tests {
     use clap::CommandFactory;
     use ra_config::{
-        DEFAULT_AGGREGATION_THRESHOLD, DEFAULT_CONTEXT_TERMS, DEFAULT_CUTOFF_RATIO,
-        DEFAULT_MAX_CANDIDATES, DEFAULT_SEARCH_LIMIT,
+        DEFAULT_AGGREGATION_POOL_SIZE, DEFAULT_AGGREGATION_THRESHOLD, DEFAULT_CONTEXT_TERMS,
+        DEFAULT_CUTOFF_RATIO, DEFAULT_SEARCH_LIMIT,
     };
 
     use super::*;
@@ -3306,11 +3494,12 @@ mod tests {
             DEFAULT_SEARCH_LIMIT
         );
 
-        let max_candidates_help = get_arg_help(&cmd, "search", "max_candidates");
+        let aggregation_pool_size_help = get_arg_help(&cmd, "search", "aggregation_pool_size");
         assert!(
-            max_candidates_help.contains(&format!("[default: {}]", DEFAULT_MAX_CANDIDATES)),
-            "search --max-candidates help should contain default {}: {max_candidates_help}",
-            DEFAULT_MAX_CANDIDATES
+            aggregation_pool_size_help
+                .contains(&format!("[default: {}]", DEFAULT_AGGREGATION_POOL_SIZE)),
+            "search --aggregation-pool-size help should contain default {}: {aggregation_pool_size_help}",
+            DEFAULT_AGGREGATION_POOL_SIZE
         );
 
         let cutoff_help = get_arg_help(&cmd, "search", "cutoff_ratio");

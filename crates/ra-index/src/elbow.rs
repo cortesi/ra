@@ -16,8 +16,8 @@
 //!
 //! The function returns the first 3 results (indices 0, 1, 2).
 
-use crate::SearchCandidate;
 #[cfg(test)]
+use crate::SearchCandidate;
 use crate::result::SearchResult;
 
 /// Default cutoff ratio for elbow detection.
@@ -25,6 +25,46 @@ use crate::result::SearchResult;
 /// When the ratio between adjacent scores falls below this value,
 /// we consider it the elbow point.
 pub const DEFAULT_CUTOFF_RATIO: f32 = 0.5;
+
+/// Reason why the elbow cutoff terminated at a particular point.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ElbowReason {
+    /// Ratio between adjacent scores dropped below the threshold.
+    RatioBelowThreshold {
+        /// The ratio that triggered the cutoff.
+        ratio: f32,
+        /// The score before the cutoff.
+        score_before: f32,
+        /// The score after the cutoff.
+        score_after: f32,
+    },
+    /// A zero or negative score was encountered.
+    ZeroOrNegativeScore {
+        /// The problematic score value.
+        score: f32,
+    },
+    /// No elbow was found; results limited by max_results.
+    MaxResultsReached,
+    /// Input was empty or had only one element.
+    TooFewCandidates,
+}
+
+/// Statistics about elbow cutoff processing.
+#[derive(Debug, Clone)]
+pub struct ElbowStats {
+    /// Number of candidates before elbow cutoff.
+    pub input_count: usize,
+    /// Number of candidates after elbow cutoff.
+    pub output_count: usize,
+    /// Index where cutoff occurred (same as output_count).
+    pub elbow_index: usize,
+    /// Reason for the cutoff.
+    pub reason: ElbowReason,
+    /// The cutoff ratio threshold used.
+    pub cutoff_ratio: f32,
+    /// The max_results limit used.
+    pub max_results: usize,
+}
 
 /// Finds the elbow cutoff point in a list of search candidates.
 ///
@@ -51,6 +91,7 @@ pub const DEFAULT_CUTOFF_RATIO: f32 = 0.5;
 /// # Note
 /// This function operates on raw SearchCandidates. For aggregated SearchResults,
 /// use [`elbow_cutoff_results`] instead.
+#[cfg(test)]
 pub fn elbow_cutoff(
     candidates: Vec<SearchCandidate>,
     cutoff_ratio: f32,
@@ -118,17 +159,48 @@ pub fn elbow_cutoff_results(
     cutoff_ratio: f32,
     max_results: usize,
 ) -> Vec<SearchResult> {
+    elbow_cutoff_results_with_stats(results, cutoff_ratio, max_results).0
+}
+
+/// Finds the elbow cutoff point and returns statistics about the operation.
+///
+/// Like [`elbow_cutoff_results`], but also returns [`ElbowStats`] describing
+/// why and where the cutoff occurred.
+pub fn elbow_cutoff_results_with_stats(
+    results: Vec<SearchResult>,
+    cutoff_ratio: f32,
+    max_results: usize,
+) -> (Vec<SearchResult>, ElbowStats) {
+    let input_count = results.len();
+
     // Handle edge cases
     if results.is_empty() {
-        return Vec::new();
+        let stats = ElbowStats {
+            input_count: 0,
+            output_count: 0,
+            elbow_index: 0,
+            reason: ElbowReason::TooFewCandidates,
+            cutoff_ratio,
+            max_results,
+        };
+        return (Vec::new(), stats);
     }
 
     if results.len() == 1 {
-        return results;
+        let stats = ElbowStats {
+            input_count: 1,
+            output_count: 1,
+            elbow_index: 1,
+            reason: ElbowReason::TooFewCandidates,
+            cutoff_ratio,
+            max_results,
+        };
+        return (results, stats);
     }
 
     // Find the elbow point
     let mut cutoff_index = results.len();
+    let mut reason = ElbowReason::MaxResultsReached;
 
     for i in 0..results.len() - 1 {
         let current_score = results[i].candidate().score;
@@ -137,11 +209,15 @@ pub fn elbow_cutoff_results(
         // Zero or negative scores trigger immediate cutoff
         if current_score <= 0.0 {
             cutoff_index = i;
+            reason = ElbowReason::ZeroOrNegativeScore {
+                score: current_score,
+            };
             break;
         }
 
         if next_score <= 0.0 {
             cutoff_index = i + 1;
+            reason = ElbowReason::ZeroOrNegativeScore { score: next_score };
             break;
         }
 
@@ -149,14 +225,31 @@ pub fn elbow_cutoff_results(
         let ratio = next_score / current_score;
         if ratio < cutoff_ratio {
             cutoff_index = i + 1;
+            reason = ElbowReason::RatioBelowThreshold {
+                ratio,
+                score_before: current_score,
+                score_after: next_score,
+            };
             break;
         }
     }
 
     // Apply max_results limit
     let final_count = cutoff_index.min(max_results);
+    if final_count < cutoff_index {
+        reason = ElbowReason::MaxResultsReached;
+    }
 
-    results.into_iter().take(final_count).collect()
+    let stats = ElbowStats {
+        input_count,
+        output_count: final_count,
+        elbow_index: cutoff_index,
+        reason,
+        cutoff_ratio,
+        max_results,
+    };
+
+    (results.into_iter().take(final_count).collect(), stats)
 }
 
 #[cfg(test)]

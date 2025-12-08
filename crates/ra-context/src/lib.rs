@@ -13,9 +13,9 @@
 //!
 //! Multiple algorithms are available for keyword extraction:
 //!
-//! - **TF-IDF** (default): Corpus-aware ranking using index statistics
+//! - **TextRank** (default): Graph-based ranking similar to PageRank
+//! - **TF-IDF**: Corpus-aware ranking using index statistics
 //! - **RAKE**: Rapid Automatic Keyword Extraction based on co-occurrence
-//! - **TextRank**: Graph-based ranking similar to PageRank
 //! - **YAKE**: Statistical extraction, good for short texts
 
 #![warn(missing_docs)]

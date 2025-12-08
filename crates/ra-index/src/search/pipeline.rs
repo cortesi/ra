@@ -9,13 +9,22 @@
 //! 1. **Score Normalization**: For multi-tree searches, normalize scores so each
 //!    tree's best result gets 1.0. See [`normalize_scores_across_trees`].
 //!
-//! 2. **Elbow Cutoff**: Detect where relevance drops significantly and filter
-//!    candidates. This determines the "relevant" set before aggregation.
+//! 2. **Adaptive Hierarchical Aggregation**: Process all candidates, aggregating
+//!    siblings when appropriate. Aggregated results use RSS (Root Sum Square)
+//!    scoring to reward coverage. See [`adaptive_aggregate`].
 //!
-//! 3. **Adaptive Hierarchical Aggregation**: Process all relevant candidates,
-//!    aggregating siblings when appropriate. See [`adaptive_aggregate`].
+//! 3. **Elbow Cutoff**: Detect where relevance drops significantly and filter
+//!    results. Applied AFTER aggregation so that aggregated results (with boosted
+//!    RSS scores) compete fairly.
 //!
 //! 4. **Final Limit**: Truncate to the requested number of results.
+//!
+//! # Why Aggregate-First?
+//!
+//! Running aggregation before elbow cutoff ensures that siblings have a chance to
+//! accumulate and merge before relevance filtering. With RSS scoring, multiple
+//! matching sections boost the parent's score (e.g., two score-10 matches become
+//! ~14.1), potentially vaulting aggregated results over the elbow threshold.
 //!
 //! # Score Normalization
 //!
@@ -31,7 +40,49 @@
 use std::{cmp::Ordering, collections::HashMap};
 
 use super::{SearchCandidate, SearchParams, aggregation::adaptive_aggregate};
-use crate::{elbow::elbow_cutoff, result::SearchResult as AggregatedSearchResult};
+use crate::{
+    elbow::{ElbowStats, elbow_cutoff_results_with_stats},
+    result::SearchResult as AggregatedSearchResult,
+};
+
+/// Statistics about the search pipeline execution.
+///
+/// This provides visibility into what happened during each phase of the pipeline,
+/// useful for debugging and understanding why certain results were or weren't returned.
+#[derive(Debug, Clone)]
+pub struct PipelineStats {
+    /// Number of raw candidates from query execution.
+    pub raw_candidate_count: usize,
+    /// Number of results after aggregation (before elbow cutoff).
+    pub post_aggregation_count: usize,
+    /// Number of results after elbow cutoff.
+    pub post_elbow_count: usize,
+    /// Final number of results after limit applied.
+    pub final_count: usize,
+    /// Statistics from the elbow cutoff phase.
+    pub elbow: ElbowStats,
+}
+
+impl PipelineStats {
+    /// Creates empty stats for when no query was executed.
+    pub fn empty(cutoff_ratio: f32, max_results: usize) -> Self {
+        use crate::elbow::ElbowReason;
+        Self {
+            raw_candidate_count: 0,
+            post_aggregation_count: 0,
+            post_elbow_count: 0,
+            final_count: 0,
+            elbow: ElbowStats {
+                input_count: 0,
+                output_count: 0,
+                elbow_index: 0,
+                reason: ElbowReason::TooFewCandidates,
+                cutoff_ratio,
+                max_results,
+            },
+        }
+    }
+}
 
 /// Normalizes scores across multiple trees using top-score normalization.
 ///
@@ -105,7 +156,7 @@ fn normalize_scores_across_trees(
 ///
 /// # Returns
 ///
-/// Final search results after normalization, elbow cutoff, and aggregation.
+/// Final search results after normalization, aggregation, and elbow cutoff.
 pub fn process_candidates<F>(
     candidates: Vec<SearchCandidate>,
     params: &SearchParams,
@@ -114,21 +165,58 @@ pub fn process_candidates<F>(
 where
     F: Fn(&str) -> Option<SearchCandidate>,
 {
+    process_candidates_with_stats(candidates, params, parent_lookup).0
+}
+
+/// Processes raw search candidates and returns pipeline statistics.
+///
+/// Like [`process_candidates`], but also returns [`PipelineStats`] describing
+/// what happened at each phase of the pipeline.
+pub fn process_candidates_with_stats<F>(
+    candidates: Vec<SearchCandidate>,
+    params: &SearchParams,
+    parent_lookup: F,
+) -> (Vec<AggregatedSearchResult>, PipelineStats)
+where
+    F: Fn(&str) -> Option<SearchCandidate>,
+{
+    let raw_candidate_count = candidates.len();
+
     // Phase 1: Normalize scores across trees (only for multi-tree searches)
     let normalized = normalize_scores_across_trees(candidates, params.trees.len());
 
-    // Phase 2: Elbow cutoff on raw candidates - determines the "relevant" set
-    let relevant = elbow_cutoff(normalized, params.cutoff_ratio, params.max_candidates);
-
-    // Phase 3: Aggregate all relevant candidates
-    let results = if params.disable_aggregation {
-        single_results_from_candidates(relevant)
+    // Phase 2: Aggregate all candidates (before elbow cutoff)
+    // This ensures siblings have a chance to accumulate and merge.
+    // RSS scoring rewards coverage: multiple matches boost the aggregated score.
+    let aggregated = if params.disable_aggregation {
+        single_results_from_candidates(normalized)
     } else {
-        adaptive_aggregate(relevant, params.aggregation_threshold, parent_lookup)
+        adaptive_aggregate(normalized, params.aggregation_threshold, parent_lookup)
     };
+    let post_aggregation_count = aggregated.len();
+
+    // Phase 3: Elbow cutoff on aggregated results
+    // Applied after aggregation so aggregated results with boosted RSS scores compete fairly.
+    let (relevant, elbow_stats) = elbow_cutoff_results_with_stats(
+        aggregated,
+        params.cutoff_ratio,
+        params.aggregation_pool_size,
+    );
+    let post_elbow_count = relevant.len();
 
     // Phase 4: Apply final limit
-    results.into_iter().take(params.limit).collect()
+    let results: Vec<_> = relevant.into_iter().take(params.limit).collect();
+    let final_count = results.len();
+
+    let stats = PipelineStats {
+        raw_candidate_count,
+        post_aggregation_count,
+        post_elbow_count,
+        final_count,
+        elbow: elbow_stats,
+    };
+
+    (results, stats)
 }
 
 /// Converts raw candidates into single (non-aggregated) results.
@@ -286,7 +374,7 @@ mod tests {
     fn elbow_cutoff_applied() {
         let params = SearchParams {
             cutoff_ratio: 0.5,
-            max_candidates: 10,
+            aggregation_pool_size: 10,
             ..Default::default()
         };
 
@@ -310,7 +398,7 @@ mod tests {
         let params = SearchParams {
             trees: vec!["tree-a".to_string(), "tree-b".to_string()],
             cutoff_ratio: 0.0, // Disable elbow to test normalization only
-            max_candidates: 10,
+            aggregation_pool_size: 10,
             ..Default::default()
         };
 

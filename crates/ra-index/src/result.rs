@@ -77,13 +77,18 @@ impl SearchResult {
 
     /// Creates an aggregated result from a parent node and its constituent matches.
     ///
-    /// The score is computed as the maximum score among all constituents.
+    /// The score is computed using Root Sum Square (RSS / L2 norm) of constituent scores:
+    /// `score = sqrt(c1² + c2² + ... + cn²)`
+    ///
+    /// This approach rewards coverage (multiple matching sections) without letting noise
+    /// accumulate linearly:
+    /// - Two sections scoring 10.0 each → `sqrt(100 + 100) ≈ 14.1` (boosted)
+    /// - One strong (20.0) + two weak (2.0) → `sqrt(400 + 4 + 4) ≈ 20.2` (noise dampened)
+    /// - Single section → unchanged (sqrt of single squared = original)
     pub fn aggregated(mut parent: SearchCandidate, constituents: Vec<SearchCandidate>) -> Self {
-        let max_score = constituents
-            .iter()
-            .map(|c| c.score)
-            .fold(parent.score, f32::max);
-        parent.score = max_score;
+        // RSS: sqrt(c1² + c2² + ...)
+        let sum_squares: f32 = constituents.iter().map(|c| c.score.powi(2)).sum();
+        parent.score = sum_squares.sqrt();
 
         Self::Aggregated {
             parent,
@@ -163,8 +168,8 @@ mod test {
 
         let c = result.candidate();
         assert_eq!(c.id, "local:test.md");
-        // Score should be max of constituents (8.0) since it's > parent score (2.0)
-        assert_eq!(c.score, 8.0);
+        // Score should be RSS: sqrt(8² + 6²) = sqrt(64 + 36) = sqrt(100) = 10.0
+        assert!((c.score - 10.0).abs() < 0.001);
         assert_eq!(c.doc_id, "local:test.md");
         assert!(c.parent_id.is_none()); // Document node has no parent
         assert_eq!(c.depth, 0);
@@ -177,15 +182,44 @@ mod test {
     }
 
     #[test]
-    fn aggregated_score_is_max_of_constituents() {
-        let parent = make_candidate("local:test.md", 10.0, 0);
+    fn aggregated_score_is_rss_of_constituents() {
+        let parent = make_candidate("local:test.md", 0.0, 0);
         let child1 = make_candidate("local:test.md#a", 3.0, 1);
-        let child2 = make_candidate("local:test.md#b", 7.0, 1);
+        let child2 = make_candidate("local:test.md#b", 4.0, 1);
 
         let result = SearchResult::aggregated(parent, vec![child1, child2]);
 
-        // Parent score (10.0) is higher than max constituent (7.0)
-        assert_eq!(result.candidate().score, 10.0);
+        // RSS: sqrt(3² + 4²) = sqrt(9 + 16) = sqrt(25) = 5.0
+        assert!((result.candidate().score - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn rss_boosts_twin_signals() {
+        // Two equal scores should boost to ~1.41x
+        let parent = make_candidate("local:test.md", 0.0, 0);
+        let child1 = make_candidate("local:test.md#a", 10.0, 1);
+        let child2 = make_candidate("local:test.md#b", 10.0, 1);
+
+        let result = SearchResult::aggregated(parent, vec![child1, child2]);
+
+        // RSS: sqrt(10² + 10²) = sqrt(200) ≈ 14.14
+        let expected = (200.0_f32).sqrt();
+        assert!((result.candidate().score - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn rss_dampens_noise() {
+        // One strong + two weak should be dominated by strong
+        let parent = make_candidate("local:test.md", 0.0, 0);
+        let strong = make_candidate("local:test.md#a", 20.0, 1);
+        let weak1 = make_candidate("local:test.md#b", 2.0, 1);
+        let weak2 = make_candidate("local:test.md#c", 2.0, 1);
+
+        let result = SearchResult::aggregated(parent, vec![strong, weak1, weak2]);
+
+        // RSS: sqrt(20² + 2² + 2²) = sqrt(400 + 4 + 4) = sqrt(408) ≈ 20.2
+        let expected = (408.0_f32).sqrt();
+        assert!((result.candidate().score - expected).abs() < 0.01);
     }
 
     #[test]
@@ -193,9 +227,20 @@ mod test {
         let parent = make_candidate("local:test.md", 5.0, 0);
         let result = SearchResult::aggregated(parent, vec![]);
 
-        // Score should be parent's score when no constituents
-        assert_eq!(result.candidate().score, 5.0);
+        // Score should be 0 when no constituents (RSS of empty = 0)
+        assert_eq!(result.candidate().score, 0.0);
         assert!(result.constituents().unwrap().is_empty());
+    }
+
+    #[test]
+    fn single_constituent_preserves_score() {
+        let parent = make_candidate("local:test.md", 0.0, 0);
+        let child = make_candidate("local:test.md#a", 7.5, 1);
+
+        let result = SearchResult::aggregated(parent, vec![child]);
+
+        // RSS of single: sqrt(7.5²) = 7.5
+        assert!((result.candidate().score - 7.5).abs() < 0.001);
     }
 
     #[test]

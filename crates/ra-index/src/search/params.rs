@@ -6,33 +6,45 @@ use crate::elbow::DEFAULT_CUTOFF_RATIO;
 /// Default final result limit after aggregation.
 pub const DEFAULT_LIMIT: usize = 10;
 
-/// Default maximum candidates to pass through Phase 2 into aggregation.
-pub const DEFAULT_MAX_CANDIDATES: usize = 50;
+/// Default size of the aggregation pool.
+///
+/// This controls how many candidates are available for hierarchical aggregation
+/// before elbow cutoff. A larger pool allows more siblings to accumulate and
+/// merge, improving aggregation quality at the cost of processing more candidates.
+pub const DEFAULT_AGGREGATION_POOL_SIZE: usize = 500;
 
 /// Multiplier used to derive candidate_limit from limit when not explicitly set.
-/// For example, if limit=10 and no candidate_limit is specified, we fetch 10*5=50 candidates.
-pub const CANDIDATE_LIMIT_MULTIPLIER: usize = 5;
+///
+/// For example, if limit=10 and no candidate_limit is specified, we fetch 10*50=500 candidates.
+/// This ensures we have enough raw candidates to fill the aggregation pool (default 500)
+/// before filtering.
+pub const CANDIDATE_LIMIT_MULTIPLIER: usize = 50;
 
 /// Parameters controlling the four-phase search algorithm.
 ///
 /// The search algorithm proceeds in four phases:
 /// 1. **Phase 1 (Query)**: Retrieve up to `candidate_limit` matches from the index
-/// 2. **Phase 2 (Elbow)**: Apply relevance cutoff using `cutoff_ratio` and `max_candidates`
+/// 2. **Phase 2 (Normalize)**: Normalize scores across trees (multi-tree only)
 /// 3. **Phase 3 (Aggregate)**: Aggregate sibling matches using `aggregation_threshold`
-/// 4. **Phase 4 (Limit)**: Truncate to final `limit` results
+/// 4. **Phase 4 (Elbow)**: Apply relevance cutoff using `cutoff_ratio` and `aggregation_pool_size`
+/// 5. **Phase 5 (Limit)**: Truncate to final `limit` results
 ///
-/// When `candidate_limit` is not explicitly set, it defaults to `limit * 5` to ensure
+/// When `candidate_limit` is not explicitly set, it defaults to `limit * 50` to ensure
 /// enough candidates flow through the pipeline for effective aggregation.
 #[derive(Debug, Clone)]
 pub struct SearchParams {
     /// Maximum candidates to retrieve in Phase 1.
     /// If None, derived as `limit * CANDIDATE_LIMIT_MULTIPLIER`.
     pub candidate_limit: Option<usize>,
-    /// Score ratio threshold for Phase 2 elbow detection. Default: 0.5.
+    /// Score ratio threshold for Phase 4 elbow detection. Default: 0.5.
     pub cutoff_ratio: f32,
-    /// Maximum results after Phase 2, before aggregation. Default: 50.
-    pub max_candidates: usize,
-    /// Sibling ratio threshold for Phase 3 aggregation. Default: 0.5.
+    /// Size of the aggregation pool - maximum results after Phase 4 elbow cutoff.
+    ///
+    /// This is a buffer for the aggregation algorithm, not a UI limit. Larger values
+    /// allow more siblings to accumulate before filtering, improving aggregation quality.
+    /// The final `limit` parameter controls what the user sees.
+    pub aggregation_pool_size: usize,
+    /// Sibling ratio threshold for Phase 3 aggregation. Default: 0.1.
     pub aggregation_threshold: f32,
     /// Whether to skip Phase 3 aggregation. Default: false.
     pub disable_aggregation: bool,
@@ -54,7 +66,7 @@ impl Default for SearchParams {
         Self {
             candidate_limit: None,
             cutoff_ratio: DEFAULT_CUTOFF_RATIO,
-            max_candidates: DEFAULT_MAX_CANDIDATES,
+            aggregation_pool_size: DEFAULT_AGGREGATION_POOL_SIZE,
             aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
             disable_aggregation: false,
             limit: DEFAULT_LIMIT,

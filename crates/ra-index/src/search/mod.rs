@@ -15,12 +15,15 @@
 //!    normalize scores so each tree's best result gets 1.0. This makes cross-tree
 //!    comparison fair regardless of content density differences. See [`pipeline`] module.
 //!
-//! 3. **Elbow Cutoff**: Find the "elbow" point where relevance drops significantly
-//!    and truncate results there. With normalized scores, this works correctly
-//!    across trees. See [`crate::elbow`] for the algorithm.
+//! 3. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
+//!    enough siblings match. Aggregated results use RSS (Root Sum Square) scoring
+//!    to reward coverage without letting noise accumulate linearly. See [`aggregation`].
 //!
-//! 4. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
-//!    enough siblings match. See [`aggregation`] module.
+//! 4. **Elbow Cutoff**: Find the "elbow" point where relevance drops significantly
+//!    and truncate results there. Applied AFTER aggregation so that aggregated
+//!    results with boosted RSS scores compete fairly. See [`crate::elbow`].
+//!
+//! 5. **Final Limit**: Truncate to the requested number of results.
 
 mod aggregation;
 mod execute;
@@ -41,7 +44,8 @@ use execute::ExecutionOptions;
 pub use execute::merge_ranges;
 use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use params::{MoreLikeThisParams, SearchParams};
-use pipeline::process_candidates;
+pub use pipeline::PipelineStats;
+use pipeline::{process_candidates, process_candidates_with_stats};
 use ra_config::FieldBoosts;
 use ra_context::IdfProvider;
 use tantivy::{
@@ -259,14 +263,28 @@ impl Searcher {
         query_str: &str,
         params: &SearchParams,
     ) -> Result<Vec<SearchResult>, IndexError> {
+        Ok(self.search_aggregated_with_stats(query_str, params)?.0)
+    }
+
+    /// Searches and returns pipeline statistics along with results.
+    pub fn search_aggregated_with_stats(
+        &mut self,
+        query_str: &str,
+        params: &SearchParams,
+    ) -> Result<(Vec<SearchResult>, PipelineStats), IndexError> {
         let content_query = match self.build_query(query_str)? {
             Some(q) => q,
-            None => return Ok(Vec::new()),
+            None => {
+                return Ok((
+                    Vec::new(),
+                    PipelineStats::empty(params.cutoff_ratio, params.aggregation_pool_size),
+                ));
+            }
         };
 
         let query_terms = self.tokenize_query(query_str);
 
-        self.run_aggregated_search(content_query, &query_terms, query_str, params)
+        self.run_aggregated_search_with_stats(content_query, &query_terms, query_str, params)
     }
 
     /// Searches using a pre-built query expression.
@@ -275,28 +293,42 @@ impl Searcher {
         expr: &ra_query::QueryExpr,
         params: &SearchParams,
     ) -> Result<Vec<SearchResult>, IndexError> {
+        Ok(self.search_aggregated_expr_with_stats(expr, params)?.0)
+    }
+
+    /// Searches using a pre-built query expression and returns pipeline statistics.
+    pub fn search_aggregated_expr_with_stats(
+        &mut self,
+        expr: &ra_query::QueryExpr,
+        params: &SearchParams,
+    ) -> Result<(Vec<SearchResult>, PipelineStats), IndexError> {
         let content_query = match self.query_compiler.compile(expr).map_err(|e| {
             let query_err: QueryError = e.into();
             IndexError::Query(query_err)
         })? {
             Some(q) => q,
-            None => return Ok(Vec::new()),
+            None => {
+                return Ok((
+                    Vec::new(),
+                    PipelineStats::empty(params.cutoff_ratio, params.aggregation_pool_size),
+                ));
+            }
         };
 
         let query_terms = expr.extract_terms();
         let display_query = expr.to_query_string();
 
-        self.run_aggregated_search(content_query, &query_terms, &display_query, params)
+        self.run_aggregated_search_with_stats(content_query, &query_terms, &display_query, params)
     }
 
     /// Executes query and processes results through the unified pipeline.
-    fn run_aggregated_search(
+    fn run_aggregated_search_with_stats(
         &self,
         content_query: Box<dyn Query>,
         query_terms: &[String],
         display_query: &str,
         params: &SearchParams,
-    ) -> Result<Vec<SearchResult>, IndexError> {
+    ) -> Result<(Vec<SearchResult>, PipelineStats), IndexError> {
         let query = self.apply_tree_filter(content_query, &params.trees);
 
         // Execute query and get raw candidates
@@ -322,9 +354,11 @@ impl Searcher {
             self.execute_query(&*query, query_terms, effective_candidate_limit, &options)?;
 
         // Process through unified pipeline
-        Ok(process_candidates(candidates, params, |parent_id| {
-            self.lookup_parent(parent_id)
-        }))
+        Ok(process_candidates_with_stats(
+            candidates,
+            params,
+            |parent_id| self.lookup_parent(parent_id),
+        ))
     }
 
     /// Looks up a parent node by ID for aggregation.

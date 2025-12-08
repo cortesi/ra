@@ -24,13 +24,13 @@ pub use local::{RakeExtractor, TextRankExtractor, YakeExtractor};
 pub enum KeywordAlgorithm {
     /// Corpus-aware TF-IDF using index statistics.
     /// Requires an `IdfProvider` to look up term frequencies across the corpus.
-    #[default]
     TfIdf,
     /// RAKE (Rapid Automatic Keyword Extraction).
     /// Extracts key phrases based on word co-occurrence patterns.
     Rake,
     /// TextRank graph-based ranking.
     /// Similar to PageRank, good for extracting representative terms.
+    #[default]
     TextRank,
     /// YAKE (Yet Another Keyword Extractor).
     /// Statistical approach using term position, frequency, and context.

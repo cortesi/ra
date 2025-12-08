@@ -645,8 +645,9 @@ mod tests {
         assert_eq!(agg.result_count(), 1);
         assert!(agg.results()[0].is_aggregated());
         assert_eq!(agg.results()[0].constituents().unwrap().len(), 2);
-        // Score should be max of constituents
-        assert_eq!(agg.results()[0].candidate().score, 5.0);
+        // Score should be RSS of constituents: sqrt(5² + 4²) = sqrt(41) ≈ 6.4
+        let expected = (25.0_f32 + 16.0).sqrt();
+        assert!((agg.results()[0].candidate().score - expected).abs() < 0.01);
     }
 
     #[test]

@@ -36,7 +36,7 @@ impl Default for AnalysisConfig {
         Self {
             max_terms: DEFAULT_TERM_LIMIT,
             min_term_length: 3,
-            algorithm: KeywordAlgorithm::TfIdf,
+            algorithm: KeywordAlgorithm::default(),
         }
     }
 }
@@ -303,11 +303,15 @@ mod test {
     }
 
     #[test]
-    fn analyze_ranks_terms() {
+    fn analyze_ranks_terms_tfidf() {
         let idf = MockIdf::new()
             .with_term("kubernetes", 5.0)
             .with_term("container", 1.0);
-        let config = AnalysisConfig::default();
+        // Use TF-IDF algorithm explicitly to test IDF-based ranking
+        let config = AnalysisConfig {
+            algorithm: KeywordAlgorithm::TfIdf,
+            ..Default::default()
+        };
 
         let analysis = analyze_context(
             Path::new("a.b"), // minimal path to avoid path term interference

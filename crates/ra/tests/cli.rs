@@ -1107,9 +1107,10 @@ terms = ["authentication", "login"]
         )
         .unwrap();
 
+        // Use tfidf algorithm to get source/weight/idf fields
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--explain", "--json", "test.md"])
+            .args(["context", "--explain", "--json", "-a", "tfidf", "test.md"])
             .assert()
             .success();
 
@@ -1136,7 +1137,7 @@ terms = ["authentication", "login"]
             "file entry should have query field"
         );
 
-        // Check that terms have expected fields
+        // Check that TF-IDF terms have expected fields (source, weight, idf)
         if let Some(terms) = file["terms"].as_array()
             && !terms.is_empty()
         {
@@ -1145,6 +1146,45 @@ terms = ["authentication", "login"]
             assert!(term["source"].is_string(), "term should have source field");
             assert!(term["weight"].is_number(), "term should have weight field");
             assert!(term["score"].is_number(), "term should have score field");
+        }
+    }
+
+    #[test]
+    fn explain_json_format_textrank() {
+        let dir = setup_indexed_dir();
+        fs::write(
+            dir.path().join("test.md"),
+            "# Authentication\n\nHandling user logins securely with password validation.",
+        )
+        .unwrap();
+
+        // Use textrank (default) which has simpler output (no source/weight/idf)
+        let output = ra_with_home(dir.path())
+            .current_dir(dir.path())
+            .args(["context", "--explain", "--json", "test.md"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+        let file = &json["files"][0];
+        // Check that TextRank terms only have term and score
+        if let Some(terms) = file["terms"].as_array()
+            && !terms.is_empty()
+        {
+            let term = &terms[0];
+            assert!(term["term"].is_string(), "term should have term field");
+            assert!(term["score"].is_number(), "term should have score field");
+            // TextRank should NOT have source/weight/idf
+            assert!(
+                term["source"].is_null(),
+                "textrank term should not have source"
+            );
+            assert!(
+                term["weight"].is_null(),
+                "textrank term should not have weight"
+            );
         }
     }
 

@@ -51,14 +51,20 @@ pub const DEFAULT_FUZZY_DISTANCE: u8 = 1;
 /// Default maximum results for search (SearchSettings.limit).
 pub const DEFAULT_SEARCH_LIMIT: usize = 10;
 
-/// Default maximum candidates before aggregation (SearchSettings.max_candidates).
-pub const DEFAULT_MAX_CANDIDATES: usize = 50;
+/// Default size of the aggregation pool (SearchSettings.aggregation_pool_size).
+///
+/// This controls how many candidates are available for hierarchical aggregation
+/// before elbow cutoff. A larger pool allows more siblings to accumulate and
+/// merge, improving aggregation quality.
+///
+/// This replaces the old `max_candidates` setting.
+pub const DEFAULT_AGGREGATION_POOL_SIZE: usize = 500;
 
 /// Default score ratio threshold for elbow cutoff (SearchSettings.cutoff_ratio).
 pub const DEFAULT_CUTOFF_RATIO: f32 = 0.3;
 
 /// Default sibling ratio threshold for aggregation (SearchSettings.aggregation_threshold).
-pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
+pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.1;
 
 // =============================================================================
 // Search field boost defaults
@@ -70,7 +76,7 @@ pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
 /// Default boost for hierarchy field (matches in document headings).
 pub const DEFAULT_BOOST_HIERARCHY: f32 = 3.0;
 /// Default boost for path field (filename matches).
-pub const DEFAULT_BOOST_PATH: f32 = 8.0;
+pub const DEFAULT_BOOST_PATH: f32 = 12.0;
 /// Default boost for tags field (frontmatter metadata).
 pub const DEFAULT_BOOST_TAGS: f32 = 5.0;
 /// Default boost for body field (document content).
@@ -375,8 +381,9 @@ impl Default for Settings {
 pub trait SearchDefaults {
     /// Maximum results to return after aggregation.
     fn limit(&self) -> usize;
-    /// Maximum candidates to pass through Phase 2 into aggregation.
-    fn max_candidates(&self) -> usize;
+    /// Size of the aggregation pool - how many candidates are available for
+    /// hierarchical aggregation before elbow cutoff.
+    fn aggregation_pool_size(&self) -> usize;
     /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
     fn cutoff_ratio(&self) -> f32;
     /// Sibling ratio threshold for hierarchical aggregation.
@@ -393,8 +400,11 @@ pub struct SearchSettings {
     pub fuzzy_distance: u8,
     /// Maximum results to return after aggregation.
     pub limit: usize,
-    /// Maximum candidates to pass through Phase 2 into aggregation.
-    pub max_candidates: usize,
+    /// Size of the aggregation pool - how many candidates are available for
+    /// hierarchical aggregation before elbow cutoff. Larger values allow more
+    /// siblings to accumulate, improving aggregation quality.
+    #[serde(alias = "max_candidates")]
+    pub aggregation_pool_size: usize,
     /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
     pub cutoff_ratio: f32,
     /// Sibling ratio threshold for hierarchical aggregation.
@@ -431,7 +441,7 @@ impl Default for SearchSettings {
             stemmer: String::from(DEFAULT_STEMMER),
             fuzzy_distance: DEFAULT_FUZZY_DISTANCE,
             limit: DEFAULT_SEARCH_LIMIT,
-            max_candidates: DEFAULT_MAX_CANDIDATES,
+            aggregation_pool_size: DEFAULT_AGGREGATION_POOL_SIZE,
             cutoff_ratio: DEFAULT_CUTOFF_RATIO,
             aggregation_threshold: DEFAULT_AGGREGATION_THRESHOLD,
             // Field boosts
@@ -478,8 +488,8 @@ impl SearchDefaults for SearchSettings {
     fn limit(&self) -> usize {
         self.limit
     }
-    fn max_candidates(&self) -> usize {
-        self.max_candidates
+    fn aggregation_pool_size(&self) -> usize {
+        self.aggregation_pool_size
     }
     fn cutoff_ratio(&self) -> f32 {
         self.cutoff_ratio
@@ -538,9 +548,10 @@ pub struct SearchOverrides {
     /// Maximum results to return after aggregation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
-    /// Maximum candidates to pass through Phase 2 into aggregation.
+    /// Size of the aggregation pool - how many candidates are available for
+    /// hierarchical aggregation before elbow cutoff.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_candidates: Option<usize>,
+    pub aggregation_pool_size: Option<usize>,
     /// Score ratio threshold for elbow cutoff (0.0-1.0, lower = more results).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cutoff_ratio: Option<f32>,
@@ -553,7 +564,7 @@ impl SearchOverrides {
     /// Returns true if all fields are None.
     pub fn is_empty(&self) -> bool {
         self.limit.is_none()
-            && self.max_candidates.is_none()
+            && self.aggregation_pool_size.is_none()
             && self.cutoff_ratio.is_none()
             && self.aggregation_threshold.is_none()
     }
@@ -706,7 +717,7 @@ mod tests {
         assert_eq!(search.stemmer, DEFAULT_STEMMER);
         assert_eq!(search.fuzzy_distance, DEFAULT_FUZZY_DISTANCE);
         assert_eq!(search.limit, DEFAULT_SEARCH_LIMIT);
-        assert_eq!(search.max_candidates, DEFAULT_MAX_CANDIDATES);
+        assert_eq!(search.aggregation_pool_size, DEFAULT_AGGREGATION_POOL_SIZE);
         assert!((search.cutoff_ratio - DEFAULT_CUTOFF_RATIO).abs() < f32::EPSILON);
         assert!(
             (search.aggregation_threshold - DEFAULT_AGGREGATION_THRESHOLD).abs() < f32::EPSILON

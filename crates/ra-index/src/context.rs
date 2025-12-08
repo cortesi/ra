@@ -16,7 +16,8 @@ use ra_context::{AnalysisConfig, ContextAnalysis, KeywordAlgorithm, analyze_cont
 use ra_query::QueryExpr;
 
 use crate::{
-    IndexError, SearchCandidate, SearchParams, Searcher, TreeFilteredSearcher, result::SearchResult,
+    IndexError, SearchCandidate, SearchParams, Searcher, TreeFilteredSearcher,
+    result::SearchResult, search::PipelineStats,
 };
 
 /// Boost applied to terms injected from context rules.
@@ -273,8 +274,20 @@ impl<'a> ContextSearch<'a> {
         analysis: ContextAnalysisResult,
         params: &SearchParams,
     ) -> Result<(Vec<SearchResult>, ContextAnalysisResult), IndexError> {
+        let (results, analysis, _) = self.search_with_analysis_stats(analysis, params)?;
+        Ok((results, analysis))
+    }
+
+    /// Executes a context search and returns pipeline statistics.
+    pub fn search_with_analysis_stats(
+        &mut self,
+        analysis: ContextAnalysisResult,
+        params: &SearchParams,
+    ) -> Result<(Vec<SearchResult>, ContextAnalysisResult, PipelineStats), IndexError> {
         let Some(ref expr) = analysis.query_expr else {
-            return Ok((Vec::new(), analysis));
+            let empty_stats =
+                PipelineStats::empty(params.cutoff_ratio, params.aggregation_pool_size);
+            return Ok((Vec::new(), analysis, empty_stats));
         };
 
         // Compute effective trees for the search
@@ -287,7 +300,9 @@ impl<'a> ContextSearch<'a> {
         };
 
         // Execute the search
-        let mut results = self.searcher.search_aggregated_expr(expr, &search_params)?;
+        let (mut results, stats) = self
+            .searcher
+            .search_aggregated_expr_with_stats(expr, &search_params)?;
 
         // Filter out input files from results (self-exclusion)
         if !analysis.exclude_doc_ids.is_empty() {
@@ -297,7 +312,7 @@ impl<'a> ContextSearch<'a> {
         // Inject auto-included files from rules
         self.inject_includes(&mut results, &analysis.merged_rules.include, params.limit);
 
-        Ok((results, analysis))
+        Ok((results, analysis, stats))
     }
 
     /// Builds a combined query expression from file analyses and matched rules.
