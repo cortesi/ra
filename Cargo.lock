@@ -600,6 +600,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyword_extraction"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bab83c382982b79063036f88b9e722b899c23e750f1318ceead83ccd7413f874"
+dependencies = [
+ "regex",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "levenshtein_automata"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -980,6 +990,7 @@ dependencies = [
 name = "ra-context"
 version = "0.1.0"
 dependencies = [
+ "keyword_extraction",
  "ra-config",
  "ra-document",
  "ra-query",

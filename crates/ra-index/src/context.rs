@@ -12,7 +12,7 @@
 use std::{collections::HashSet, fs, path::Path};
 
 use ra_config::{CompiledContextRules, ContextSettings, MatchedRules};
-use ra_context::{AnalysisConfig, ContextAnalysis, analyze_context};
+use ra_context::{AnalysisConfig, ContextAnalysis, KeywordAlgorithm, analyze_context};
 use ra_query::QueryExpr;
 
 use crate::{
@@ -94,6 +94,27 @@ impl<'a> ContextSearch<'a> {
         context_settings: &ContextSettings,
         max_terms: usize,
     ) -> Result<Self, IndexError> {
+        Self::with_algorithm(
+            searcher,
+            context_settings,
+            max_terms,
+            KeywordAlgorithm::TfIdf,
+        )
+    }
+
+    /// Creates a new context search engine with a specific keyword extraction algorithm.
+    ///
+    /// # Arguments
+    /// * `searcher` - The search index to use for IDF lookups and result retrieval
+    /// * `context_settings` - Context configuration including rules
+    /// * `max_terms` - Maximum number of terms to include in the query
+    /// * `algorithm` - Keyword extraction algorithm to use
+    pub fn with_algorithm(
+        searcher: &'a mut Searcher,
+        context_settings: &ContextSettings,
+        max_terms: usize,
+        algorithm: KeywordAlgorithm,
+    ) -> Result<Self, IndexError> {
         let rules = CompiledContextRules::compile(context_settings)
             .map_err(|e| IndexError::Config(e.to_string()))?;
 
@@ -103,6 +124,7 @@ impl<'a> ContextSearch<'a> {
             analysis_config: AnalysisConfig {
                 max_terms,
                 min_term_length: context_settings.min_word_length,
+                algorithm,
             },
         })
     }

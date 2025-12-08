@@ -14,6 +14,7 @@ use ra_query::QueryExpr;
 
 use crate::{
     Stopwords, WeightedTerm, extract_path_terms,
+    keyword::{KeywordAlgorithm, RakeExtractor, ScoredKeyword, TextRankExtractor, YakeExtractor},
     parser::{ContentParser, MarkdownParser, TextParser},
     query::{self, ContextQuery, DEFAULT_TERM_LIMIT},
     rank::{IdfProvider, RankedTerm, rank_terms},
@@ -26,6 +27,8 @@ pub struct AnalysisConfig {
     pub max_terms: usize,
     /// Minimum term length for extraction.
     pub min_term_length: usize,
+    /// Keyword extraction algorithm to use.
+    pub algorithm: KeywordAlgorithm,
 }
 
 impl Default for AnalysisConfig {
@@ -33,6 +36,7 @@ impl Default for AnalysisConfig {
         Self {
             max_terms: DEFAULT_TERM_LIMIT,
             min_term_length: 3,
+            algorithm: KeywordAlgorithm::TfIdf,
         }
     }
 }
@@ -42,16 +46,23 @@ impl Default for AnalysisConfig {
 pub struct ContextAnalysis {
     /// All weighted terms extracted from the file.
     pub terms: Vec<WeightedTerm>,
-    /// Ranked terms after TF-IDF scoring.
+    /// Ranked terms after scoring (algorithm-dependent).
     pub ranked_terms: Vec<RankedTerm>,
+    /// Keywords extracted by the algorithm (unified format).
+    pub keywords: Vec<ScoredKeyword>,
     /// The constructed context query (if any terms were extracted).
     pub query: Option<ContextQuery>,
+    /// The algorithm used for extraction.
+    pub algorithm: KeywordAlgorithm,
 }
 
 impl ContextAnalysis {
-    /// Returns true if no useful context was extracted.
+    /// Returns true if no terms were extracted from the source.
+    ///
+    /// Note: This checks `terms`, not `keywords`, because keywords may be empty
+    /// if the IDF provider filters out all terms (e.g., for TF-IDF with a new corpus).
     pub fn is_empty(&self) -> bool {
-        self.terms.is_empty()
+        self.terms.is_empty() && self.keywords.is_empty()
     }
 
     /// Returns the query expression, if available.
@@ -70,14 +81,14 @@ impl ContextAnalysis {
 /// This is the main entry point for context analysis. It:
 /// 1. Extracts weighted terms from the file path
 /// 2. Parses file content (markdown headings get higher weights)
-/// 3. Ranks terms using TF-IDF with IDF values from the search index
+/// 3. Ranks terms using the configured algorithm
 /// 4. Constructs a boosted OR query from the top terms
 ///
 /// # Arguments
 /// * `path` - Path to the file being analyzed (used for path term extraction)
 /// * `content` - Content of the file
-/// * `idf_provider` - Source for IDF values (typically the search index)
-/// * `config` - Analysis configuration
+/// * `idf_provider` - Source for IDF values (required for TF-IDF, ignored for other algorithms)
+/// * `config` - Analysis configuration including algorithm selection
 ///
 /// # Returns
 /// A `ContextAnalysis` containing extracted terms, ranked terms, and the query.
@@ -106,12 +117,45 @@ where
         return ContextAnalysis {
             terms: Vec::new(),
             ranked_terms: Vec::new(),
+            keywords: Vec::new(),
             query: None,
+            algorithm: config.algorithm,
         };
     }
 
-    // Rank terms using TF-IDF
-    let ranked_terms = rank_terms(terms.clone(), idf_provider);
+    // Rank terms using the selected algorithm
+    let (ranked_terms, keywords) = match config.algorithm {
+        KeywordAlgorithm::TfIdf => {
+            // Use corpus-based TF-IDF with weighted terms
+            let ranked = rank_terms(terms.clone(), idf_provider);
+            let keywords: Vec<ScoredKeyword> = ranked
+                .iter()
+                .map(|r| ScoredKeyword::with_source(&r.term.term, r.score, &r.term.source))
+                .collect();
+            (ranked, keywords)
+        }
+        KeywordAlgorithm::Rake => {
+            // Use RAKE on raw content
+            let extractor = RakeExtractor::new();
+            let keywords = extractor.extract(content);
+            let ranked = keywords_to_ranked_terms(&keywords);
+            (ranked, keywords)
+        }
+        KeywordAlgorithm::TextRank => {
+            // Use TextRank on raw content
+            let extractor = TextRankExtractor::new();
+            let keywords = extractor.extract(content);
+            let ranked = keywords_to_ranked_terms(&keywords);
+            (ranked, keywords)
+        }
+        KeywordAlgorithm::Yake => {
+            // Use YAKE on raw content
+            let extractor = YakeExtractor::new();
+            let keywords = extractor.extract(content);
+            let ranked = keywords_to_ranked_terms(&keywords);
+            (ranked, keywords)
+        }
+    };
 
     // Build the final query from ranked terms
     let query = query::build_query(ranked_terms.clone(), config.max_terms);
@@ -119,8 +163,25 @@ where
     ContextAnalysis {
         terms,
         ranked_terms,
+        keywords,
         query,
+        algorithm: config.algorithm,
     }
+}
+
+/// Converts ScoredKeywords to RankedTerms for query building compatibility.
+fn keywords_to_ranked_terms(keywords: &[ScoredKeyword]) -> Vec<RankedTerm> {
+    keywords
+        .iter()
+        .map(|k| {
+            let term = WeightedTerm::new(
+                k.term.clone(),
+                k.source.clone().unwrap_or_else(|| "keyword".to_string()),
+                1.0,
+            );
+            RankedTerm::new(term, k.score)
+        })
+        .collect()
 }
 
 /// Parses file content using the appropriate parser based on file type.
@@ -318,6 +379,7 @@ mod test {
         let config = AnalysisConfig {
             max_terms: 2,
             min_term_length: 8, // 8 chars minimum
+            algorithm: KeywordAlgorithm::TfIdf,
         };
 
         let analysis = analyze_context(
@@ -381,5 +443,90 @@ mod test {
         assert!(!analysis.is_empty());
         assert!(analysis.query_expr().is_some());
         assert!(analysis.query_string().is_some());
+    }
+
+    const SAMPLE_CONTENT: &str = "Rust is a systems programming language focused on safety, \
+        speed, and concurrency. Rust achieves memory safety without garbage collection.";
+
+    #[test]
+    fn analyze_with_rake_algorithm() {
+        let idf = MockIdf::new(); // Not used for RAKE
+        let config = AnalysisConfig {
+            algorithm: KeywordAlgorithm::Rake,
+            ..Default::default()
+        };
+
+        let analysis = analyze_context(Path::new("test.md"), SAMPLE_CONTENT, &idf, &config);
+
+        assert_eq!(analysis.algorithm, KeywordAlgorithm::Rake);
+        assert!(!analysis.keywords.is_empty());
+        // RAKE should find meaningful keywords
+        let keyword_terms: Vec<_> = analysis.keywords.iter().map(|k| k.term.as_str()).collect();
+        // Check for some expected terms (RAKE may return different terms than TF-IDF)
+        assert!(
+            keyword_terms.iter().any(|t| {
+                t.contains("rust")
+                    || t.contains("memory")
+                    || t.contains("safety")
+                    || t.contains("programming")
+            }),
+            "Expected programming-related terms, got: {:?}",
+            keyword_terms
+        );
+    }
+
+    #[test]
+    fn analyze_with_textrank_algorithm() {
+        let idf = MockIdf::new(); // Not used for TextRank
+        let config = AnalysisConfig {
+            algorithm: KeywordAlgorithm::TextRank,
+            ..Default::default()
+        };
+
+        let analysis = analyze_context(Path::new("test.md"), SAMPLE_CONTENT, &idf, &config);
+
+        assert_eq!(analysis.algorithm, KeywordAlgorithm::TextRank);
+        assert!(!analysis.keywords.is_empty());
+    }
+
+    #[test]
+    fn analyze_with_yake_algorithm() {
+        let idf = MockIdf::new(); // Not used for YAKE
+        let config = AnalysisConfig {
+            algorithm: KeywordAlgorithm::Yake,
+            ..Default::default()
+        };
+
+        let analysis = analyze_context(Path::new("test.md"), SAMPLE_CONTENT, &idf, &config);
+
+        assert_eq!(analysis.algorithm, KeywordAlgorithm::Yake);
+        assert!(!analysis.keywords.is_empty());
+        // YAKE scores should be positive (we inverted them)
+        assert!(analysis.keywords.iter().all(|k| k.score > 0.0));
+    }
+
+    #[test]
+    fn analyze_algorithms_produce_queries() {
+        let idf = MockIdf::new();
+
+        for algorithm in [
+            KeywordAlgorithm::Rake,
+            KeywordAlgorithm::TextRank,
+            KeywordAlgorithm::Yake,
+        ] {
+            let config = AnalysisConfig {
+                algorithm,
+                ..Default::default()
+            };
+
+            let analysis = analyze_context(Path::new("test.md"), SAMPLE_CONTENT, &idf, &config);
+
+            // All algorithms should produce a query if content has keywords
+            assert!(
+                analysis.query.is_some(),
+                "{} should produce a query",
+                algorithm
+            );
+        }
     }
 }

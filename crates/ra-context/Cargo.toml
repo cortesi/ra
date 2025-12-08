@@ -5,6 +5,7 @@ edition = "2024"
 description = "Context analysis for ra research assistant"
 
 [dependencies]
+keyword_extraction = { version = "1.5.0", features = ["rake", "text_rank", "yake"] }
 ra-config = { path = "../ra-config" }
 ra-document = { path = "../ra-document" }
 ra-query = { path = "../ra-query" }

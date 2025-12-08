@@ -71,6 +71,11 @@ impl Stopwords {
     pub fn is_empty(&self) -> bool {
         self.words.is_empty()
     }
+
+    /// Returns the stopwords as a Vec for use with external libraries.
+    pub fn as_vec(&self) -> Vec<String> {
+        self.words.iter().cloned().collect()
+    }
 }
 
 /// Rust strict keywords (all editions).

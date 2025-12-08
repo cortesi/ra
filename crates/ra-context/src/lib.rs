@@ -5,13 +5,23 @@
 //!
 //! 1. **Path analysis**: Extract path components as search terms
 //! 2. **Pattern matching**: Match file paths against configured glob patterns
-//! 3. **Content analysis**: Extract significant terms using TF-IDF
+//! 3. **Content analysis**: Extract significant terms using keyword extraction
 //!
 //! These signals are combined into a search query that finds relevant context.
+//!
+//! ## Keyword Extraction Algorithms
+//!
+//! Multiple algorithms are available for keyword extraction:
+//!
+//! - **TF-IDF** (default): Corpus-aware ranking using index statistics
+//! - **RAKE**: Rapid Automatic Keyword Extraction based on co-occurrence
+//! - **TextRank**: Graph-based ranking similar to PageRank
+//! - **YAKE**: Statistical extraction, good for short texts
 
 #![warn(missing_docs)]
 
 mod analyze;
+pub mod keyword;
 mod parser;
 mod query;
 mod rank;
@@ -26,6 +36,9 @@ use std::{
 };
 
 pub use analyze::{AnalysisConfig, ContextAnalysis, analyze_context};
+pub use keyword::{
+    CorpusTfIdf, KeywordAlgorithm, RakeExtractor, ScoredKeyword, TextRankExtractor, YakeExtractor,
+};
 pub use query::ContextQuery;
 use ra_config::{CompiledContextRules, ContextSettings};
 pub use rank::{IdfProvider, RankedTerm};

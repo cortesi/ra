@@ -31,6 +31,11 @@ use serde::Serialize;
 // Default values are defined in ra-config::DEFAULT_* constants.
 // Help text references these values; update both if defaults change.
 
+/// Parse a keyword extraction algorithm from a string.
+fn parse_algorithm(s: &str) -> Result<ra_context::KeywordAlgorithm, String> {
+    s.parse()
+}
+
 /// CLI options for search parameters that can override config defaults.
 ///
 /// Used by both `search` and `context` commands to construct `SearchParams`.
@@ -293,6 +298,11 @@ EXAMPLES:
         #[arg(long)]
         terms: Option<usize>,
 
+        /// Keyword extraction algorithm: tfidf (corpus-aware), rake (co-occurrence),
+        /// textrank (graph-based), yake (statistical) [default: tfidf]
+        #[arg(short = 'a', long, value_parser = parse_algorithm)]
+        algorithm: Option<ra_context::KeywordAlgorithm>,
+
         /// Output titles and snippets only
         #[arg(long)]
         list: bool,
@@ -533,6 +543,14 @@ enum InspectWhat {
     Doc {
         /// File to inspect
         file: String,
+
+        /// Keyword extraction algorithm: tfidf, rake, textrank, yake [default: textrank]
+        #[arg(short = 'a', long, value_parser = parse_algorithm)]
+        algorithm: Option<ra_context::KeywordAlgorithm>,
+
+        /// Maximum keywords to display [default: 20]
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
     },
     /// Show context signals for a file
     Ctx {
@@ -598,6 +616,7 @@ fn main() -> ExitCode {
             files,
             limit,
             terms,
+            algorithm,
             list,
             matches,
             json,
@@ -614,6 +633,7 @@ fn main() -> ExitCode {
                 &files,
                 limit,
                 terms,
+                algorithm,
                 list,
                 matches,
                 json,
@@ -1557,6 +1577,7 @@ fn cmd_context(
     files: &[String],
     limit: Option<usize>,
     max_terms: Option<usize>,
+    algorithm: Option<ra_context::KeywordAlgorithm>,
     list: bool,
     matches: bool,
     json: bool,
@@ -1577,20 +1598,24 @@ fn cmd_context(
     // Apply config default for max_terms if not specified on CLI
     let max_terms = max_terms.unwrap_or(config.context.terms);
 
+    // Apply algorithm - default is TfIdf
+    let algorithm = algorithm.unwrap_or_default();
+
     // Ensure index is fresh (needed for both explain and search modes)
     let mut searcher = match ensure_index_fresh(&config, fuzzy) {
         Ok(s) => s,
         Err(code) => return code,
     };
 
-    // Create context search engine
-    let mut context_search = match ContextSearch::new(&mut searcher, &config.context, max_terms) {
-        Ok(cs) => cs,
-        Err(e) => {
-            eprintln!("error: failed to initialize context search: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    // Create context search engine with selected algorithm
+    let mut context_search =
+        match ContextSearch::with_algorithm(&mut searcher, &config.context, max_terms, algorithm) {
+            Ok(cs) => cs,
+            Err(e) => {
+                eprintln!("error: failed to initialize context search: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
 
     // Convert file paths, checking for existence and warning about binary files
     let mut file_paths: Vec<&Path> = Vec::new();
@@ -2914,13 +2939,21 @@ fn print_hints(warnings: &[ConfigWarning]) {
 /// Implements the `ra inspect` command.
 fn cmd_inspect(what: InspectWhat) -> ExitCode {
     match what {
-        InspectWhat::Doc { file } => cmd_inspect_doc(&file),
+        InspectWhat::Doc {
+            file,
+            algorithm,
+            limit,
+        } => cmd_inspect_doc(&file, algorithm, limit),
         InspectWhat::Ctx { file } => cmd_inspect_ctx(&file),
     }
 }
 
 /// Implements `ra inspect doc` - show how ra parses a document.
-fn cmd_inspect_doc(file: &str) -> ExitCode {
+fn cmd_inspect_doc(
+    file: &str,
+    algorithm: Option<ra_context::KeywordAlgorithm>,
+    limit: Option<usize>,
+) -> ExitCode {
     let path = Path::new(file);
 
     // Check if file exists
@@ -2941,6 +2974,15 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
         None => {
             eprintln!("error: file has no extension");
             eprintln!("Supported types: .md, .markdown, .txt");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // Read file content for keyword extraction
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: failed to read file: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -2978,6 +3020,31 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
     println!("{}", dim(&chunk_info));
     println!();
 
+    // Display keywords
+    let algo = algorithm.unwrap_or(ra_context::KeywordAlgorithm::TextRank);
+    let kw_limit = limit.unwrap_or(20);
+
+    println!("--- {} ---", header(&format!("keywords ({})", algo)));
+
+    let extracted = extract_keywords(&content, algo);
+
+    if extracted.is_empty() {
+        println!("{}", dim("  (no keywords extracted)"));
+    } else {
+        // Find max score width for alignment
+        let max_score = extracted
+            .iter()
+            .take(kw_limit)
+            .map(|k| k.score)
+            .fold(0.0_f32, f32::max);
+        let score_width = format!("{:.2}", max_score).len();
+
+        for kw in extracted.iter().take(kw_limit) {
+            println!("  {:>width$.2}  {}", kw.score, kw.term, width = score_width);
+        }
+    }
+    println!();
+
     // Display each chunk in search result format
     for chunk in &chunks {
         let chunk_label = if chunk.depth == 0 {
@@ -2999,6 +3066,34 @@ fn cmd_inspect_doc(file: &str) -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Extracts keywords from text using the specified algorithm.
+fn extract_keywords(
+    content: &str,
+    algorithm: ra_context::KeywordAlgorithm,
+) -> Vec<ra_context::ScoredKeyword> {
+    use ra_context::{KeywordAlgorithm, RakeExtractor, TextRankExtractor, YakeExtractor};
+
+    match algorithm {
+        KeywordAlgorithm::TfIdf => {
+            // For TF-IDF without a corpus, fall back to RAKE
+            let extractor = RakeExtractor::new();
+            extractor.extract(content)
+        }
+        KeywordAlgorithm::Rake => {
+            let extractor = RakeExtractor::new();
+            extractor.extract(content)
+        }
+        KeywordAlgorithm::TextRank => {
+            let extractor = TextRankExtractor::new();
+            extractor.extract(content)
+        }
+        KeywordAlgorithm::Yake => {
+            let extractor = YakeExtractor::new();
+            extractor.extract(content)
+        }
+    }
 }
 
 /// Implements `ra inspect ctx` - show context signals for a file.
