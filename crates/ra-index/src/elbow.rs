@@ -68,78 +68,6 @@ pub struct ElbowStats {
     pub max_results: usize,
 }
 
-/// Finds the elbow cutoff point in a list of search candidates.
-///
-/// The candidates must be sorted by score in descending order. The function
-/// finds the first index where the ratio `score[i+1] / score[i]` falls below
-/// the cutoff ratio, indicating a significant drop in relevance.
-///
-/// # Arguments
-/// * `candidates` - Search candidates sorted by score (highest first)
-/// * `cutoff_ratio` - Threshold ratio below which we cut off (0.0 to 1.0)
-/// * `max_results` - Maximum number of results to return if no elbow is found
-///
-/// # Returns
-/// A vector containing candidates up to (but not including) the elbow point,
-/// or up to `max_results` if no elbow is found.
-///
-/// # Edge Cases
-/// - Empty input returns empty output
-/// - Single candidate returns that candidate
-/// - Two candidates with significant drop returns just the first
-/// - Zero or negative scores trigger immediate cutoff
-/// - No elbow found returns up to `max_results`
-///
-/// # Note
-/// This function operates on raw SearchCandidates. For aggregated SearchResults,
-/// use [`elbow_cutoff_results`] instead.
-#[cfg(test)]
-pub fn elbow_cutoff(
-    candidates: Vec<SearchCandidate>,
-    cutoff_ratio: f32,
-    max_results: usize,
-) -> Vec<SearchCandidate> {
-    // Handle edge cases
-    if candidates.is_empty() {
-        return Vec::new();
-    }
-
-    if candidates.len() == 1 {
-        return candidates;
-    }
-
-    // Find the elbow point
-    let mut cutoff_index = candidates.len();
-
-    for i in 0..candidates.len() - 1 {
-        let current_score = candidates[i].score;
-        let next_score = candidates[i + 1].score;
-
-        // Zero or negative scores trigger immediate cutoff
-        if current_score <= 0.0 {
-            cutoff_index = i;
-            break;
-        }
-
-        if next_score <= 0.0 {
-            cutoff_index = i + 1;
-            break;
-        }
-
-        // Compute ratio and check against threshold
-        let ratio = next_score / current_score;
-        if ratio < cutoff_ratio {
-            cutoff_index = i + 1;
-            break;
-        }
-    }
-
-    // Apply max_results limit
-    let final_count = cutoff_index.min(max_results);
-
-    candidates.into_iter().take(final_count).collect()
-}
-
 /// Finds the elbow cutoff point in a list of search results.
 ///
 /// This variant operates on aggregated SearchResults instead of raw candidates.
@@ -289,12 +217,24 @@ mod test {
             .collect()
     }
 
+    fn elbow_cutoff_candidates(
+        candidates: Vec<SearchCandidate>,
+        cutoff_ratio: f32,
+        max_results: usize,
+    ) -> Vec<SearchCandidate> {
+        let results: Vec<SearchResult> = candidates.into_iter().map(SearchResult::single).collect();
+        elbow_cutoff_results(results, cutoff_ratio, max_results)
+            .into_iter()
+            .map(|r| r.candidate().clone())
+            .collect()
+    }
+
     #[test]
     fn spec_example_scores() {
         // Example from spec: [8.0, 7.5, 7.0, 3.2, 3.0, 2.8, 0.9]
         // Elbow at index 3 (ratio 3.2/7.0 = 0.46 < 0.5)
         let candidates = make_candidates(&[8.0, 7.5, 7.0, 3.2, 3.0, 2.8, 0.9]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].score, 8.0);
@@ -305,7 +245,7 @@ mod test {
     #[test]
     fn empty_input() {
         let candidates: Vec<SearchCandidate> = vec![];
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         assert!(result.is_empty());
     }
@@ -313,7 +253,7 @@ mod test {
     #[test]
     fn single_candidate() {
         let candidates = make_candidates(&[5.0]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].score, 5.0);
@@ -323,7 +263,7 @@ mod test {
     fn two_candidates_no_elbow() {
         // 4.5/5.0 = 0.9, above threshold
         let candidates = make_candidates(&[5.0, 4.5]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         assert_eq!(result.len(), 2);
     }
@@ -332,7 +272,7 @@ mod test {
     fn two_candidates_with_elbow() {
         // 2.0/5.0 = 0.4, below threshold
         let candidates = make_candidates(&[5.0, 2.0]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].score, 5.0);
@@ -342,7 +282,7 @@ mod test {
     fn no_elbow_found_returns_max_results() {
         // All ratios above threshold: 0.95, 0.95, 0.95...
         let candidates = make_candidates(&[10.0, 9.5, 9.0, 8.5, 8.0, 7.5, 7.0]);
-        let result = elbow_cutoff(candidates, 0.5, 3);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 3);
 
         // Should return max_results (3) since no elbow found
         assert_eq!(result.len(), 3);
@@ -352,7 +292,7 @@ mod test {
     fn elbow_before_max_results() {
         // Elbow at index 2, max_results = 10
         let candidates = make_candidates(&[10.0, 9.0, 2.0, 1.5, 1.0]);
-        let result = elbow_cutoff(candidates, 0.5, 10);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 10);
 
         // Should return 2 (up to elbow), not 10
         assert_eq!(result.len(), 2);
@@ -362,7 +302,7 @@ mod test {
     fn max_results_before_elbow() {
         // Elbow would be at index 5, but max_results = 3
         let candidates = make_candidates(&[10.0, 9.0, 8.0, 7.0, 6.0, 1.0]);
-        let result = elbow_cutoff(candidates, 0.5, 3);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 3);
 
         // Should return 3 (max_results), not 5
         assert_eq!(result.len(), 3);
@@ -371,7 +311,7 @@ mod test {
     #[test]
     fn zero_score_triggers_cutoff() {
         let candidates = make_candidates(&[5.0, 4.0, 0.0, 3.0]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // Should stop at index 2 (the zero score)
         assert_eq!(result.len(), 2);
@@ -380,7 +320,7 @@ mod test {
     #[test]
     fn negative_score_triggers_cutoff() {
         let candidates = make_candidates(&[5.0, 4.0, -1.0, 3.0]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // Should stop at index 2 (the negative score)
         assert_eq!(result.len(), 2);
@@ -389,7 +329,7 @@ mod test {
     #[test]
     fn first_score_zero_returns_empty() {
         let candidates = make_candidates(&[0.0, 5.0, 4.0]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // First score is zero, cutoff at index 0
         assert!(result.is_empty());
@@ -400,7 +340,7 @@ mod test {
         // Gradual decline: each ratio is 0.9 (above 0.5 threshold)
         let scores: Vec<f32> = (0..10).map(|i| 10.0 * 0.9_f32.powi(i)).collect();
         let candidates = make_candidates(&scores);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // No elbow found, return all 10
         assert_eq!(result.len(), 10);
@@ -410,7 +350,7 @@ mod test {
     fn steep_drop_immediate_elbow() {
         // Immediate steep drop
         let candidates = make_candidates(&[10.0, 1.0, 0.9, 0.8]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // Elbow at index 1 (ratio 0.1 < 0.5)
         assert_eq!(result.len(), 1);
@@ -420,7 +360,7 @@ mod test {
     fn exact_threshold_not_elbow() {
         // Ratio exactly at threshold (0.5) should NOT trigger cutoff
         let candidates = make_candidates(&[10.0, 5.0, 2.5]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // 5.0/10.0 = 0.5 (not < 0.5, so no elbow)
         // 2.5/5.0 = 0.5 (not < 0.5, so no elbow)
@@ -431,7 +371,7 @@ mod test {
     fn just_below_threshold_is_elbow() {
         // Ratio just below threshold
         let candidates = make_candidates(&[10.0, 4.9, 2.0]);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // 4.9/10.0 = 0.49 < 0.5, elbow at index 1
         assert_eq!(result.len(), 1);
@@ -442,11 +382,11 @@ mod test {
         let candidates = make_candidates(&[10.0, 8.0, 6.0, 4.0]);
 
         // With ratio 0.7: 8/10=0.8 ok, 6/8=0.75 ok, 4/6=0.67 < 0.7 elbow
-        let result = elbow_cutoff(candidates.clone(), 0.7, 20);
+        let result = elbow_cutoff_candidates(candidates.clone(), 0.7, 20);
         assert_eq!(result.len(), 3);
 
         // With ratio 0.9: 8/10=0.8 < 0.9 immediate elbow
-        let result = elbow_cutoff(candidates, 0.9, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.9, 20);
         assert_eq!(result.len(), 1);
     }
 
@@ -458,7 +398,7 @@ mod test {
         candidate.snippet = Some("highlighted".to_string());
         candidate.match_ranges = vec![0..5, 10..15];
 
-        let result = elbow_cutoff(vec![candidate], 0.5, 20);
+        let result = elbow_cutoff_candidates(vec![candidate], 0.5, 20);
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title(), "Specific Title");
@@ -474,7 +414,7 @@ mod test {
         scores.extend([5.0, 4.0, 3.0]); // Steep drop from ~14.5 to 5.0
 
         let candidates = make_candidates(&scores);
-        let result = elbow_cutoff(candidates, 0.5, 20);
+        let result = elbow_cutoff_candidates(candidates, 0.5, 20);
 
         // Elbow at index 12 (ratio 5.0/14.5 ≈ 0.34 < 0.5)
         assert_eq!(result.len(), 12);

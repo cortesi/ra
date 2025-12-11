@@ -41,7 +41,7 @@
 //!
 //! The document node (ID without `#`) is an ancestor of all chunks in that document.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{SearchCandidate, result::SearchResult};
 
@@ -58,8 +58,6 @@ pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.5;
 pub struct AdaptiveAggregator {
     /// Accumulated search results.
     results: Vec<SearchResult>,
-    /// IDs of chunks that have been claimed (their ancestor is in results).
-    claimed: HashSet<String>,
     /// Map from result ID to index in results vec (for efficient lookup).
     result_index: HashMap<String, usize>,
     /// Aggregation threshold (fraction of siblings needed to aggregate).
@@ -74,7 +72,6 @@ impl AdaptiveAggregator {
     pub fn new(threshold: f32) -> Self {
         Self {
             results: Vec::new(),
-            claimed: HashSet::new(),
             result_index: HashMap::new(),
             threshold,
         }
@@ -82,16 +79,9 @@ impl AdaptiveAggregator {
 
     /// Checks if a candidate is claimed (should be skipped).
     ///
-    /// A candidate is claimed if:
-    /// - Its ID is in the claimed set, OR
-    /// - Any of its ancestors is already in the results
+    /// A candidate is claimed if any of its ancestors is already in the results.
     pub fn is_claimed(&self, candidate: &SearchCandidate) -> bool {
-        // Direct claim check
-        if self.claimed.contains(&candidate.id) {
-            return true;
-        }
-
-        // Check if any ancestor is in results
+        // Check if any ancestor is in results.
         for idx in self.result_index.values() {
             let result_candidate = self.results[*idx].candidate();
             if result_candidate.is_ancestor_of(candidate) {
@@ -452,15 +442,6 @@ mod tests {
     fn new_creates_empty_aggregator() {
         let agg = AdaptiveAggregator::new(0.5);
         assert_eq!(agg.result_count(), 0);
-    }
-
-    #[test]
-    fn is_claimed_direct() {
-        let mut agg = AdaptiveAggregator::new(0.5);
-        agg.claimed.insert("local:test.md#intro".to_string());
-
-        let candidate = make_candidate("local:test.md#intro", Some("local:test.md"), 5.0, 2);
-        assert!(agg.is_claimed(&candidate));
     }
 
     #[test]

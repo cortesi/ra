@@ -21,9 +21,6 @@ const DEFAULT_HEAP_SIZE: usize = 50_000_000;
 /// The writer opens or creates an index at the specified path and provides
 /// methods to add, delete, and commit documents.
 pub struct IndexWriter {
-    /// The Tantivy index (used by test-only `num_docs`).
-    #[allow(dead_code)]
-    index: Index,
     /// The underlying Tantivy writer.
     writer: TantivyIndexWriter,
     /// Schema with field handles.
@@ -55,11 +52,7 @@ impl IndexWriter {
             .writer(DEFAULT_HEAP_SIZE)
             .map_err(|e| IndexError::open_index(path.to_path_buf(), &e))?;
 
-        Ok(Self {
-            index,
-            writer,
-            schema,
-        })
+        Ok(Self { writer, schema })
     }
 
     /// Opens an existing index or creates a new one. If the schema doesn't match,
@@ -204,27 +197,22 @@ impl IndexWriter {
             .map_err(|e| IndexError::write(&e))?;
         Ok(())
     }
-
-    /// Returns the number of documents in the index.
-    ///
-    /// Note: This requires creating a reader and may not reflect uncommitted changes.
-    #[cfg(test)]
-    pub fn num_docs(&self) -> Result<u64, IndexError> {
-        let reader = self
-            .index
-            .reader()
-            .map_err(|e| IndexError::Write(e.to_string()))?;
-        Ok(reader.searcher().num_docs())
-    }
 }
 
 #[cfg(test)]
 mod test {
-    use std::time::SystemTime;
+    use std::{path::Path, time::SystemTime};
 
+    use tantivy::Index;
     use tempfile::TempDir;
 
     use super::*;
+
+    fn num_docs_in_dir(path: &Path) -> u64 {
+        let index = Index::open_in_dir(path).unwrap();
+        let reader = index.reader().unwrap();
+        reader.searcher().num_docs()
+    }
 
     fn make_test_chunk_doc() -> ChunkDocument {
         ChunkDocument {
@@ -265,7 +253,7 @@ mod test {
         writer.commit().unwrap();
 
         // Verify document was indexed
-        assert_eq!(writer.num_docs().unwrap(), 1);
+        assert_eq!(num_docs_in_dir(temp.path()), 1);
     }
 
     #[test]
@@ -311,7 +299,7 @@ mod test {
         writer.add_documents(&docs).unwrap();
         writer.commit().unwrap();
 
-        assert_eq!(writer.num_docs().unwrap(), 2);
+        assert_eq!(num_docs_in_dir(temp.path()), 2);
     }
 
     #[test]
@@ -328,7 +316,8 @@ mod test {
         // Reopen and verify
         {
             let writer = IndexWriter::open(temp.path(), "english").unwrap();
-            assert_eq!(writer.num_docs().unwrap(), 1);
+            assert_eq!(num_docs_in_dir(temp.path()), 1);
+            drop(writer);
         }
     }
 
@@ -343,7 +332,7 @@ mod test {
         writer.delete_all().unwrap();
         writer.commit().unwrap();
 
-        assert_eq!(writer.num_docs().unwrap(), 0);
+        assert_eq!(num_docs_in_dir(temp.path()), 0);
     }
 
     #[test]
@@ -358,6 +347,6 @@ mod test {
         // The rollback should have discarded the uncommitted document
         writer.commit().unwrap();
 
-        assert_eq!(writer.num_docs().unwrap(), 0);
+        assert_eq!(num_docs_in_dir(temp.path()), 0);
     }
 }
