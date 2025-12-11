@@ -129,45 +129,15 @@ impl Parser {
     ///
     /// After parsing the primary expression, checks for an optional boost suffix.
     fn parse_primary(&mut self) -> Result<QueryExpr, ParseError> {
-        let token = self.peek().cloned();
-
-        let expr = match token {
-            Some(Token::Term(text)) => {
-                self.advance();
-                QueryExpr::Term(text)
-            }
-
-            Some(Token::Phrase(text)) => {
-                self.advance();
-                // Split phrase into words
-                let words: Vec<String> = text.split_whitespace().map(|s| s.to_string()).collect();
-                if words.is_empty() {
-                    // Empty phrase, treat as empty term
-                    QueryExpr::Term(String::new())
-                } else {
-                    QueryExpr::Phrase(words)
-                }
-            }
+        let expr = match self.peek().cloned() {
+            Some(Token::Term(_)) | Some(Token::Phrase(_)) => self.parse_term_or_phrase(),
 
             Some(Token::FieldPrefix(name)) => {
                 self.advance();
                 self.parse_field_expr(name)?
             }
 
-            Some(Token::LParen) => {
-                self.advance(); // consume (
-                let inner = self.parse_or_expr()?;
-
-                if !self.check(&Token::RParen) {
-                    return Err(ParseError::new(
-                        "expected closing parenthesis",
-                        Some(self.position),
-                    ));
-                }
-                self.advance(); // consume )
-
-                inner
-            }
+            Some(Token::LParen) => self.parse_group("expected closing parenthesis")?,
 
             Some(Token::RParen) => {
                 return Err(ParseError::new(
@@ -200,45 +170,16 @@ impl Parser {
             }
         };
 
-        // Check for optional boost suffix
         Ok(self.maybe_apply_boost(expr))
     }
 
     /// Parses the expression after a field prefix.
     fn parse_field_expr(&mut self, name: String) -> Result<QueryExpr, ParseError> {
-        let token = self.peek().cloned();
-
-        let expr = match token {
-            Some(Token::Term(text)) => {
-                self.advance();
-                QueryExpr::Term(text)
-            }
-
-            Some(Token::Phrase(text)) => {
-                self.advance();
-                let words: Vec<String> = text.split_whitespace().map(|s| s.to_string()).collect();
-                if words.is_empty() {
-                    QueryExpr::Term(String::new())
-                } else {
-                    QueryExpr::Phrase(words)
-                }
-            }
-
+        let expr = match self.peek().cloned() {
+            Some(Token::Term(_)) | Some(Token::Phrase(_)) => self.parse_term_or_phrase(),
             Some(Token::LParen) => {
-                self.advance(); // consume (
-                let inner = self.parse_or_expr()?;
-
-                if !self.check(&Token::RParen) {
-                    return Err(ParseError::new(
-                        "expected closing parenthesis after field expression",
-                        Some(self.position),
-                    ));
-                }
-                self.advance(); // consume )
-
-                inner
+                self.parse_group("expected closing parenthesis after field expression")?
             }
-
             _ => {
                 return Err(ParseError::new(
                     format!("expected term, phrase, or group after '{}:'", name),
@@ -251,6 +192,39 @@ impl Parser {
             name,
             expr: Box::new(expr),
         })
+    }
+
+    /// Parses a TERM or PHRASE token into a QueryExpr, consuming the token.
+    fn parse_term_or_phrase(&mut self) -> QueryExpr {
+        match self.peek().cloned() {
+            Some(Token::Term(text)) => {
+                self.advance();
+                QueryExpr::Term(text)
+            }
+            Some(Token::Phrase(text)) => {
+                self.advance();
+                let words: Vec<String> = text.split_whitespace().map(String::from).collect();
+                if words.is_empty() {
+                    QueryExpr::Term(String::new())
+                } else {
+                    QueryExpr::Phrase(words)
+                }
+            }
+            _ => unreachable!("parse_term_or_phrase called on non-term/phrase token"),
+        }
+    }
+
+    /// Parses a parenthesized group, consuming the surrounding parentheses.
+    fn parse_group(&mut self, missing_rparen_msg: &str) -> Result<QueryExpr, ParseError> {
+        self.advance(); // consume (
+        let inner = self.parse_or_expr()?;
+
+        if !self.check(&Token::RParen) {
+            return Err(ParseError::new(missing_rparen_msg, Some(self.position)));
+        }
+        self.advance(); // consume )
+
+        Ok(inner)
     }
 
     /// Returns the current token without consuming it.

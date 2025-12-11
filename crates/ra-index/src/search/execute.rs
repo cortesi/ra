@@ -109,23 +109,25 @@ impl Searcher {
             .search(query, &TopDocs::with_limit(limit))
             .map_err(|e| IndexError::Write(e.to_string()))?;
 
-        // Determine matched terms
         let (matched_terms, term_mappings) = if options.with_details {
-            let mappings = self.find_term_mappings(&searcher, query_terms);
+            let mappings = self.find_term_mappings(&searcher, query_terms, &[self.schema.body]);
             let mut terms: HashSet<String> = mappings.values().flatten().cloned().collect();
-            let extra_terms = self.find_matched_terms(
+
+            let extra = self.find_term_mappings(
                 &searcher,
                 query_terms,
                 &[self.schema.hierarchy, self.schema.path],
             );
-            terms.extend(extra_terms);
+            terms.extend(extra.values().flatten().cloned());
+
             (terms, Some(mappings))
         } else {
-            let terms = self.find_matched_terms(
+            let mappings = self.find_term_mappings(
                 &searcher,
                 query_terms,
                 &[self.schema.body, self.schema.hierarchy, self.schema.path],
             );
+            let terms: HashSet<String> = mappings.values().flatten().cloned().collect();
             (terms, None)
         };
 

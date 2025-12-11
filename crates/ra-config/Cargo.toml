@@ -12,6 +12,7 @@ directories = "6"
 globset = "0.4"
 pathdiff = "0.2.3"
 serde = { version = "1", features = ["derive"] }
+serde_with = "3.16.1"
 thiserror = "2"
 toml = "0.9"
 

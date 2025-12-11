@@ -3,9 +3,10 @@
 //! Parses individual `.ra.toml` files into intermediate `RawConfig` structures
 //! that preserve the optional nature of all fields before merging.
 
-use std::{collections::HashMap, fmt, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 
-use serde::{Deserialize, Deserializer, de};
+use serde::Deserialize;
+use serde_with::{OneOrMany, serde_as};
 #[cfg(test)]
 use toml::de::Error as TomlError;
 
@@ -100,11 +101,13 @@ pub struct RawContextSettings {
 ///
 /// Each rule specifies glob patterns to match against file paths, and the
 /// search behavior customizations to apply when a file matches.
+#[serde_as]
 #[derive(Debug, Clone, Deserialize)]
 pub struct RawContextRule {
     /// Glob pattern(s) to match against file paths.
     /// Accepts either a single string or an array of strings.
-    #[serde(rename = "match", deserialize_with = "deserialize_string_or_vec")]
+    #[serde(rename = "match")]
+    #[serde_as(as = "OneOrMany<_>")]
     pub patterns: Vec<String>,
     /// Limit search to these trees (default: all trees).
     pub trees: Option<Vec<String>>,
@@ -114,42 +117,6 @@ pub struct RawContextRule {
     pub include: Option<Vec<String>>,
     /// Search parameter overrides for this rule.
     pub search: Option<RawSearchSettings>,
-}
-
-/// Deserializes a field that can be either a single string or an array of strings.
-fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct StringOrVec;
-
-    impl<'de> de::Visitor<'de> for StringOrVec {
-        type Value = Vec<String>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a string or an array of strings")
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(vec![value.to_string()])
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: de::SeqAccess<'de>,
-        {
-            let mut values = Vec::new();
-            while let Some(value) = seq.next_element::<String>()? {
-                values.push(value);
-            }
-            Ok(values)
-        }
-    }
-
-    deserializer.deserialize_any(StringOrVec)
 }
 
 /// Parses a configuration file from disk.

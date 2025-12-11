@@ -122,15 +122,8 @@ impl QueryCompiler {
             return self.build_multi_field_term_query(&tokens[0]);
         }
 
-        // Build phrase queries for each searchable field
-        let fields_with_boosts: [(Field, f32); 4] = [
-            (self.schema.hierarchy, self.boosts.hierarchy),
-            (self.schema.tags, self.boosts.tags),
-            (self.schema.path, self.boosts.path),
-            (self.schema.body, self.boosts.body),
-        ];
-
-        let clauses: Vec<(Occur, Box<dyn Query>)> = fields_with_boosts
+        let clauses: Vec<(Occur, Box<dyn Query>)> = self
+            .fields_with_boosts()
             .into_iter()
             .map(|(field, boost_value)| {
                 let terms: Vec<Term> = tokens
@@ -399,22 +392,11 @@ impl QueryCompiler {
 
     /// Builds a multi-field term query with boosts and optional fuzzy matching.
     fn build_multi_field_term_query(&self, term_text: &str) -> Option<Box<dyn Query>> {
-        let fields_with_boosts: [(Field, f32); 4] = [
-            (self.schema.hierarchy, self.boosts.hierarchy),
-            (self.schema.tags, self.boosts.tags),
-            (self.schema.path, self.boosts.path),
-            (self.schema.body, self.boosts.body),
-        ];
-
-        let clauses: Vec<(Occur, Box<dyn Query>)> = fields_with_boosts
+        let clauses: Vec<(Occur, Box<dyn Query>)> = self
+            .fields_with_boosts()
             .into_iter()
             .map(|(field, boost_value)| {
-                let term = Term::from_field_text(field, term_text);
-                let query: Box<dyn Query> = if self.fuzzy_distance > 0 {
-                    Box::new(FuzzyTermQuery::new(term, self.fuzzy_distance, true))
-                } else {
-                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs))
-                };
+                let query = self.build_field_term_query(field, term_text);
                 let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, boost_value));
                 (Occur::Should, boosted)
             })
@@ -430,14 +412,29 @@ impl QueryCompiler {
         boost_value: f32,
         term_text: &str,
     ) -> Option<Box<dyn Query>> {
+        let query = self.build_field_term_query(field, term_text);
+        let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, boost_value));
+        Some(boosted)
+    }
+
+    /// Returns the searchable fields with their boost weights.
+    fn fields_with_boosts(&self) -> [(Field, f32); 4] {
+        [
+            (self.schema.hierarchy, self.boosts.hierarchy),
+            (self.schema.tags, self.boosts.tags),
+            (self.schema.path, self.boosts.path),
+            (self.schema.body, self.boosts.body),
+        ]
+    }
+
+    /// Builds a term query for a specific field, applying fuzzy matching if configured.
+    fn build_field_term_query(&self, field: Field, term_text: &str) -> Box<dyn Query> {
         let term = Term::from_field_text(field, term_text);
-        let query: Box<dyn Query> = if self.fuzzy_distance > 0 {
+        if self.fuzzy_distance > 0 {
             Box::new(FuzzyTermQuery::new(term, self.fuzzy_distance, true))
         } else {
             Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs))
-        };
-        let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, boost_value));
-        Some(boosted)
+        }
     }
 
     /// Tokenizes text using the configured analyzer.

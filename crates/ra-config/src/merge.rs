@@ -57,6 +57,26 @@ pub fn merge_configs(configs: &[ParsedConfig]) -> Result<Config, ConfigError> {
     })
 }
 
+/// Applies an optional value to a destination, overwriting when present.
+fn apply_opt<T>(dest: &mut T, value: Option<T>)
+where
+    T: Copy,
+{
+    if let Some(v) = value {
+        *dest = v;
+    }
+}
+
+/// Applies an optional cloned value to a destination, overwriting when present.
+fn apply_opt_clone<T>(dest: &mut T, value: &Option<T>)
+where
+    T: Clone,
+{
+    if let Some(v) = value {
+        *dest = v.clone();
+    }
+}
+
 /// Merges general settings, taking first defined value for each field.
 fn merge_settings(configs: &[ParsedConfig]) -> Settings {
     let mut result = Settings::default();
@@ -73,18 +93,10 @@ fn merge_settings(configs: &[ParsedConfig]) -> Settings {
 
 /// Applies raw settings to result, overwriting any present values.
 fn apply_raw_settings(result: &mut Settings, raw: &RawSettings) {
-    if let Some(v) = raw.default_limit {
-        result.default_limit = v;
-    }
-    if let Some(v) = raw.local_boost {
-        result.local_boost = v;
-    }
-    if let Some(v) = raw.chunk_at_headings {
-        result.chunk_at_headings = v;
-    }
-    if let Some(v) = raw.max_chunk_size {
-        result.max_chunk_size = v;
-    }
+    apply_opt(&mut result.default_limit, raw.default_limit);
+    apply_opt(&mut result.local_boost, raw.local_boost);
+    apply_opt(&mut result.chunk_at_headings, raw.chunk_at_headings);
+    apply_opt(&mut result.max_chunk_size, raw.max_chunk_size);
 }
 
 /// Merges search settings.
@@ -103,24 +115,12 @@ fn merge_search_settings(configs: &[ParsedConfig]) -> SearchSettings {
 
 /// Applies raw search settings to result.
 fn apply_raw_search(result: &mut SearchSettings, raw: &RawSearchSettings) {
-    if let Some(ref v) = raw.stemmer {
-        result.stemmer = v.clone();
-    }
-    if let Some(v) = raw.fuzzy_distance {
-        result.fuzzy_distance = v;
-    }
-    if let Some(v) = raw.limit {
-        result.limit = v;
-    }
-    if let Some(v) = raw.aggregation_pool_size {
-        result.aggregation_pool_size = v;
-    }
-    if let Some(v) = raw.cutoff_ratio {
-        result.cutoff_ratio = v;
-    }
-    if let Some(v) = raw.aggregation_threshold {
-        result.aggregation_threshold = v;
-    }
+    apply_opt_clone(&mut result.stemmer, &raw.stemmer);
+    apply_opt(&mut result.fuzzy_distance, raw.fuzzy_distance);
+    apply_opt(&mut result.limit, raw.limit);
+    apply_opt(&mut result.aggregation_pool_size, raw.aggregation_pool_size);
+    apply_opt(&mut result.cutoff_ratio, raw.cutoff_ratio);
+    apply_opt(&mut result.aggregation_threshold, raw.aggregation_threshold);
 }
 
 /// Merges context settings.
@@ -154,21 +154,11 @@ fn merge_context_settings(configs: &[ParsedConfig]) -> ContextSettings {
 
 /// Applies raw context scalar settings to result (not rules).
 fn apply_raw_context_scalars(result: &mut ContextSettings, raw: &RawContextSettings) {
-    if let Some(v) = raw.terms {
-        result.terms = v;
-    }
-    if let Some(v) = raw.min_term_frequency {
-        result.min_term_frequency = v;
-    }
-    if let Some(v) = raw.min_word_length {
-        result.min_word_length = v;
-    }
-    if let Some(v) = raw.max_word_length {
-        result.max_word_length = v;
-    }
-    if let Some(v) = raw.sample_size {
-        result.sample_size = v;
-    }
+    apply_opt(&mut result.terms, raw.terms);
+    apply_opt(&mut result.min_term_frequency, raw.min_term_frequency);
+    apply_opt(&mut result.min_word_length, raw.min_word_length);
+    apply_opt(&mut result.max_word_length, raw.max_word_length);
+    apply_opt(&mut result.sample_size, raw.sample_size);
 }
 
 /// Converts a raw context rule to the resolved type.
