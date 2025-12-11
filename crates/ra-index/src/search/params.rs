@@ -85,18 +85,6 @@ impl SearchParams {
         self.candidate_limit
             .unwrap_or(self.limit * CANDIDATE_LIMIT_MULTIPLIER)
     }
-
-    /// Sets the trees to filter results to.
-    pub fn with_trees(mut self, trees: Vec<String>) -> Self {
-        self.trees = trees;
-        self
-    }
-
-    /// Sets the verbosity level for match details.
-    pub fn with_verbosity(mut self, verbosity: u8) -> Self {
-        self.verbosity = verbosity;
-        self
-    }
 }
 
 /// Parameters for MoreLikeThis queries.
@@ -135,55 +123,5 @@ impl Default for MoreLikeThisParams {
             boost_factor: 1.0,
             stop_words: Vec::new(),
         }
-    }
-}
-
-impl MoreLikeThisParams {
-    /// Sets the minimum document frequency.
-    pub fn with_min_doc_frequency(mut self, value: u64) -> Self {
-        self.min_doc_frequency = value;
-        self
-    }
-
-    /// Sets the maximum document frequency.
-    pub fn with_max_doc_frequency(mut self, value: u64) -> Self {
-        self.max_doc_frequency = value;
-        self
-    }
-
-    /// Sets the minimum term frequency.
-    pub fn with_min_term_frequency(mut self, value: usize) -> Self {
-        self.min_term_frequency = value;
-        self
-    }
-
-    /// Sets the maximum query terms.
-    pub fn with_max_query_terms(mut self, value: usize) -> Self {
-        self.max_query_terms = value;
-        self
-    }
-
-    /// Sets the minimum word length.
-    pub fn with_min_word_length(mut self, value: usize) -> Self {
-        self.min_word_length = value;
-        self
-    }
-
-    /// Sets the maximum word length.
-    pub fn with_max_word_length(mut self, value: usize) -> Self {
-        self.max_word_length = value;
-        self
-    }
-
-    /// Sets the boost factor.
-    pub fn with_boost_factor(mut self, value: f32) -> Self {
-        self.boost_factor = value;
-        self
-    }
-
-    /// Sets the stop words.
-    pub fn with_stop_words(mut self, words: Vec<String>) -> Self {
-        self.stop_words = words;
-        self
     }
 }

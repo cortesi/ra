@@ -32,18 +32,6 @@ impl<'a, P: IdfProvider> CorpusTfIdf<'a, P> {
         }
     }
 
-    /// Sets the minimum term length for extraction.
-    pub fn with_min_term_length(mut self, len: usize) -> Self {
-        self.min_term_length = len;
-        self
-    }
-
-    /// Sets custom stopwords.
-    pub fn with_stopwords(mut self, stopwords: Stopwords) -> Self {
-        self.stopwords = stopwords;
-        self
-    }
-
     /// Extracts keywords from text using corpus TF-IDF.
     ///
     /// Returns keywords sorted by score (highest first).

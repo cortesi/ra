@@ -512,21 +512,19 @@ fn search_aggregated_filters_by_tree() {
     let all = searcher.search_aggregated("rust", &base_params).unwrap();
     assert_eq!(all.len(), 3);
 
-    let local = searcher
-        .search_aggregated(
-            "rust",
-            &base_params.clone().with_trees(vec!["local".into()]),
-        )
-        .unwrap();
+    let local_params = SearchParams {
+        trees: vec!["local".into()],
+        ..base_params.clone()
+    };
+    let local = searcher.search_aggregated("rust", &local_params).unwrap();
     assert_eq!(local.len(), 2);
     assert!(local.iter().all(|r| r.candidate().tree == "local"));
 
-    let global = searcher
-        .search_aggregated(
-            "rust",
-            &base_params.clone().with_trees(vec!["global".into()]),
-        )
-        .unwrap();
+    let global_params = SearchParams {
+        trees: vec!["global".into()],
+        ..base_params.clone()
+    };
+    let global = searcher.search_aggregated("rust", &global_params).unwrap();
     assert_eq!(global.len(), 1);
     assert_eq!(global[0].candidate().tree, "global");
 }
@@ -835,9 +833,11 @@ mod mlt_tests {
             .unwrap();
 
         // Very restrictive params (high min word length should exclude many terms)
-        let restrictive_params = MoreLikeThisParams::default()
-            .with_min_word_length(10)
-            .with_max_query_terms(2);
+        let restrictive_params = MoreLikeThisParams {
+            min_word_length: 10,
+            max_query_terms: 2,
+            ..Default::default()
+        };
         let restrictive_results = searcher
             .search_more_like_this_by_id(
                 "local:docs/rust-intro.md",

@@ -54,20 +54,6 @@ impl RakeExtractor {
         }
     }
 
-    /// Creates a RAKE extractor with custom stopwords.
-    pub fn with_stopwords(stopwords: &Stopwords) -> Self {
-        Self {
-            stopwords: stopwords.as_vec(),
-            phrase_length: Some(3),
-        }
-    }
-
-    /// Sets the maximum phrase length.
-    pub fn with_phrase_length(mut self, length: Option<usize>) -> Self {
-        self.phrase_length = length;
-        self
-    }
-
     /// Extracts keywords from text using RAKE.
     ///
     /// Returns keywords sorted by score (highest first).
@@ -132,14 +118,6 @@ impl TextRankExtractor {
         }
     }
 
-    /// Creates a TextRank extractor with custom stopwords.
-    pub fn with_stopwords(stopwords: &Stopwords) -> Self {
-        Self {
-            stopwords: stopwords.as_vec(),
-            punctuation: PUNCTUATION.iter().map(|s| (*s).to_string()).collect(),
-        }
-    }
-
     /// Extracts keywords from text using TextRank.
     ///
     /// Returns keywords sorted by score (highest first).
@@ -192,8 +170,6 @@ impl TextRankExtractor {
 pub struct YakeExtractor {
     /// Stopwords to filter out.
     stopwords: Vec<String>,
-    /// N-gram size for keyword extraction.
-    ngram: usize,
 }
 
 impl Default for YakeExtractor {
@@ -207,22 +183,7 @@ impl YakeExtractor {
     pub fn new() -> Self {
         Self {
             stopwords: Stopwords::new().as_vec(),
-            ngram: 3,
         }
-    }
-
-    /// Creates a YAKE extractor with custom stopwords.
-    pub fn with_stopwords(stopwords: &Stopwords) -> Self {
-        Self {
-            stopwords: stopwords.as_vec(),
-            ngram: 3,
-        }
-    }
-
-    /// Sets the n-gram size for keyword extraction.
-    pub fn with_ngram(mut self, ngram: usize) -> Self {
-        self.ngram = ngram;
-        self
     }
 
     /// Extracts keywords from text using YAKE.
