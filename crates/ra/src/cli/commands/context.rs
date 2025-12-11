@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::shared::SearchParamsOverrides;
 use crate::cli::{
-    args::ContextCommand,
+    args::{ContextCommand, OutputMode},
     context::CommandContext,
     output::{dim, format_elbow_reason, output_aggregated_results, subheader},
 };
@@ -85,7 +85,8 @@ pub fn run(ctx: &mut CommandContext, cmd: &ContextCommand) -> ExitCode {
     };
 
     if cmd.explain.explain {
-        return output_context_explain(&analysis, &params, &stats, cmd.output.json);
+        let json = matches!(cmd.output.mode, OutputMode::Json);
+        return output_context_explain(&analysis, &params, &stats, json);
     }
 
     if analysis.query_expr.is_none() {
@@ -99,9 +100,7 @@ pub fn run(ctx: &mut CommandContext, cmd: &ContextCommand) -> ExitCode {
     output_aggregated_results(
         &results,
         &query_display,
-        cmd.output.list,
-        cmd.output.matches,
-        cmd.output.json,
+        &cmd.output,
         cmd.params.verbose,
         context_search.searcher(),
         Some(&stats),

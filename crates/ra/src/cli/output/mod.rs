@@ -7,6 +7,8 @@ use ra_highlight::{format_body, theme};
 use ra_index::{ElbowReason, PipelineStats, SearchResult, Searcher, merge_ranges};
 use serde::Serialize;
 
+use crate::cli::args::{OutputMode, OutputOptions};
+
 /// JSON output for a single query's results.
 #[derive(Serialize)]
 struct JsonQueryResults {
@@ -45,18 +47,15 @@ fn read_full_body(result: &SearchResult, searcher: &Searcher) -> String {
 }
 
 /// Outputs aggregated search-like results in various formats.
-#[allow(clippy::too_many_arguments)]
 pub fn output_aggregated_results(
     results: &[SearchResult],
     query: &str,
-    list: bool,
-    matches: bool,
-    json: bool,
+    output: &OutputOptions,
     verbose: u8,
     searcher: &Searcher,
     stats: Option<&PipelineStats>,
 ) -> ExitCode {
-    if json {
+    if matches!(output.mode, OutputMode::Json) {
         let json_output = JsonSearchOutput {
             queries: vec![JsonQueryResults {
                 query: query.to_string(),
@@ -71,15 +70,16 @@ pub fn output_aggregated_results(
                 return ExitCode::FAILURE;
             }
         }
-    } else if list {
-        return output_text_results(results, verbose, searcher, stats, DisplayMode::List);
-    } else if matches {
-        return output_text_results(results, verbose, searcher, stats, DisplayMode::Matches);
-    } else {
-        return output_text_results(results, verbose, searcher, stats, DisplayMode::Full);
+        return ExitCode::SUCCESS;
     }
 
-    ExitCode::SUCCESS
+    let mode = match output.mode {
+        OutputMode::List => DisplayMode::List,
+        OutputMode::Matches => DisplayMode::Matches,
+        OutputMode::Full | OutputMode::Json => DisplayMode::Full,
+    };
+
+    output_text_results(results, verbose, searcher, stats, mode)
 }
 
 /// Renders non-JSON results for the selected display mode.

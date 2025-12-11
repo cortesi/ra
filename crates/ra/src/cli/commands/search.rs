@@ -112,9 +112,7 @@ pub fn run(ctx: &mut CommandContext, cmd: &SearchCommand) -> ExitCode {
     output_aggregated_results(
         &results,
         &combined_query,
-        cmd.output.list,
-        cmd.output.matches,
-        cmd.output.json,
+        &cmd.output,
         cmd.params.verbose,
         searcher,
         Some(&stats),

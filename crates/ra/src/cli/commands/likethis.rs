@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::shared::SearchParamsOverrides;
 use crate::cli::{
-    args::LikeThisCommand,
+    args::{LikeThisCommand, OutputMode},
     context::CommandContext,
     output::{output_aggregated_results, subheader},
 };
@@ -45,13 +45,14 @@ pub fn run(ctx: &mut CommandContext, cmd: &LikeThisCommand) -> ExitCode {
     let is_chunk_id = is_chunk_id_format(&cmd.source);
 
     if cmd.explain.explain {
+        let json = matches!(cmd.output.mode, OutputMode::Json);
         return cmd_likethis_explain(
             &cmd.source,
             is_chunk_id,
             &mlt_params,
             &search_params,
             searcher,
-            cmd.output.json,
+            json,
         );
     }
 
@@ -79,9 +80,7 @@ pub fn run(ctx: &mut CommandContext, cmd: &LikeThisCommand) -> ExitCode {
     output_aggregated_results(
         &results,
         &display_source,
-        cmd.output.list,
-        cmd.output.matches,
-        cmd.output.json,
+        &cmd.output,
         cmd.params.verbose,
         searcher,
         None,

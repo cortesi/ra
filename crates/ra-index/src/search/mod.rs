@@ -38,9 +38,10 @@ use std::{
     collections::{HashMap, HashSet},
     fs, iter,
     path::{Path, PathBuf},
+    str,
 };
 
-use execute::ExecutionOptions;
+use execute::{ExecutionOptions, extract_match_ranges};
 pub use execute::merge_ranges;
 use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use params::{MoreLikeThisParams, SearchParams};
@@ -50,25 +51,33 @@ use ra_config::FieldBoosts;
 use ra_context::IdfProvider;
 use serde::Serialize;
 use tantivy::{
-    DocAddress, Index, Term,
+    DocAddress, Index, Searcher as TvSearcher, TantivyDocument, Term,
     collector::{Count, TopDocs},
     directory::MmapDirectory,
-    query::{AllQuery, MoreLikeThisQuery, MoreLikeThisQueryBuilder, Query, TermQuery},
+    query::{
+        AllQuery, BooleanQuery, BoostQuery, MoreLikeThisQuery, MoreLikeThisQueryBuilder, Occur,
+        Query, TermQuery,
+    },
     schema::{Field, IndexRecordOption, OwnedValue, Value},
+    snippet::SnippetGenerator,
     tokenizer::TextAnalyzer,
 };
 pub use types::{MatchDetails, SearchCandidate};
+use types::FieldMatch;
 
 use crate::{
     IndexError, QueryError,
     analyzer::{RA_TOKENIZER, build_analyzer_from_name},
-    query::QueryCompiler,
+    query::{QueryCompiler, parse},
     result::SearchResult,
     schema::IndexSchema,
 };
 
 /// Maximum number of documents to retrieve in bulk lookup operations.
 const MAX_BULK_LOOKUP: usize = 100_000;
+
+/// Default maximum number of characters in a snippet.
+const DEFAULT_SNIPPET_MAX_CHARS: usize = 150;
 
 /// Explanation of a MoreLikeThis query for debugging.
 #[derive(Debug, Clone, Serialize)]
@@ -85,7 +94,6 @@ pub struct MoreLikeThisExplanation {
     pub query_repr: String,
 }
 
-#[allow(clippy::multiple_inherent_impl)]
 impl MoreLikeThisParams {
     /// Builds a Tantivy `MoreLikeThisQueryBuilder` with common parameters applied.
     fn base_builder(&self) -> MoreLikeThisQueryBuilder {
@@ -112,7 +120,6 @@ impl MoreLikeThisParams {
 }
 
 /// Primary search entry point for the index.
-#[allow(clippy::multiple_inherent_impl)]
 pub struct Searcher {
     /// Tantivy index handle used for searching.
     pub(crate) index: Index,
@@ -134,6 +141,28 @@ pub struct Searcher {
     pub(crate) local_boost: f32,
     /// Field boost weights for scoring.
     pub(crate) boosts: FieldBoosts,
+}
+
+/// Inputs needed to build verbose match details.
+struct MatchDetailsContext<'a> {
+    /// Tantivy query used for scoring and optional explanation.
+    query: &'a dyn Query,
+    /// Original user-provided query string.
+    original_query: &'a str,
+    /// Stemmed/tokenized query terms.
+    query_terms: &'a [String],
+    /// Mapping from stemmed query terms to matched index terms.
+    term_mappings: &'a HashMap<String, Vec<String>>,
+    /// Raw BM25 score before boosts.
+    base_score: f32,
+    /// Local tree boost applied for non-global trees.
+    local_boost: f32,
+    /// Tantivy searcher for explanation lookup.
+    searcher: &'a TvSearcher,
+    /// Address of the matched document.
+    doc_address: DocAddress,
+    /// Whether to include a score explanation.
+    include_explanation: bool,
 }
 
 impl Searcher {
@@ -707,6 +736,504 @@ impl Searcher {
         Ok(process_candidates(candidates, params, |parent_id| {
             self.lookup_parent(parent_id)
         }))
+    }
+
+    /// Parses and compiles a query string into a Tantivy query.
+    pub(crate) fn build_query(
+        &mut self,
+        query_str: &str,
+    ) -> Result<Option<Box<dyn Query>>, IndexError> {
+        let expr = parse(query_str).map_err(|e| {
+            let query_err: QueryError = e;
+            IndexError::Query(query_err.with_query(query_str))
+        })?;
+
+        match expr {
+            Some(e) => {
+                let result = self.query_compiler.compile(&e).map_err(|e| {
+                    let query_err: QueryError = e.into();
+                    IndexError::Query(query_err.with_query(query_str))
+                })?;
+                Ok(result)
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Builds a tree filter query for the given tree names.
+    pub(crate) fn build_tree_filter(&self, trees: &[String]) -> Option<Box<dyn Query>> {
+        if trees.is_empty() {
+            return None;
+        }
+
+        if trees.len() == 1 {
+            let term = Term::from_field_text(self.schema.tree, &trees[0]);
+            return Some(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
+        }
+
+        let clauses: Vec<(Occur, Box<dyn Query>)> = trees
+            .iter()
+            .map(|tree_name| {
+                let term = Term::from_field_text(self.schema.tree, tree_name);
+                let query: Box<dyn Query> =
+                    Box::new(TermQuery::new(term, IndexRecordOption::Basic));
+                (Occur::Should, query)
+            })
+            .collect();
+
+        Some(Box::new(BooleanQuery::new(clauses)))
+    }
+
+    /// Wraps a content query with a tree filter.
+    pub(crate) fn apply_tree_filter(
+        &self,
+        content_query: Box<dyn Query>,
+        trees: &[String],
+    ) -> Box<dyn Query> {
+        match self.build_tree_filter(trees) {
+            Some(tree_filter) => {
+                let clauses = vec![(Occur::Must, content_query), (Occur::Must, tree_filter)];
+                Box::new(BooleanQuery::new(clauses))
+            }
+            None => content_query,
+        }
+    }
+
+    /// Tokenizes a query string to extract individual search terms.
+    ///
+    /// Filters out query syntax elements (OR, AND, NOT, field prefixes) before
+    /// tokenizing to avoid treating keywords as search terms.
+    pub(crate) fn tokenize_query(&mut self, query_str: &str) -> Vec<String> {
+        let filtered: String = query_str
+            .split_whitespace()
+            .filter(|word| {
+                let upper = word.to_uppercase();
+                upper != "OR" && upper != "AND" && upper != "NOT" && !word.contains(':')
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let mut stream = self.analyzer.token_stream(&filtered);
+        let mut tokens = Vec::new();
+        while let Some(token) = stream.next() {
+            tokens.push(token.text.clone());
+        }
+        tokens
+    }
+
+    /// Finds term mappings from query terms to indexed terms (including fuzzy matches).
+    ///
+    /// Returns a map where keys are query terms and values are the indexed terms
+    /// they matched across the specified fields.
+    pub(crate) fn find_term_mappings(
+        &self,
+        searcher: &TvSearcher,
+        query_terms: &[String],
+        fields: &[Field],
+    ) -> HashMap<String, Vec<String>> {
+        let mut mappings: HashMap<String, Vec<String>> = HashMap::new();
+
+        if self.fuzzy_distance == 0 {
+            for term in query_terms {
+                mappings.insert(term.clone(), vec![term.clone()]);
+            }
+            return mappings;
+        }
+
+        for segment_reader in searcher.segment_readers() {
+            for field in fields {
+                let Ok(inverted_index) = segment_reader.inverted_index(*field) else {
+                    continue;
+                };
+                let term_dict = inverted_index.terms();
+
+                for query_term in query_terms {
+                    let dfa = query::LevenshteinDfa(self.lev_builder.build_dfa(query_term));
+                    let mut stream = term_dict.search(dfa).into_stream().unwrap();
+
+                    let entry = mappings.entry(query_term.clone()).or_default();
+                    while stream.advance() {
+                        if let Ok(term_str) = str::from_utf8(stream.key())
+                            && !entry.iter().any(|t| t == term_str)
+                        {
+                            entry.push(term_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        for term in query_terms {
+            mappings
+                .entry(term.clone())
+                .or_insert_with(|| vec![term.clone()]);
+        }
+
+        mappings
+    }
+
+    /// Executes a query with configurable options.
+    pub(crate) fn execute_query(
+        &self,
+        query: &dyn Query,
+        query_terms: &[String],
+        limit: usize,
+        options: &ExecutionOptions<'_>,
+    ) -> Result<Vec<SearchCandidate>, IndexError> {
+        let reader = self
+            .index
+            .reader()
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let searcher = reader.searcher();
+
+        let top_docs = searcher
+            .search(query, &TopDocs::with_limit(limit))
+            .map_err(|e| IndexError::Write(e.to_string()))?;
+
+        let (matched_terms, term_mappings) = if options.with_details {
+            let mappings = self.find_term_mappings(&searcher, query_terms, &[self.schema.body]);
+            let mut terms: HashSet<String> = mappings.values().flatten().cloned().collect();
+
+            let extra = self.find_term_mappings(
+                &searcher,
+                query_terms,
+                &[self.schema.hierarchy, self.schema.path],
+            );
+            terms.extend(extra.values().flatten().cloned());
+
+            (terms, Some(mappings))
+        } else {
+            let mappings = self.find_term_mappings(
+                &searcher,
+                query_terms,
+                &[self.schema.body, self.schema.hierarchy, self.schema.path],
+            );
+            let terms: HashSet<String> = mappings.values().flatten().cloned().collect();
+            (terms, None)
+        };
+
+        // Setup highlighting
+        let (_highlight_query, snippet_generator) =
+            if options.with_snippets || options.with_details {
+                let hq = self.build_highlight_query(&matched_terms);
+                let sg = self.build_snippet_generator(&searcher, &hq)?;
+                (hq, sg)
+            } else {
+                (None, None)
+            };
+
+        let mut results = Vec::with_capacity(top_docs.len());
+
+        // Prepare analyzer for details if needed (must be mutable, so we clone it)
+        let mut details_analyzer = if options.with_details {
+            Some(self.analyzer.clone())
+        } else {
+            None
+        };
+
+        for (score, doc_address) in top_docs {
+            let doc: TantivyDocument = searcher
+                .doc(doc_address)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
+
+            let mut result = self.doc_to_result(&doc, score, &snippet_generator, &matched_terms);
+
+            if let (Some(mappings), Some(original_query), Some(analyzer)) = (
+                &term_mappings,
+                options.original_query,
+                details_analyzer.as_mut(),
+            ) {
+                let is_global = self
+                    .tree_is_global
+                    .get(&result.tree)
+                    .copied()
+                    .unwrap_or(false);
+                let local_boost = if is_global { 1.0 } else { self.local_boost };
+
+                let ctx = MatchDetailsContext {
+                    query,
+                    original_query,
+                    query_terms,
+                    term_mappings: mappings,
+                    base_score: score,
+                    local_boost,
+                    searcher: &searcher,
+                    doc_address,
+                    include_explanation: options.include_explanation,
+                };
+                let details = self.collect_match_details(&doc, &ctx, analyzer);
+                result.match_details = Some(details);
+            }
+
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+
+    /// Creates a snippet generator when a highlight query is present.
+    fn build_snippet_generator(
+        &self,
+        searcher: &TvSearcher,
+        highlight_query: &Option<Box<dyn Query>>,
+    ) -> Result<Option<SnippetGenerator>, IndexError> {
+        if let Some(hq) = highlight_query {
+            let mut generator =
+                SnippetGenerator::create(searcher, hq.as_ref(), self.schema.body)
+                    .map_err(|e| IndexError::Write(e.to_string()))?;
+            generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
+            Ok(Some(generator))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Collects detailed match information for a search result.
+    fn collect_match_details(
+        &self,
+        doc: &TantivyDocument,
+        ctx: &MatchDetailsContext<'_>,
+        analyzer: &mut TextAnalyzer,
+    ) -> MatchDetails {
+        let all_matched_terms: HashSet<String> =
+            ctx.term_mappings.values().flatten().cloned().collect();
+
+        // Get hierarchy as multi-value field
+        let hierarchy: Vec<String> = doc
+            .get_all(self.schema.hierarchy)
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect();
+        let hierarchy_text = hierarchy.join(" ");
+        let body = self.get_text_field(doc, self.schema.body);
+        let tags_text: String = doc
+            .get_all(self.schema.tags)
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let path = self.get_text_field(doc, self.schema.path);
+
+        let (field_matches, field_scores) = self.analyze_field_matches(
+            &all_matched_terms,
+            &hierarchy_text,
+            &body,
+            &tags_text,
+            &path,
+            analyzer,
+        );
+
+        let score_explanation = if ctx.include_explanation {
+            ctx.query
+                .explain(ctx.searcher, ctx.doc_address)
+                .ok()
+                .map(|e| e.to_pretty_json())
+        } else {
+            None
+        };
+
+        let original_terms: Vec<String> = ctx
+            .original_query
+            .split_whitespace()
+            .filter(|s| !s.starts_with('-') && *s != "OR" && !s.contains(':'))
+            .map(|s| {
+                s.trim_matches(|c| c == '"' || c == '(' || c == ')')
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        MatchDetails {
+            original_terms,
+            stemmed_terms: ctx.query_terms.to_vec(),
+            term_mappings: ctx.term_mappings.clone(),
+            field_matches,
+            base_score: ctx.base_score,
+            field_scores,
+            local_boost: ctx.local_boost,
+            score_explanation,
+        }
+    }
+
+    /// Builds a highlight query from actual matched terms.
+    fn build_highlight_query(&self, matched_terms: &HashSet<String>) -> Option<Box<dyn Query>> {
+        if matched_terms.is_empty() {
+            return None;
+        }
+
+        let clauses: Vec<(Occur, Box<dyn Query>)> = matched_terms
+            .iter()
+            .map(|term_text| {
+                let term = Term::from_field_text(self.schema.body, term_text);
+                let query: Box<dyn Query> =
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+                let boosted: Box<dyn Query> =
+                    Box::new(BoostQuery::new(query, self.boosts.body));
+                (Occur::Should, boosted)
+            })
+            .collect();
+
+        Some(Box::new(BooleanQuery::new(clauses)))
+    }
+
+    /// Analyzes term matches across all searchable fields.
+    ///
+    /// Returns field match details and per-field scores based on term frequencies and boosts.
+    fn analyze_field_matches(
+        &self,
+        matched_terms: &HashSet<String>,
+        hierarchy_text: &str,
+        body: &str,
+        tags_text: &str,
+        path: &str,
+        analyzer: &mut TextAnalyzer,
+    ) -> (HashMap<String, FieldMatch>, HashMap<String, f32>) {
+        let mut field_matches = HashMap::new();
+        let mut field_scores = HashMap::new();
+
+        for (field_name, text, field_boost) in [
+            ("hierarchy", hierarchy_text, self.boosts.hierarchy),
+            ("body", body, self.boosts.body),
+            ("tags", tags_text, self.boosts.tags),
+            ("path", path, self.boosts.path),
+        ] {
+            let freqs = self.count_term_frequency_in_text(text, matched_terms, analyzer);
+            if !freqs.is_empty() {
+                let score: f32 =
+                    freqs.values().map(|&c| c as f32).sum::<f32>() * field_boost;
+                field_scores.insert(field_name.to_string(), score);
+                field_matches.insert(
+                    field_name.to_string(),
+                    FieldMatch {
+                        term_frequencies: freqs,
+                    },
+                );
+            }
+        }
+
+        (field_matches, field_scores)
+    }
+
+    /// Counts how often matched terms occur in the provided text.
+    fn count_term_frequency_in_text(
+        &self,
+        text: &str,
+        terms: &HashSet<String>,
+        analyzer: &mut TextAnalyzer,
+    ) -> HashMap<String, u32> {
+        let mut freqs: HashMap<String, u32> = HashMap::new();
+        let mut stream = analyzer.token_stream(text);
+        while let Some(token) = stream.next() {
+            if terms.contains(&token.text) {
+                *freqs.entry(token.text.clone()).or_insert(0) += 1;
+            }
+        }
+        freqs
+    }
+
+    /// Reads all metadata fields from a Tantivy document into a `SearchCandidate`.
+    ///
+    /// Returns a candidate with zero score and empty match data. Use this as a base
+    /// for building search results or for parent lookups during aggregation.
+    pub(crate) fn read_candidate_from_doc(&self, doc: &TantivyDocument) -> SearchCandidate {
+        let id = self.get_text_field(doc, self.schema.id);
+        let doc_id = self.get_text_field(doc, self.schema.doc_id);
+        let parent_id_str = self.get_text_field(doc, self.schema.parent_id);
+        let parent_id = if parent_id_str.is_empty() {
+            None
+        } else {
+            Some(parent_id_str)
+        };
+        let hierarchy: Vec<String> = doc
+            .get_all(self.schema.hierarchy)
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect();
+        let tree = self.get_text_field(doc, self.schema.tree);
+        let path = self.get_text_field(doc, self.schema.path);
+        let body = self.get_text_field(doc, self.schema.body);
+        let depth = self.get_u64_field(doc, self.schema.depth);
+        let position = self.get_u64_field(doc, self.schema.position);
+        let byte_start = self.get_u64_field(doc, self.schema.byte_start);
+        let byte_end = self.get_u64_field(doc, self.schema.byte_end);
+        let sibling_count = self.get_u64_field(doc, self.schema.sibling_count);
+
+        SearchCandidate {
+            id,
+            doc_id,
+            parent_id,
+            hierarchy,
+            depth,
+            tree,
+            path,
+            body,
+            position,
+            byte_start,
+            byte_end,
+            sibling_count,
+            score: 0.0,
+            snippet: None,
+            match_ranges: vec![],
+            hierarchy_match_ranges: vec![],
+            path_match_ranges: vec![],
+            match_details: None,
+        }
+    }
+
+    /// Converts a Tantivy document plus scoring context into a `SearchCandidate`.
+    pub(crate) fn doc_to_result(
+        &self,
+        doc: &TantivyDocument,
+        base_score: f32,
+        snippet_generator: &Option<SnippetGenerator>,
+        matched_terms: &HashSet<String>,
+    ) -> SearchCandidate {
+        let mut candidate = self.read_candidate_from_doc(doc);
+
+        // Apply heading depth boost and local tree boost
+        let is_global = self
+            .tree_is_global
+            .get(&candidate.tree)
+            .copied()
+            .unwrap_or(false);
+        let heading_boost = self.boosts.heading_boost(candidate.depth);
+        candidate.score = if is_global {
+            base_score * heading_boost
+        } else {
+            base_score * heading_boost * self.local_boost
+        };
+
+        // Generate snippet if generator provided
+        candidate.snippet = snippet_generator.as_ref().map(|generator| {
+            let snippet = generator.snippet_from_doc(doc);
+            snippet.to_html()
+        });
+
+        // Extract match ranges
+        candidate.match_ranges =
+            extract_match_ranges(&self.analyzer, &candidate.body, matched_terms);
+        let title = candidate.hierarchy.last().map(|s| s.as_str()).unwrap_or("");
+        candidate.hierarchy_match_ranges =
+            extract_match_ranges(&self.analyzer, title, matched_terms);
+        candidate.path_match_ranges =
+            extract_match_ranges(&self.analyzer, &candidate.path, matched_terms);
+
+        candidate
+    }
+
+    /// Reads a text field from a document, returning an empty string if missing.
+    pub(crate) fn get_text_field(&self, doc: &TantivyDocument, field: Field) -> String {
+        doc.get_first(field)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// Reads a u64 field from a document, returning zero if missing.
+    pub(crate) fn get_u64_field(&self, doc: &TantivyDocument, field: Field) -> u64 {
+        doc.get_first(field)
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
     }
 }
 

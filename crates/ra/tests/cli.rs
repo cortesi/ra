@@ -562,7 +562,7 @@ path = "./docs"
 
         let assert = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["search", "--list", "rust"])
+            .args(["search", "--output", "list", "rust"])
             .assert()
             .success();
 
@@ -582,7 +582,7 @@ path = "./docs"
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["search", "--json", "rust"])
+            .args(["search", "--output", "json", "rust"])
             .assert()
             .success()
             .stdout(predicate::str::contains("\"queries\""))
@@ -596,7 +596,7 @@ path = "./docs"
 
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["search", "--json", "--no-aggregation", "rust"])
+            .args(["search", "--output", "json", "--no-aggregation", "rust"])
             .assert()
             .success();
 
@@ -668,7 +668,7 @@ path = "./docs"
         // With limit of 3, should only show 3 results in JSON
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["search", "-n", "3", "--json", "test"])
+            .args(["search", "-n", "3", "--output", "json", "test"])
             .assert()
             .success();
 
@@ -770,7 +770,7 @@ path = "./docs"
         // Search for rust OR python - should find both
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["search", "--json", "rust OR python"])
+            .args(["search", "--output", "json", "rust OR python"])
             .assert()
             .success();
 
@@ -1007,7 +1007,7 @@ terms = ["authentication", "login"]
         // With limit of 1, should only show 1 result in JSON
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "-n", "1", "--json", "test.rs"])
+            .args(["context", "-n", "1", "--output", "json", "test.rs"])
             .assert()
             .success();
 
@@ -1029,7 +1029,7 @@ terms = ["authentication", "login"]
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--list", "test.rs"])
+            .args(["context", "--output", "list", "test.rs"])
             .assert()
             .success();
     }
@@ -1042,7 +1042,7 @@ terms = ["authentication", "login"]
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--json", "test.rs"])
+            .args(["context", "--output", "json", "test.rs"])
             .assert()
             .success()
             .stdout(predicate::str::contains("\"queries\""));
@@ -1110,7 +1110,15 @@ terms = ["authentication", "login"]
         // Use tfidf algorithm to get source/weight/idf fields
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--explain", "--json", "-a", "tfidf", "test.md"])
+            .args([
+                "context",
+                "--explain",
+                "--output",
+                "json",
+                "-a",
+                "tfidf",
+                "test.md",
+            ])
             .assert()
             .success();
 
@@ -1161,7 +1169,7 @@ terms = ["authentication", "login"]
         // Use textrank (default) which has simpler output (no source/weight/idf)
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--explain", "--json", "test.md"])
+            .args(["context", "--explain", "--output", "json", "test.md"])
             .assert()
             .success();
 
@@ -1197,7 +1205,8 @@ terms = ["authentication", "login"]
             .args([
                 "context",
                 "--explain",
-                "--json",
+                "--output",
+                "json",
                 "--terms",
                 "3",
                 "many_terms.md",
@@ -1257,7 +1266,7 @@ terms = ["authentication", "login"]
 
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--explain", "--json", "handler.rs"])
+            .args(["context", "--explain", "--output", "json", "handler.rs"])
             .assert()
             .success();
 
@@ -1297,7 +1306,7 @@ terms = ["authentication", "login"]
 
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--explain", "--json", "src/auth/login.rs"])
+            .args(["context", "--explain", "--output", "json", "src/auth/login.rs"])
             .assert()
             .success();
 
@@ -1362,7 +1371,7 @@ terms = ["rust"]
         // Run context with explain to see matched rules
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--explain", "--json", "test.rs"])
+            .args(["context", "--explain", "--output", "json", "test.rs"])
             .assert()
             .success();
 
@@ -1650,7 +1659,7 @@ path = "./docs"
 
         let assert = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "--list", "docs:rust-intro.md"])
+            .args(["likethis", "--output", "list", "docs:rust-intro.md"])
             .assert()
             .success();
 
@@ -1670,7 +1679,7 @@ path = "./docs"
 
         ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "--json", "docs:rust-intro.md"])
+            .args(["likethis", "--output", "json", "docs:rust-intro.md"])
             .assert()
             .success()
             .stdout(predicate::str::contains("\"queries\""));
@@ -1683,7 +1692,7 @@ path = "./docs"
         // With limit of 1
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "-n", "1", "--json", "docs:rust-intro.md"])
+            .args(["likethis", "-n", "1", "--output", "json", "docs:rust-intro.md"])
             .assert()
             .success();
 
@@ -1728,7 +1737,7 @@ path = "./docs"
 
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "--explain", "--json", "docs:rust-intro.md"])
+            .args(["likethis", "--explain", "--output", "json", "docs:rust-intro.md"])
             .assert()
             .success();
 
@@ -1832,7 +1841,7 @@ path = "./examples"
         // Search only in docs tree
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "-t", "docs", "--json", "examples:rust.md"])
+            .args(["likethis", "-t", "docs", "--output", "json", "examples:rust.md"])
             .assert()
             .success();
 

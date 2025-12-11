@@ -5,7 +5,11 @@ use std::process::ExitCode;
 use ra_document::ChunkId;
 use ra_index::{SearchCandidate, SearchResult};
 
-use crate::cli::{args::GetCommand, context::CommandContext, output::output_aggregated_results};
+use crate::cli::{
+    args::{GetCommand, OutputMode, OutputOptions},
+    context::CommandContext,
+    output::output_aggregated_results,
+};
 
 /// Retrieves a chunk or document by ID.
 pub fn run(ctx: &mut CommandContext, cmd: &GetCommand) -> ExitCode {
@@ -53,12 +57,18 @@ pub fn run(ctx: &mut CommandContext, cmd: &GetCommand) -> ExitCode {
 
     let aggregated: Vec<SearchResult> = results.into_iter().map(SearchResult::Single).collect();
 
+    let output = OutputOptions {
+        mode: if cmd.json {
+            OutputMode::Json
+        } else {
+            OutputMode::Full
+        },
+    };
+
     output_aggregated_results(
         &aggregated,
         &cmd.id,
-        false,
-        false,
-        cmd.json,
+        &output,
         0,
         searcher,
         None,

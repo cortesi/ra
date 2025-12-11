@@ -2,7 +2,7 @@
 
 use std::{env, process::exit};
 
-use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 
 /// Parse a keyword extraction algorithm from a string.
 fn parse_algorithm(s: &str) -> Result<ra_context::KeywordAlgorithm, String> {
@@ -51,20 +51,26 @@ pub struct SearchParamsArgs {
     pub trees: Vec<String>,
 }
 
-/// Shared output mode flags.
+/// Output mode for search-like commands.
+#[derive(ValueEnum, Debug, Clone, Copy, Default)]
+pub enum OutputMode {
+    /// Full content output.
+    #[default]
+    Full,
+    /// Header-only listing output.
+    List,
+    /// Matches-only line output.
+    Matches,
+    /// JSON output.
+    Json,
+}
+
+/// Shared output options for search-like commands.
 #[derive(Args, Debug, Clone, Default)]
-pub struct OutputArgs {
-    /// Output titles and snippets only
-    #[arg(long)]
-    pub list: bool,
-
-    /// Output only lines containing matches
-    #[arg(long)]
-    pub matches: bool,
-
-    /// Output in JSON format
-    #[arg(long)]
-    pub json: bool,
+pub struct OutputOptions {
+    /// Output mode: full, list, matches, json
+    #[arg(short = 'o', long = "output", value_enum, default_value_t = OutputMode::Full)]
+    pub mode: OutputMode,
 }
 
 /// Shared explain/debug flag.
@@ -88,7 +94,7 @@ pub struct SearchCommand {
 
     #[command(flatten)]
     /// Output formatting flags.
-    pub output: OutputArgs,
+    pub output: OutputOptions,
 
     #[command(flatten)]
     /// Explain/debug flags.
@@ -121,7 +127,7 @@ pub struct ContextCommand {
 
     #[command(flatten)]
     /// Output formatting flags.
-    pub output: OutputArgs,
+    pub output: OutputOptions,
 
     #[command(flatten)]
     /// Explain/debug flags.
@@ -159,7 +165,7 @@ pub struct LikeThisCommand {
 
     #[command(flatten)]
     /// Output formatting flags.
-    pub output: OutputArgs,
+    pub output: OutputOptions,
 
     #[command(flatten)]
     /// Explain/debug flags.
