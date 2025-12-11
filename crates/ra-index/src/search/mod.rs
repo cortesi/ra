@@ -52,7 +52,7 @@ use tantivy::{
     DocAddress, Index, Term,
     collector::{Count, TopDocs},
     directory::MmapDirectory,
-    query::{AllQuery, MoreLikeThisQuery, Query, TermQuery},
+    query::{AllQuery, MoreLikeThisQuery, MoreLikeThisQueryBuilder, Query, TermQuery},
     schema::{Field, IndexRecordOption, OwnedValue, Value},
     tokenizer::TextAnalyzer,
 };
@@ -86,8 +86,8 @@ pub struct MoreLikeThisExplanation {
 
 #[allow(clippy::multiple_inherent_impl)]
 impl MoreLikeThisParams {
-    /// Builds a Tantivy MoreLikeThisQuery from a document address.
-    fn build_query_from_doc(&self, doc_address: DocAddress) -> MoreLikeThisQuery {
+    /// Builds a Tantivy `MoreLikeThisQueryBuilder` with common parameters applied.
+    fn base_builder(&self) -> MoreLikeThisQueryBuilder {
         MoreLikeThisQuery::builder()
             .with_min_doc_frequency(self.min_doc_frequency)
             .with_max_doc_frequency(self.max_doc_frequency)
@@ -97,21 +97,16 @@ impl MoreLikeThisParams {
             .with_max_word_length(self.max_word_length)
             .with_boost_factor(self.boost_factor)
             .with_stop_words(self.stop_words.clone())
-            .with_document(doc_address)
+    }
+
+    /// Builds a Tantivy MoreLikeThisQuery from a document address.
+    fn build_query_from_doc(&self, doc_address: DocAddress) -> MoreLikeThisQuery {
+        self.base_builder().with_document(doc_address)
     }
 
     /// Builds a Tantivy MoreLikeThisQuery from field values.
     fn build_query_from_fields(&self, fields: Vec<(Field, Vec<OwnedValue>)>) -> MoreLikeThisQuery {
-        MoreLikeThisQuery::builder()
-            .with_min_doc_frequency(self.min_doc_frequency)
-            .with_max_doc_frequency(self.max_doc_frequency)
-            .with_min_term_frequency(self.min_term_frequency)
-            .with_max_query_terms(self.max_query_terms)
-            .with_min_word_length(self.min_word_length)
-            .with_max_word_length(self.max_word_length)
-            .with_boost_factor(self.boost_factor)
-            .with_stop_words(self.stop_words.clone())
-            .with_document_fields(fields)
+        self.base_builder().with_document_fields(fields)
     }
 }
 

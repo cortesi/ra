@@ -14,10 +14,10 @@ use ra_query::QueryExpr;
 
 use crate::{
     Stopwords, WeightedTerm, extract_path_terms,
-    keyword::{KeywordAlgorithm, RakeExtractor, ScoredKeyword, TextRankExtractor, YakeExtractor},
+    keyword::{KeywordAlgorithm, ScoredKeyword},
     parser::{ContentParser, MarkdownParser, TextParser},
     query::{self, ContextQuery, DEFAULT_TERM_LIMIT},
-    rank::{IdfProvider, RankedTerm, rank_terms},
+    rank::{IdfProvider, RankedTerm},
 };
 
 /// Configuration for context analysis.
@@ -123,39 +123,9 @@ where
         };
     }
 
-    // Rank terms using the selected algorithm
-    let (ranked_terms, keywords) = match config.algorithm {
-        KeywordAlgorithm::TfIdf => {
-            // Use corpus-based TF-IDF with weighted terms
-            let ranked = rank_terms(terms.clone(), idf_provider);
-            let keywords: Vec<ScoredKeyword> = ranked
-                .iter()
-                .map(|r| ScoredKeyword::with_source(&r.term.term, r.score, &r.term.source))
-                .collect();
-            (ranked, keywords)
-        }
-        KeywordAlgorithm::Rake => {
-            // Use RAKE on raw content
-            let extractor = RakeExtractor::new();
-            let keywords = extractor.extract(content);
-            let ranked = keywords_to_ranked_terms(&keywords);
-            (ranked, keywords)
-        }
-        KeywordAlgorithm::TextRank => {
-            // Use TextRank on raw content
-            let extractor = TextRankExtractor::new();
-            let keywords = extractor.extract(content);
-            let ranked = keywords_to_ranked_terms(&keywords);
-            (ranked, keywords)
-        }
-        KeywordAlgorithm::Yake => {
-            // Use YAKE on raw content
-            let extractor = YakeExtractor::new();
-            let keywords = extractor.extract(content);
-            let ranked = keywords_to_ranked_terms(&keywords);
-            (ranked, keywords)
-        }
-    };
+    let (ranked_terms, keywords) = config
+        .algorithm
+        .extract_keywords(&terms, content, idf_provider);
 
     // Build the final query from ranked terms
     let query = query::build_query(ranked_terms.clone(), config.max_terms);
@@ -167,21 +137,6 @@ where
         query,
         algorithm: config.algorithm,
     }
-}
-
-/// Converts ScoredKeywords to RankedTerms for query building compatibility.
-fn keywords_to_ranked_terms(keywords: &[ScoredKeyword]) -> Vec<RankedTerm> {
-    keywords
-        .iter()
-        .map(|k| {
-            let term = WeightedTerm::new(
-                k.term.clone(),
-                k.source.clone().unwrap_or_else(|| "keyword".to_string()),
-                1.0,
-            );
-            RankedTerm::new(term, k.score)
-        })
-        .collect()
 }
 
 /// Parses file content using the appropriate parser based on file type.

@@ -7,7 +7,7 @@
 use std::cmp::Ordering;
 
 use super::ScoredKeyword;
-use crate::{Stopwords, WeightedTerm, rank::IdfProvider};
+use crate::{Stopwords, WeightedTerm, parser::tokenize, rank::IdfProvider};
 
 /// Corpus-aware TF-IDF keyword extractor.
 ///
@@ -90,13 +90,6 @@ impl<'a, P: IdfProvider> CorpusTfIdf<'a, P> {
 
         scored
     }
-}
-
-/// Tokenizes text into individual terms.
-fn tokenize(text: &str, min_length: usize) -> impl Iterator<Item = String> + '_ {
-    text.split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
-        .map(|s| s.to_ascii_lowercase())
-        .filter(move |s| s.len() >= min_length && s.chars().all(|c| c.is_alphanumeric()))
 }
 
 #[cfg(test)]

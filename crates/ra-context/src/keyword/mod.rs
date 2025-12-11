@@ -19,6 +19,11 @@ use std::{fmt, str};
 pub use corpus_tfidf::CorpusTfIdf;
 pub use local::{RakeExtractor, TextRankExtractor, YakeExtractor};
 
+use crate::{
+    WeightedTerm,
+    rank::{IdfProvider, RankedTerm, rank_terms},
+};
+
 /// Available keyword extraction algorithms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeywordAlgorithm {
@@ -45,6 +50,46 @@ impl KeywordAlgorithm {
             Self::Rake => "RAKE - key phrases based on word co-occurrence",
             Self::TextRank => "Graph-based ranking similar to PageRank",
             Self::Yake => "Statistical approach, no training needed",
+        }
+    }
+
+    /// Extracts ranked terms and keywords using this algorithm.
+    ///
+    /// For TF-IDF, ranks the provided weighted terms using the IDF provider.
+    /// For other algorithms, extracts keywords directly from the raw content.
+    pub(crate) fn extract_keywords<P: IdfProvider>(
+        &self,
+        terms: &[WeightedTerm],
+        content: &str,
+        idf_provider: &P,
+    ) -> (Vec<RankedTerm>, Vec<ScoredKeyword>) {
+        match self {
+            Self::TfIdf => {
+                let ranked = rank_terms(terms.to_vec(), idf_provider);
+                let keywords = ranked
+                    .iter()
+                    .map(|r| ScoredKeyword::with_source(&r.term.term, r.score, &r.term.source))
+                    .collect();
+                (ranked, keywords)
+            }
+            Self::Rake => {
+                let extractor = RakeExtractor::new();
+                let keywords = extractor.extract(content);
+                let ranked = keywords_to_ranked_terms(&keywords);
+                (ranked, keywords)
+            }
+            Self::TextRank => {
+                let extractor = TextRankExtractor::new();
+                let keywords = extractor.extract(content);
+                let ranked = keywords_to_ranked_terms(&keywords);
+                (ranked, keywords)
+            }
+            Self::Yake => {
+                let extractor = YakeExtractor::new();
+                let keywords = extractor.extract(content);
+                let ranked = keywords_to_ranked_terms(&keywords);
+                (ranked, keywords)
+            }
         }
     }
 }
@@ -106,6 +151,21 @@ impl ScoredKeyword {
             source: Some(source.into()),
         }
     }
+}
+
+/// Converts scored keywords into ranked terms for query construction.
+fn keywords_to_ranked_terms(keywords: &[ScoredKeyword]) -> Vec<RankedTerm> {
+    keywords
+        .iter()
+        .map(|k| {
+            let term = WeightedTerm::new(
+                k.term.clone(),
+                k.source.clone().unwrap_or_else(|| "keyword".to_string()),
+                1.0,
+            );
+            RankedTerm::new(term, k.score)
+        })
+        .collect()
 }
 
 #[cfg(test)]

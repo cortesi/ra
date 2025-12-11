@@ -245,59 +245,21 @@ impl CompiledContextRules {
     /// - include: concatenated
     /// - search: first non-None value wins for each field
     pub fn match_rules(&self, path: &Path) -> MatchedRules {
-        let mut terms = Vec::new();
-        let mut include = Vec::new();
-        let mut trees_sets: Vec<&[String]> = Vec::new();
-        let mut search = SearchOverrides::default();
+        let mut matched = MatchedRules::default();
 
         for rule in &self.rules {
-            // A rule matches if any of its patterns match
             if rule.matchers.iter().any(|m| m.is_match(path)) {
-                terms.extend(rule.terms.iter().cloned());
-                include.extend(rule.include.iter().cloned());
-
-                // Collect non-empty tree restrictions for intersection
-                if !rule.trees.is_empty() {
-                    trees_sets.push(&rule.trees);
-                }
-
-                // Merge search overrides (first non-None wins)
-                if let Some(ref rule_search) = rule.search {
-                    if search.limit.is_none() {
-                        search.limit = rule_search.limit;
-                    }
-                    if search.aggregation_pool_size.is_none() {
-                        search.aggregation_pool_size = rule_search.aggregation_pool_size;
-                    }
-                    if search.cutoff_ratio.is_none() {
-                        search.cutoff_ratio = rule_search.cutoff_ratio;
-                    }
-                    if search.aggregation_threshold.is_none() {
-                        search.aggregation_threshold = rule_search.aggregation_threshold;
-                    }
-                }
+                let rule_match = MatchedRules {
+                    terms: rule.terms.clone(),
+                    trees: rule.trees.clone(),
+                    include: rule.include.clone(),
+                    search: rule.search.clone().unwrap_or_default(),
+                };
+                matched.merge(&rule_match);
             }
         }
 
-        // Compute tree intersection
-        let trees = if trees_sets.is_empty() {
-            // No rules specified trees - search all
-            Vec::new()
-        } else {
-            // Start with the first set and intersect with the rest
-            let mut result: Vec<String> = trees_sets[0].to_vec();
-            for set in &trees_sets[1..] {
-                result.retain(|t| set.contains(t));
-            }
-            result
-        };
-
-        MatchedRules {
-            terms,
-            trees,
-            include,
-            search,
-        }
+        matched
     }
 
     /// Returns all search terms that match a given file path.
