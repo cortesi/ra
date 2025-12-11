@@ -73,22 +73,13 @@ impl KeywordAlgorithm {
                 (ranked, keywords)
             }
             Self::Rake => {
-                let extractor = RakeExtractor::new();
-                let keywords = extractor.extract(content);
-                let ranked = keywords_to_ranked_terms(&keywords);
-                (ranked, keywords)
+                extract_local_keywords(content, |text| RakeExtractor::new().extract(text))
             }
             Self::TextRank => {
-                let extractor = TextRankExtractor::new();
-                let keywords = extractor.extract(content);
-                let ranked = keywords_to_ranked_terms(&keywords);
-                (ranked, keywords)
+                extract_local_keywords(content, |text| TextRankExtractor::new().extract(text))
             }
             Self::Yake => {
-                let extractor = YakeExtractor::new();
-                let keywords = extractor.extract(content);
-                let ranked = keywords_to_ranked_terms(&keywords);
-                (ranked, keywords)
+                extract_local_keywords(content, |text| YakeExtractor::new().extract(text))
             }
         }
     }
@@ -166,6 +157,18 @@ fn keywords_to_ranked_terms(keywords: &[ScoredKeyword]) -> Vec<RankedTerm> {
             RankedTerm::new(term, k.score)
         })
         .collect()
+}
+
+/// Runs a local keyword extractor and returns both ranked terms and scored keywords.
+///
+/// This helper keeps the non‑TF‑IDF algorithm branches uniform.
+fn extract_local_keywords<F>(content: &str, extract: F) -> (Vec<RankedTerm>, Vec<ScoredKeyword>)
+where
+    F: FnOnce(&str) -> Vec<ScoredKeyword>,
+{
+    let keywords = extract(content);
+    let ranked = keywords_to_ranked_terms(&keywords);
+    (ranked, keywords)
 }
 
 #[cfg(test)]

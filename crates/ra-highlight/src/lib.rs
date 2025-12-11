@@ -211,16 +211,6 @@ impl Highlighter {
         }
     }
 
-    /// Highlights TOML content for terminal output.
-    pub fn highlight_toml(&self, content: &str) -> String {
-        self.highlight(content, "toml")
-    }
-
-    /// Highlights Markdown content for terminal output.
-    pub fn highlight_markdown(&self, content: &str) -> String {
-        self.highlight(content, "md")
-    }
-
     /// Highlights content with the specified syntax for terminal output.
     ///
     /// If the syntax is not found, returns the content unchanged.
@@ -414,7 +404,7 @@ mod tests {
         let toml = r#"[settings]
 default_limit = 5
 "#;
-        let output = hl.highlight_toml(toml);
+        let output = hl.highlight(toml, "toml");
         // Should contain ANSI escape codes
         assert!(output.contains("\x1b["));
         // Should end with reset
@@ -425,7 +415,7 @@ default_limit = 5
     fn test_highlighter_markdown() {
         let hl = Highlighter::new();
         let md = "# Header\n\nSome **bold** text.\n";
-        let output = hl.highlight_markdown(md);
+        let output = hl.highlight(md, "md");
         assert!(output.contains("\x1b["));
         assert!(output.ends_with("\x1b[0m"));
     }

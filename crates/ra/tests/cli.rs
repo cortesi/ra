@@ -1306,7 +1306,13 @@ terms = ["authentication", "login"]
 
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["context", "--explain", "--output", "json", "src/auth/login.rs"])
+            .args([
+                "context",
+                "--explain",
+                "--output",
+                "json",
+                "src/auth/login.rs",
+            ])
             .assert()
             .success();
 
@@ -1692,7 +1698,14 @@ path = "./docs"
         // With limit of 1
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "-n", "1", "--output", "json", "docs:rust-intro.md"])
+            .args([
+                "likethis",
+                "-n",
+                "1",
+                "--output",
+                "json",
+                "docs:rust-intro.md",
+            ])
             .assert()
             .success();
 
@@ -1737,7 +1750,13 @@ path = "./docs"
 
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "--explain", "--output", "json", "docs:rust-intro.md"])
+            .args([
+                "likethis",
+                "--explain",
+                "--output",
+                "json",
+                "docs:rust-intro.md",
+            ])
             .assert()
             .success();
 
@@ -1841,7 +1860,14 @@ path = "./examples"
         // Search only in docs tree
         let output = ra_with_home(dir.path())
             .current_dir(dir.path())
-            .args(["likethis", "-t", "docs", "--output", "json", "examples:rust.md"])
+            .args([
+                "likethis",
+                "-t",
+                "docs",
+                "--output",
+                "json",
+                "examples:rust.md",
+            ])
             .assert()
             .success();
 

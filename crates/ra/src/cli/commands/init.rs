@@ -59,7 +59,7 @@ pub fn run(ctx: &CommandContext, cmd: &InitCommand) -> ExitCode {
     let highlighter = Highlighter::new();
     println!();
     println!("{}", subheader("Configuration written:"));
-    let highlighted = highlighter.highlight_toml(&template);
+    let highlighted = highlighter.highlight(&template, "toml");
     println!("{}", indent_content(&highlighted));
 
     if !use_global && let Err(e) = update_gitignore(&config_path) {

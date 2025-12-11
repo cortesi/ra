@@ -65,12 +65,5 @@ pub fn run(ctx: &mut CommandContext, cmd: &GetCommand) -> ExitCode {
         },
     };
 
-    output_aggregated_results(
-        &aggregated,
-        &cmd.id,
-        &output,
-        0,
-        searcher,
-        None,
-    )
+    output_aggregated_results(&aggregated, &cmd.id, &output, 0, searcher, None)
 }

@@ -67,20 +67,6 @@ impl RakeExtractor {
             .map(|(term, score)| ScoredKeyword::new(term, score))
             .collect()
     }
-
-    /// Extracts key phrases (multi-word) from text using RAKE.
-    ///
-    /// Returns phrases sorted by score (highest first).
-    pub fn extract_phrases(&self, text: &str) -> Vec<ScoredKeyword> {
-        let params =
-            RakeParams::WithDefaultsAndPhraseLength(text, &self.stopwords, self.phrase_length);
-        let rake = Rake::new(params);
-
-        rake.get_ranked_phrases_scores(usize::MAX)
-            .into_iter()
-            .map(|(term, score)| ScoredKeyword::new(term, score))
-            .collect()
-    }
 }
 
 /// TextRank graph-based keyword extractor.
@@ -139,28 +125,6 @@ impl TextRankExtractor {
             .map(|(term, score)| ScoredKeyword::new(term, score))
             .collect()
     }
-
-    /// Extracts key phrases (multi-word) from text using TextRank.
-    ///
-    /// Returns phrases sorted by score (highest first).
-    pub fn extract_phrases(&self, text: &str) -> Vec<ScoredKeyword> {
-        let params = TextRankParams::All(
-            text,
-            &self.stopwords,
-            Some(&self.punctuation),
-            DEFAULT_WINDOW_SIZE,
-            DEFAULT_DAMPING_FACTOR,
-            DEFAULT_TOLERANCE,
-            Some(DEFAULT_PHRASE_LENGTH),
-        );
-        let text_rank = TextRank::new(params);
-
-        text_rank
-            .get_ranked_phrase_scores(usize::MAX)
-            .into_iter()
-            .map(|(term, score)| ScoredKeyword::new(term, score))
-            .collect()
-    }
 }
 
 /// YAKE (Yet Another Keyword Extractor).
@@ -212,27 +176,6 @@ impl YakeExtractor {
 
         keywords
     }
-
-    /// Extracts n-gram keywords from text using YAKE.
-    ///
-    /// Returns n-gram keywords sorted by relevance.
-    pub fn extract_ngrams(&self, text: &str) -> Vec<ScoredKeyword> {
-        let params = YakeParams::WithDefaults(text, &self.stopwords);
-        let yake = Yake::new(params);
-
-        let mut keywords: Vec<_> = yake
-            .get_ranked_keyword_scores(usize::MAX)
-            .into_iter()
-            .map(|(term, score)| {
-                let inverted_score = 1.0 / (score + 0.0001);
-                ScoredKeyword::new(term, inverted_score)
-            })
-            .collect();
-
-        keywords.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
-
-        keywords
-    }
 }
 
 #[cfg(test)]
@@ -252,17 +195,6 @@ mod test {
         // Should find programming-related terms
         let terms: Vec<_> = keywords.iter().map(|k| k.term.as_str()).collect();
         assert!(terms.contains(&"rust") || terms.contains(&"memory") || terms.contains(&"safety"));
-    }
-
-    #[test]
-    fn rake_extracts_phrases() {
-        let extractor = RakeExtractor::new();
-        let phrases = extractor.extract_phrases(SAMPLE_TEXT);
-
-        assert!(!phrases.is_empty());
-        // Phrases should be multi-word
-        let has_multiword = phrases.iter().any(|p| p.term.contains(' '));
-        assert!(has_multiword || phrases.len() == 1);
     }
 
     #[test]

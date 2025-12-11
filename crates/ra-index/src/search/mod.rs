@@ -41,8 +41,8 @@ use std::{
     str,
 };
 
-use execute::{ExecutionOptions, extract_match_ranges};
 pub use execute::merge_ranges;
+use execute::{ExecutionOptions, extract_match_ranges};
 use levenshtein_automata::LevenshteinAutomatonBuilder;
 pub use params::{MoreLikeThisParams, SearchParams};
 pub use pipeline::PipelineStats;
@@ -62,8 +62,8 @@ use tantivy::{
     snippet::SnippetGenerator,
     tokenizer::TextAnalyzer,
 };
-pub use types::{MatchDetails, SearchCandidate};
 use types::FieldMatch;
+pub use types::{MatchDetails, SearchCandidate};
 
 use crate::{
     IndexError, QueryError,
@@ -914,14 +914,14 @@ impl Searcher {
         };
 
         // Setup highlighting
-        let (_highlight_query, snippet_generator) =
-            if options.with_snippets || options.with_details {
-                let hq = self.build_highlight_query(&matched_terms);
-                let sg = self.build_snippet_generator(&searcher, &hq)?;
-                (hq, sg)
-            } else {
-                (None, None)
-            };
+        let (_highlight_query, snippet_generator) = if options.with_snippets || options.with_details
+        {
+            let hq = self.build_highlight_query(&matched_terms);
+            let sg = self.build_snippet_generator(&searcher, &hq)?;
+            (hq, sg)
+        } else {
+            (None, None)
+        };
 
         let mut results = Vec::with_capacity(top_docs.len());
 
@@ -979,9 +979,8 @@ impl Searcher {
         highlight_query: &Option<Box<dyn Query>>,
     ) -> Result<Option<SnippetGenerator>, IndexError> {
         if let Some(hq) = highlight_query {
-            let mut generator =
-                SnippetGenerator::create(searcher, hq.as_ref(), self.schema.body)
-                    .map_err(|e| IndexError::Write(e.to_string()))?;
+            let mut generator = SnippetGenerator::create(searcher, hq.as_ref(), self.schema.body)
+                .map_err(|e| IndexError::Write(e.to_string()))?;
             generator.set_max_num_chars(DEFAULT_SNIPPET_MAX_CHARS);
             Ok(Some(generator))
         } else {
@@ -1067,8 +1066,7 @@ impl Searcher {
                 let term = Term::from_field_text(self.schema.body, term_text);
                 let query: Box<dyn Query> =
                     Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
-                let boosted: Box<dyn Query> =
-                    Box::new(BoostQuery::new(query, self.boosts.body));
+                let boosted: Box<dyn Query> = Box::new(BoostQuery::new(query, self.boosts.body));
                 (Occur::Should, boosted)
             })
             .collect();
@@ -1099,8 +1097,7 @@ impl Searcher {
         ] {
             let freqs = self.count_term_frequency_in_text(text, matched_terms, analyzer);
             if !freqs.is_empty() {
-                let score: f32 =
-                    freqs.values().map(|&c| c as f32).sum::<f32>() * field_boost;
+                let score: f32 = freqs.values().map(|&c| c as f32).sum::<f32>() * field_boost;
                 field_scores.insert(field_name.to_string(), score);
                 field_matches.insert(
                     field_name.to_string(),
@@ -1231,9 +1228,7 @@ impl Searcher {
 
     /// Reads a u64 field from a document, returning zero if missing.
     pub(crate) fn get_u64_field(&self, doc: &TantivyDocument, field: Field) -> u64 {
-        doc.get_first(field)
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
+        doc.get_first(field).and_then(|v| v.as_u64()).unwrap_or(0)
     }
 }
 
