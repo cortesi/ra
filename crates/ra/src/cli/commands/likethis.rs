@@ -1,8 +1,7 @@
 //! Implementation of `ra likethis`.
 
-use std::{collections::HashSet, path::Path, process::ExitCode};
+use std::{path::Path, process::ExitCode};
 
-use ra_config::Config;
 use ra_document::parse_file;
 use ra_index::{MoreLikeThisExplanation, MoreLikeThisParams, SearchParams, SearchResult, Searcher};
 use serde::Serialize;
@@ -38,8 +37,6 @@ pub fn run(ctx: &mut CommandContext, cmd: &LikeThisCommand) -> ExitCode {
     };
     let search_params = overrides.build_params(&ctx.config.search);
 
-    let config = ctx.config.clone();
-
     let searcher = match ctx.searcher(None, true) {
         Ok(s) => s,
         Err(code) => return code,
@@ -67,13 +64,7 @@ pub fn run(ctx: &mut CommandContext, cmd: &LikeThisCommand) -> ExitCode {
             }
         }
     } else {
-        match search_more_like_this_by_file(
-            &cmd.source,
-            &mlt_params,
-            &search_params,
-            searcher,
-            &config,
-        ) {
+        match search_more_like_this_by_file(&cmd.source, &mlt_params, &search_params, searcher) {
             Ok(r) => r,
             Err(code) => return code,
         }
@@ -114,7 +105,6 @@ fn search_more_like_this_by_file(
     mlt_params: &MoreLikeThisParams,
     search_params: &SearchParams,
     searcher: &mut Searcher,
-    config: &Config,
 ) -> Result<Vec<SearchResult>, ExitCode> {
     let path = Path::new(file_path);
 
@@ -163,7 +153,7 @@ fn search_more_like_this_by_file(
         return Err(ExitCode::FAILURE);
     }
 
-    let exclude_doc_ids = compute_exclude_doc_ids_for_file(path, config);
+    let exclude_doc_ids = searcher.compute_exclude_doc_ids(&[path]);
 
     searcher
         .search_more_like_this_by_fields(fields, mlt_params, search_params, &exclude_doc_ids)
@@ -171,31 +161,6 @@ fn search_more_like_this_by_file(
             eprintln!("error: {e}");
             ExitCode::FAILURE
         })
-}
-
-/// Computes doc IDs to exclude based on whether a file path is in a configured tree.
-fn compute_exclude_doc_ids_for_file(path: &Path, config: &Config) -> HashSet<String> {
-    let mut exclude = HashSet::new();
-
-    let abs_path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return exclude,
-    };
-
-    for tree in &config.trees {
-        let tree_path = match tree.path.canonicalize() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        if let Ok(rel_path) = abs_path.strip_prefix(&tree_path) {
-            let doc_id = format!("{}:{}", tree.name, rel_path.display());
-            exclude.insert(doc_id);
-            break;
-        }
-    }
-
-    exclude
 }
 
 /// Handles --explain mode for likethis command.

@@ -221,6 +221,35 @@ impl Searcher {
         )
     }
 
+    /// Computes doc IDs to exclude from results based on input file paths.
+    ///
+    /// Each input path is canonicalized and compared against tree roots. If a file
+    /// is within a configured tree, its doc ID is returned in `tree:relative_path`
+    /// format. Relative paths are normalized to forward slashes.
+    pub fn compute_exclude_doc_ids(&self, files: &[&Path]) -> HashSet<String> {
+        let mut exclude = HashSet::new();
+
+        for path in files {
+            let Ok(canonical) = path.canonicalize() else {
+                continue;
+            };
+
+            for (tree_name, tree_path) in &self.tree_paths {
+                let Ok(tree_canonical) = tree_path.canonicalize() else {
+                    continue;
+                };
+
+                if let Ok(relative) = canonical.strip_prefix(&tree_canonical) {
+                    let relative_str = relative.to_string_lossy().replace('\\', "/");
+                    exclude.insert(format!("{tree_name}:{relative_str}"));
+                    break;
+                }
+            }
+        }
+
+        exclude
+    }
+
     /// Reads the full content of a chunk by reading the source file span.
     pub fn read_full_content(
         &self,

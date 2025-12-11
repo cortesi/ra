@@ -245,6 +245,8 @@ fn single_results_from_candidates(candidates: Vec<SearchCandidate>) -> Vec<Aggre
 
 #[cfg(test)]
 mod tests {
+    use ra_document::{ChunkId, DocId};
+
     use super::*;
 
     fn make_candidate(
@@ -254,20 +256,30 @@ mod tests {
         score: f32,
         sibling_count: u64,
     ) -> SearchCandidate {
-        let hierarchy = if id.contains('#') {
+        let parsed = id.parse::<ChunkId>();
+        let (doc_id, has_slug) = match parsed {
+            Ok(chunk_id) => (chunk_id.doc_id.to_string(), chunk_id.slug.is_some()),
+            Err(_) => {
+                let (path, slug) = id.split_once('#').map_or((id, None), |(p, s)| (p, Some(s)));
+                let doc_id = DocId {
+                    tree: tree.to_string(),
+                    path: path.to_string(),
+                }
+                .to_string();
+                (doc_id, slug.is_some())
+            }
+        };
+
+        let hierarchy = if has_slug {
             vec!["Doc".to_string(), format!("Section {id}")]
         } else {
             vec!["Doc".to_string()]
         };
-        let depth = if id.contains('#') { 1 } else { 0 };
+        let depth = if has_slug { 1 } else { 0 };
 
         SearchCandidate {
             id: id.to_string(),
-            doc_id: if id.contains('#') {
-                id.split('#').next().unwrap().to_string()
-            } else {
-                id.to_string()
-            },
+            doc_id,
             parent_id: parent_id.map(String::from),
             hierarchy,
             depth,

@@ -12,6 +12,7 @@
 mod build;
 mod error;
 mod frontmatter;
+mod id;
 mod node;
 mod parse;
 mod slug;
@@ -22,6 +23,7 @@ use std::path::PathBuf;
 pub use build::{HeadingInfo, extract_headings};
 pub use error::DocumentError;
 pub use frontmatter::{Frontmatter, parse_frontmatter};
+pub use id::{ChunkId, DocId, IdError};
 pub use parse::{ParseResult, parse_file, parse_markdown, parse_text};
 pub use tree::{ChunkTree, TreeChunk};
 

@@ -408,6 +408,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use ra_document::ChunkId;
+
     use super::*;
 
     fn make_candidate(
@@ -416,25 +418,17 @@ mod tests {
         score: f32,
         sibling_count: u64,
     ) -> SearchCandidate {
-        let hierarchy = if id.contains('#') {
-            let parts: Vec<&str> = id.split('#').collect();
-            let mut h = vec!["Doc".to_string()];
-            for (i, _) in parts.iter().skip(1).enumerate() {
-                h.push(format!("Section {}", i + 1));
-            }
-            h
+        let chunk_id: ChunkId = id.parse().unwrap();
+        let hierarchy = if chunk_id.slug.is_some() {
+            vec!["Doc".to_string(), "Section 1".to_string()]
         } else {
             vec!["Doc".to_string()]
         };
 
-        let depth = if id.contains('#') {
-            hierarchy.len() as u64 - 1
-        } else {
-            0
-        };
+        let depth = if chunk_id.slug.is_some() { 1 } else { 0 };
         SearchCandidate {
             id: id.to_string(),
-            doc_id: id.split('#').next().unwrap_or(id).to_string(),
+            doc_id: chunk_id.doc_id.to_string(),
             parent_id: parent_id.map(String::from),
             hierarchy,
             depth,

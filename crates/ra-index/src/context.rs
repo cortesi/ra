@@ -152,7 +152,7 @@ impl<'a> ContextSearch<'a> {
         let mut warnings: Vec<ContextWarning> = Vec::new();
 
         // Compute doc IDs to exclude (the input files themselves)
-        let exclude_doc_ids = self.compute_exclude_doc_ids(files);
+        let exclude_doc_ids = self.searcher.compute_exclude_doc_ids(files);
 
         for path in files {
             // Skip non-existent files
@@ -210,39 +210,6 @@ impl<'a> ContextSearch<'a> {
             warnings,
             exclude_doc_ids,
         }
-    }
-
-    /// Computes doc IDs to exclude from results based on input file paths.
-    ///
-    /// For each input file, attempts to find which tree it belongs to and computes
-    /// the corresponding doc ID in `tree:relative_path` format.
-    fn compute_exclude_doc_ids(&self, files: &[&Path]) -> HashSet<String> {
-        let mut exclude = HashSet::new();
-
-        for path in files {
-            // Canonicalize the input path for reliable comparison
-            let Ok(canonical) = path.canonicalize() else {
-                continue;
-            };
-
-            // Check each tree to see if this file is within it
-            for (tree_name, tree_path) in &self.searcher.tree_paths {
-                let Ok(tree_canonical) = tree_path.canonicalize() else {
-                    continue;
-                };
-
-                // Check if the file is within this tree
-                if let Ok(relative) = canonical.strip_prefix(&tree_canonical) {
-                    // Convert to forward slashes for consistency with indexed paths
-                    let relative_str = relative.to_string_lossy().replace('\\', "/");
-                    let doc_id = format!("{tree_name}:{relative_str}");
-                    exclude.insert(doc_id);
-                    break; // File can only be in one tree
-                }
-            }
-        }
-
-        exclude
     }
 
     /// Executes a context search and returns aggregated results.

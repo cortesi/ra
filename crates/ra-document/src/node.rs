@@ -6,6 +6,8 @@
 
 use std::path::Path;
 
+use crate::{ChunkId, DocId};
+
 /// Distinguishes document-level nodes from heading nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
@@ -92,7 +94,7 @@ pub struct Node {
 impl Node {
     /// Creates a new document node (root of the tree).
     pub fn document(tree: &str, path: &Path, title: String, content_len: usize) -> Self {
-        let doc_id = make_doc_id(tree, path);
+        let doc_id = DocId::from_path(tree, path).to_string();
         Self {
             id: doc_id.clone(),
             doc_id,
@@ -112,8 +114,13 @@ impl Node {
 
     /// Creates a new heading node.
     pub fn heading(tree: &str, path: &Path, params: HeadingParams) -> Self {
-        let doc_id = make_doc_id(tree, path);
-        let id = make_chunk_id(tree, path, Some(&params.slug));
+        let doc_id = DocId::from_path(tree, path);
+        let id = ChunkId {
+            doc_id: doc_id.clone(),
+            slug: Some(params.slug.clone()),
+        }
+        .to_string();
+        let doc_id = doc_id.to_string();
         Self {
             id,
             doc_id,
@@ -197,24 +204,6 @@ impl<'a> Iterator for PreorderIterMut<'a> {
     }
 }
 
-/// Constructs a document ID from tree name and path.
-///
-/// Format: `{tree}:{path}`
-pub fn make_doc_id(tree: &str, path: &Path) -> String {
-    format!("{}:{}", tree, path.display())
-}
-
-/// Constructs a chunk ID from tree name, path, and optional slug.
-///
-/// - With slug: `{tree}:{path}#{slug}`
-/// - Without slug: `{tree}:{path}`
-pub fn make_chunk_id(tree: &str, path: &Path, slug: Option<&str>) -> String {
-    match slug {
-        Some(s) => format!("{}:{}#{}", tree, path.display(), s),
-        None => make_doc_id(tree, path),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -239,27 +228,6 @@ mod tests {
             byte_start,
             byte_end,
         }
-    }
-
-    #[test]
-    fn test_make_doc_id() {
-        let path = PathBuf::from("guides/auth.md");
-        assert_eq!(make_doc_id("docs", &path), "docs:guides/auth.md");
-    }
-
-    #[test]
-    fn test_make_chunk_id_with_slug() {
-        let path = PathBuf::from("guides/auth.md");
-        assert_eq!(
-            make_chunk_id("docs", &path, Some("oauth-setup")),
-            "docs:guides/auth.md#oauth-setup"
-        );
-    }
-
-    #[test]
-    fn test_make_chunk_id_without_slug() {
-        let path = PathBuf::from("guides/auth.md");
-        assert_eq!(make_chunk_id("docs", &path, None), "docs:guides/auth.md");
     }
 
     #[test]
