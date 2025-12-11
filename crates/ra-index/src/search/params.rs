@@ -1,5 +1,7 @@
 //! Parameter types for search execution.
 
+use serde::Serialize;
+
 use super::aggregation::DEFAULT_AGGREGATION_THRESHOLD;
 use crate::elbow::DEFAULT_CUTOFF_RATIO;
 
@@ -31,7 +33,7 @@ pub const CANDIDATE_LIMIT_MULTIPLIER: usize = 50;
 ///
 /// When `candidate_limit` is not explicitly set, it defaults to `limit * 50` to ensure
 /// enough candidates flow through the pipeline for effective aggregation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchParams {
     /// Maximum candidates to retrieve in Phase 1.
     /// If None, derived as `limit * CANDIDATE_LIMIT_MULTIPLIER`.
@@ -56,6 +58,7 @@ pub struct SearchParams {
     /// document length) computed across all indexed documents, not just the filtered
     /// trees. This means scores reflect term importance globally. For most use cases
     /// this is acceptable since relative ranking within results remains meaningful.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trees: Vec<String>,
     /// Verbosity level for match details (0 = none, 1 = summary, 2+ = full).
     pub verbosity: u8,
@@ -91,7 +94,7 @@ impl SearchParams {
 ///
 /// Controls how Tantivy's `MoreLikeThisQuery` extracts and weights terms from the source
 /// document to find similar content.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MoreLikeThisParams {
     /// Minimum document frequency for terms. Terms appearing in fewer documents are ignored.
     pub min_doc_frequency: u64,
@@ -108,6 +111,7 @@ pub struct MoreLikeThisParams {
     /// Boost factor applied to terms.
     pub boost_factor: f32,
     /// Stop words to ignore.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub stop_words: Vec<String>,
 }
 

@@ -42,6 +42,8 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use serde::Serialize;
+
 use super::{SearchCandidate, SearchParams, aggregation::adaptive_aggregate};
 use crate::{
     elbow::{ElbowStats, elbow_cutoff_results_with_stats},
@@ -52,7 +54,7 @@ use crate::{
 ///
 /// This provides visibility into what happened during each phase of the pipeline,
 /// useful for debugging and understanding why certain results were or weren't returned.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PipelineStats {
     /// Number of raw candidates from query execution.
     pub raw_candidate_count: usize,

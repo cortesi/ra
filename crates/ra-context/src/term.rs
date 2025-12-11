@@ -2,12 +2,14 @@
 //!
 //! This module defines the core types for extracting terms with weights from documents.
 
+use serde::Serialize;
+
 /// A term extracted from a document with associated metadata.
 ///
 /// Terms are the atomic units for building context queries. Each term carries
 /// information about where it came from and how often it appeared, which is
 /// used for ranking.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct WeightedTerm {
     /// The extracted term (lowercase, filtered).
     pub term: String,

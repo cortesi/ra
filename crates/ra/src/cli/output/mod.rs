@@ -7,109 +7,22 @@ use ra_highlight::{format_body, theme};
 use ra_index::{ElbowReason, PipelineStats, SearchResult, Searcher, merge_ranges};
 use serde::Serialize;
 
-/// A single search result for JSON output.
-#[derive(Serialize)]
-struct JsonSearchResult {
-    /// Chunk ID.
-    id: String,
-    /// Tree name.
-    tree: String,
-    /// File path within tree.
-    path: String,
-    /// Chunk title.
-    title: String,
-    /// Breadcrumb hierarchy.
-    breadcrumb: String,
-    /// Search relevance score.
-    score: f32,
-    /// Snippet with highlighted terms.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    snippet: Option<String>,
-    /// Raw chunk body text (no formatting).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    body: Option<String>,
-    /// Full chunk content (legacy, includes breadcrumb prefix when present).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-    /// Match highlight ranges relative to `body` offsets.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    match_ranges: Option<Vec<JsonMatchRange>>,
-    /// Title highlight ranges.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    title_match_ranges: Option<Vec<JsonMatchRange>>,
-    /// Path highlight ranges.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    path_match_ranges: Option<Vec<JsonMatchRange>>,
-}
-
-#[derive(Serialize)]
-struct JsonMatchRange {
-    /// Byte offset into the body text.
-    offset: usize,
-    /// Length in bytes of the highlighted span.
-    length: usize,
-}
-
+/// JSON output for a single query's results.
 #[derive(Serialize)]
 struct JsonQueryResults {
-    /// The search query.
+    /// The original query string.
     query: String,
-    /// Matching results.
-    results: Vec<JsonSearchResult>,
-    /// Number of results.
+    /// Results for this query.
+    results: Vec<SearchResult>,
+    /// Total matches returned.
     total_matches: usize,
 }
 
+/// JSON output for search-like commands.
 #[derive(Serialize)]
 struct JsonSearchOutput {
     /// Results grouped by query.
     queries: Vec<JsonQueryResults>,
-}
-
-/// Converts byte ranges to JSON match ranges.
-fn json_match_ranges(ranges: &[Range<usize>]) -> Vec<JsonMatchRange> {
-    ranges
-        .iter()
-        .map(|range| JsonMatchRange {
-            offset: range.start,
-            length: range.end - range.start,
-        })
-        .collect()
-}
-
-/// Builds a JSON result from an aggregated search result.
-fn json_from_aggregated_result(result: &SearchResult, list: bool) -> JsonSearchResult {
-    let constituents_count = result.constituents().map(|c| c.len()).unwrap_or(0);
-    let match_ranges = match result {
-        SearchResult::Single(c) => Some(json_match_ranges(&c.match_ranges)),
-        SearchResult::Aggregated { .. } => None,
-    };
-
-    let c = result.candidate();
-    let content_field = if list {
-        None
-    } else {
-        Some(format!("> {}\n\n{}", c.breadcrumb(), c.body))
-    };
-
-    JsonSearchResult {
-        id: c.id.clone(),
-        tree: c.tree.clone(),
-        path: c.path.clone(),
-        title: c.title().to_string(),
-        breadcrumb: c.breadcrumb(),
-        score: c.score,
-        snippet: if result.is_aggregated() {
-            Some(format!("[Aggregated: {} matches]", constituents_count))
-        } else {
-            None
-        },
-        body: Some(c.body.clone()),
-        content: content_field,
-        match_ranges,
-        title_match_ranges: Some(json_match_ranges(&c.hierarchy_match_ranges)),
-        path_match_ranges: Some(json_match_ranges(&c.path_match_ranges)),
-    }
 }
 
 /// Rendering style for aggregated search results.
@@ -148,10 +61,7 @@ pub fn output_aggregated_results(
             queries: vec![JsonQueryResults {
                 query: query.to_string(),
                 total_matches: results.len(),
-                results: results
-                    .iter()
-                    .map(|r| json_from_aggregated_result(r, list))
-                    .collect(),
+                results: results.to_vec(),
             }],
         };
         match serde_json::to_string_pretty(&json_output) {

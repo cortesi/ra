@@ -16,6 +16,8 @@
 //!
 //! The function returns the first 3 results (indices 0, 1, 2).
 
+use serde::Serialize;
+
 #[cfg(test)]
 use crate::SearchCandidate;
 use crate::result::SearchResult;
@@ -27,7 +29,7 @@ use crate::result::SearchResult;
 pub const DEFAULT_CUTOFF_RATIO: f32 = 0.5;
 
 /// Reason why the elbow cutoff terminated at a particular point.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum ElbowReason {
     /// Ratio between adjacent scores dropped below the threshold.
     RatioBelowThreshold {
@@ -50,7 +52,7 @@ pub enum ElbowReason {
 }
 
 /// Statistics about elbow cutoff processing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ElbowStats {
     /// Number of candidates before elbow cutoff.
     pub input_count: usize,

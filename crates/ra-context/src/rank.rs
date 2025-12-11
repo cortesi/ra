@@ -8,6 +8,8 @@
 
 use std::cmp::Ordering;
 
+use serde::Serialize;
+
 use crate::WeightedTerm;
 
 /// Computes a TF-IDF-like score for a term.
@@ -23,9 +25,10 @@ fn compute_score(term: &WeightedTerm, idf: f32) -> f32 {
 }
 
 /// A term with its computed TF-IDF score.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RankedTerm {
     /// The original weighted term.
+    #[serde(flatten)]
     pub term: WeightedTerm,
     /// The IDF value from the index.
     pub idf: f32,

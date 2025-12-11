@@ -3,6 +3,7 @@
 use std::{path::Path, process::ExitCode};
 
 use comfy_table::{Cell, Table, presets::UTF8_FULL_CONDENSED};
+use ra_config::MatchedRules;
 use ra_index::{ContextAnalysisResult, ContextSearch, ContextWarning, PipelineStats, SearchParams};
 use serde::Serialize;
 
@@ -10,9 +11,7 @@ use super::shared::SearchParamsOverrides;
 use crate::cli::{
     args::ContextCommand,
     context::CommandContext,
-    output::{
-        dim, format_elbow_reason, format_elbow_summary, output_aggregated_results, subheader,
-    },
+    output::{dim, format_elbow_reason, output_aggregated_results, subheader},
 };
 
 /// Analyzes source files and searches for relevant context.
@@ -149,68 +148,19 @@ fn output_context_explain(
 ) -> ExitCode {
     if json {
         let json_output = JsonContextExplain {
-            merged_rules: JsonMatchedRules {
-                terms: analysis_result.merged_rules.terms.clone(),
-                trees: analysis_result.merged_rules.trees.clone(),
-                include: analysis_result.merged_rules.include.clone(),
-                search: JsonSearchOverrides::from_config(&analysis_result.merged_rules.search),
-            },
-            search_params: JsonSearchParams::from_params(params),
+            merged_rules: analysis_result.merged_rules.clone(),
+            search_params: params.clone(),
             files: analysis_result
                 .files
                 .iter()
-                .map(|fa| {
-                    let is_tfidf = fa.analysis.algorithm == ra_context::KeywordAlgorithm::TfIdf;
-                    JsonFileAnalysis {
-                        file: fa.path.clone(),
-                        terms: fa
-                            .analysis
-                            .ranked_terms
-                            .iter()
-                            .map(|rt| {
-                                if is_tfidf {
-                                    JsonTermAnalysis {
-                                        term: rt.term.term.clone(),
-                                        source: Some(rt.term.source.to_string()),
-                                        weight: Some(rt.term.weight),
-                                        frequency: Some(rt.term.frequency),
-                                        idf: Some(rt.idf),
-                                        score: rt.score,
-                                    }
-                                } else {
-                                    JsonTermAnalysis {
-                                        term: rt.term.term.clone(),
-                                        source: None,
-                                        weight: None,
-                                        frequency: None,
-                                        idf: None,
-                                        score: rt.score,
-                                    }
-                                }
-                            })
-                            .collect(),
-                        query: fa.analysis.query_string().map(|s| s.to_string()),
-                        matched_rules: JsonMatchedRules {
-                            terms: fa.matched_rules.terms.clone(),
-                            trees: fa.matched_rules.trees.clone(),
-                            include: fa.matched_rules.include.clone(),
-                            search: JsonSearchOverrides::from_config(&fa.matched_rules.search),
-                        },
-                    }
+                .map(|fa| JsonFileAnalysis {
+                    file: fa.path.clone(),
+                    terms: fa.analysis.ranked_terms.clone(),
+                    query: fa.analysis.query_string().map(str::to_string),
+                    matched_rules: fa.matched_rules.clone(),
                 })
                 .collect(),
-            pipeline: JsonPipelineStats {
-                raw_candidates: stats.raw_candidate_count,
-                after_aggregation: stats.post_aggregation_count,
-                after_elbow: stats.post_elbow_count,
-                final_count: stats.final_count,
-                elbow: JsonElbowStats {
-                    reason: format_elbow_summary(&stats.elbow.reason),
-                    input_count: stats.elbow.input_count,
-                    output_count: stats.elbow.output_count,
-                    cutoff_ratio: stats.elbow.cutoff_ratio,
-                },
-            },
+            pipeline: stats.clone(),
         };
 
         match serde_json::to_string_pretty(&json_output) {
@@ -352,163 +302,28 @@ fn output_context_explain(
     ExitCode::SUCCESS
 }
 
-#[derive(Serialize)]
 /// JSON output for context explain mode.
+#[derive(Serialize)]
 struct JsonContextExplain {
     /// Merged context rules across all files.
-    merged_rules: JsonMatchedRules,
-    /// Resolved search parameters.
-    search_params: JsonSearchParams,
-    /// Analysis results for each file.
+    merged_rules: MatchedRules,
+    /// Search parameters used for the query.
+    search_params: SearchParams,
+    /// Per-file analysis details.
     files: Vec<JsonFileAnalysis>,
-    /// Pipeline statistics from search execution.
-    pipeline: JsonPipelineStats,
+    /// Pipeline statistics from executing the search.
+    pipeline: PipelineStats,
 }
 
+/// JSON output for a single file analysis.
 #[derive(Serialize)]
-/// JSON output for pipeline statistics.
-struct JsonPipelineStats {
-    /// Raw candidates from query execution.
-    raw_candidates: usize,
-    /// Results after aggregation.
-    after_aggregation: usize,
-    /// Results after elbow cutoff.
-    after_elbow: usize,
-    /// Final result count.
-    final_count: usize,
-    /// Elbow cutoff details.
-    elbow: JsonElbowStats,
-}
-
-#[derive(Serialize)]
-/// JSON output for elbow cutoff statistics.
-struct JsonElbowStats {
-    /// Why the elbow cutoff terminated.
-    reason: String,
-    /// Input count to elbow phase.
-    input_count: usize,
-    /// Output count from elbow phase.
-    output_count: usize,
-    /// Cutoff ratio threshold used.
-    cutoff_ratio: f32,
-}
-
-#[derive(Serialize)]
-/// JSON output for a single file's context analysis.
 struct JsonFileAnalysis {
-    /// File path.
+    /// File path analyzed.
     file: String,
-    /// Ranked terms with scores.
-    terms: Vec<JsonTermAnalysis>,
-    /// Generated query string.
+    /// Ranked terms extracted from the file.
+    terms: Vec<ra_context::RankedTerm>,
+    /// Generated query string, if any.
     query: Option<String>,
-    /// Matched context rules.
-    matched_rules: JsonMatchedRules,
-}
-
-#[derive(Serialize)]
-/// JSON output for matched context rules.
-struct JsonMatchedRules {
-    /// Terms injected from matching rules.
-    terms: Vec<String>,
-    /// Trees to limit search to.
-    trees: Vec<String>,
-    /// Files to always include.
-    include: Vec<String>,
-    /// Search parameter overrides from rules.
-    #[serde(skip_serializing_if = "JsonSearchOverrides::is_empty")]
-    search: JsonSearchOverrides,
-}
-
-#[derive(Serialize, Default)]
-/// JSON output for search parameter overrides from rules.
-struct JsonSearchOverrides {
-    /// Maximum results to return after aggregation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-    /// Maximum candidates before aggregation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    aggregation_pool_size: Option<usize>,
-    /// Elbow detection cutoff ratio.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cutoff_ratio: Option<f32>,
-    /// Sibling aggregation threshold.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    aggregation_threshold: Option<f32>,
-}
-
-impl JsonSearchOverrides {
-    /// Returns true if no overrides are set.
-    fn is_empty(&self) -> bool {
-        self.limit.is_none()
-            && self.aggregation_pool_size.is_none()
-            && self.cutoff_ratio.is_none()
-            && self.aggregation_threshold.is_none()
-    }
-
-    /// Creates from config search overrides.
-    fn from_config(overrides: &ra_config::SearchOverrides) -> Self {
-        Self {
-            limit: overrides.limit,
-            aggregation_pool_size: overrides.aggregation_pool_size,
-            cutoff_ratio: overrides.cutoff_ratio,
-            aggregation_threshold: overrides.aggregation_threshold,
-        }
-    }
-}
-
-#[derive(Serialize)]
-/// JSON output for resolved search parameters.
-struct JsonSearchParams {
-    /// Maximum candidates to retrieve in Phase 1.
-    candidate_limit: usize,
-    /// Score ratio threshold for elbow detection.
-    cutoff_ratio: f32,
-    /// Maximum results after elbow cutoff.
-    aggregation_pool_size: usize,
-    /// Sibling ratio threshold for aggregation.
-    aggregation_threshold: f32,
-    /// Whether aggregation is disabled.
-    disable_aggregation: bool,
-    /// Final result limit after aggregation.
-    limit: usize,
-    /// Trees to limit results to.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    trees: Vec<String>,
-}
-
-impl JsonSearchParams {
-    /// Creates from resolved search parameters.
-    fn from_params(params: &SearchParams) -> Self {
-        Self {
-            candidate_limit: params.effective_candidate_limit(),
-            cutoff_ratio: params.cutoff_ratio,
-            aggregation_pool_size: params.aggregation_pool_size,
-            aggregation_threshold: params.aggregation_threshold,
-            disable_aggregation: params.disable_aggregation,
-            limit: params.limit,
-            trees: params.trees.clone(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-/// JSON output for a single term's analysis.
-struct JsonTermAnalysis {
-    /// The term text.
-    term: String,
-    /// Source location (only for TF-IDF).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source: Option<String>,
-    /// Base weight from source (only for TF-IDF).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    weight: Option<f32>,
-    /// Frequency in the document (only for TF-IDF).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    frequency: Option<u32>,
-    /// IDF value from the index (only for TF-IDF).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    idf: Option<f32>,
-    /// Final score.
-    score: f32,
+    /// Context rules matched for this file.
+    matched_rules: MatchedRules,
 }

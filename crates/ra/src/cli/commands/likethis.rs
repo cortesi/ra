@@ -231,19 +231,8 @@ fn output_likethis_explain(
 ) -> ExitCode {
     if json {
         let json_output = JsonLikeThisExplain {
-            source_id: explanation.source_id.clone(),
-            source_title: explanation.source_title.clone(),
-            source_body_preview: explanation.source_body_preview.clone(),
-            mlt_params: JsonMltParams {
-                min_doc_frequency: explanation.mlt_params.min_doc_frequency,
-                max_doc_frequency: explanation.mlt_params.max_doc_frequency,
-                min_term_frequency: explanation.mlt_params.min_term_frequency,
-                max_query_terms: explanation.mlt_params.max_query_terms,
-                min_word_length: explanation.mlt_params.min_word_length,
-                max_word_length: explanation.mlt_params.max_word_length,
-                boost_factor: explanation.mlt_params.boost_factor,
-            },
-            search_params: JsonSearchParams::from_params(search_params),
+            explanation,
+            search_params,
         };
 
         match serde_json::to_string_pretty(&json_output) {
@@ -325,71 +314,12 @@ fn output_likethis_explain(
     ExitCode::SUCCESS
 }
 
-#[derive(Serialize)]
 /// JSON output for likethis explain mode.
-struct JsonLikeThisExplain {
-    /// Source document or file ID.
-    source_id: String,
-    /// Title of the source document.
-    source_title: String,
-    /// Preview of the source body content.
-    source_body_preview: String,
-    /// MoreLikeThis parameters used.
-    mlt_params: JsonMltParams,
-    /// Search parameters used.
-    search_params: JsonSearchParams,
-}
-
 #[derive(Serialize)]
-/// JSON output for MLT parameters.
-struct JsonMltParams {
-    /// Minimum document frequency for terms.
-    min_doc_frequency: u64,
-    /// Maximum document frequency for terms.
-    max_doc_frequency: u64,
-    /// Minimum term frequency in source.
-    min_term_frequency: usize,
-    /// Maximum query terms to use.
-    max_query_terms: usize,
-    /// Minimum word length.
-    min_word_length: usize,
-    /// Maximum word length.
-    max_word_length: usize,
-    /// Boost factor for terms.
-    boost_factor: f32,
-}
-
-#[derive(Serialize)]
-/// JSON output for resolved search parameters.
-struct JsonSearchParams {
-    /// Maximum candidates to retrieve in Phase 1.
-    candidate_limit: usize,
-    /// Score ratio threshold for elbow detection.
-    cutoff_ratio: f32,
-    /// Maximum results after elbow cutoff.
-    aggregation_pool_size: usize,
-    /// Sibling ratio threshold for aggregation.
-    aggregation_threshold: f32,
-    /// Whether aggregation is disabled.
-    disable_aggregation: bool,
-    /// Final result limit after aggregation.
-    limit: usize,
-    /// Trees to limit results to.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    trees: Vec<String>,
-}
-
-impl JsonSearchParams {
-    /// Creates from resolved search parameters.
-    fn from_params(params: &SearchParams) -> Self {
-        Self {
-            candidate_limit: params.effective_candidate_limit(),
-            cutoff_ratio: params.cutoff_ratio,
-            aggregation_pool_size: params.aggregation_pool_size,
-            aggregation_threshold: params.aggregation_threshold,
-            disable_aggregation: params.disable_aggregation,
-            limit: params.limit,
-            trees: params.trees.clone(),
-        }
-    }
+struct JsonLikeThisExplain<'a> {
+    /// Explanation of the source document or file.
+    #[serde(flatten)]
+    explanation: &'a MoreLikeThisExplanation,
+    /// Search parameters used for the similarity query.
+    search_params: &'a SearchParams,
 }

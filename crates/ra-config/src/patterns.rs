@@ -6,6 +6,7 @@
 use std::{collections::HashMap, path::Path};
 
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
+use serde::Serialize;
 
 use crate::{ConfigError, ContextSettings, SearchOverrides, Tree};
 
@@ -111,7 +112,7 @@ struct CompiledRule {
 }
 
 /// Result of matching context rules against a file path.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct MatchedRules {
     /// Merged terms from all matching rules.
     pub terms: Vec<String>,
@@ -120,6 +121,7 @@ pub struct MatchedRules {
     /// Merged include paths from all matching rules.
     pub include: Vec<String>,
     /// Merged search parameter overrides from all matching rules.
+    #[serde(skip_serializing_if = "SearchOverrides::is_empty")]
     pub search: SearchOverrides,
 }
 

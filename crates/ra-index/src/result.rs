@@ -6,6 +6,8 @@
 
 use std::cmp::Ordering;
 
+use serde::Serialize;
+
 pub use super::search::{MatchDetails, SearchCandidate};
 
 /// A search result, either a single match or an aggregated parent.
@@ -94,6 +96,15 @@ impl SearchResult {
             parent,
             constituents,
         }
+    }
+}
+
+impl Serialize for SearchResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.candidate().serialize(serializer)
     }
 }
 

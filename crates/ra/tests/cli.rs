@@ -587,7 +587,7 @@ path = "./docs"
             .success()
             .stdout(predicate::str::contains("\"queries\""))
             .stdout(predicate::str::contains("\"id\""))
-            .stdout(predicate::str::contains("\"title\""));
+            .stdout(predicate::str::contains("\"body\""));
     }
 
     #[test]
@@ -1176,15 +1176,6 @@ terms = ["authentication", "login"]
             let term = &terms[0];
             assert!(term["term"].is_string(), "term should have term field");
             assert!(term["score"].is_number(), "term should have score field");
-            // TextRank should NOT have source/weight/idf
-            assert!(
-                term["source"].is_null(),
-                "textrank term should not have source"
-            );
-            assert!(
-                term["weight"].is_null(),
-                "textrank term should not have weight"
-            );
         }
     }
 
@@ -1502,7 +1493,7 @@ path = "./docs"
             .success()
             .stdout(predicate::str::contains("\"queries\""))
             .stdout(predicate::str::contains("\"id\""))
-            .stdout(predicate::str::contains("\"content\""));
+            .stdout(predicate::str::contains("\"body\""));
     }
 
     #[test]

@@ -48,6 +48,7 @@ pub use pipeline::PipelineStats;
 use pipeline::{process_candidates, process_candidates_with_stats};
 use ra_config::FieldBoosts;
 use ra_context::IdfProvider;
+use serde::Serialize;
 use tantivy::{
     DocAddress, Index, Term,
     collector::{Count, TopDocs},
@@ -70,7 +71,7 @@ use crate::{
 const MAX_BULK_LOOKUP: usize = 100_000;
 
 /// Explanation of a MoreLikeThis query for debugging.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MoreLikeThisExplanation {
     /// ID of the source document.
     pub source_id: String,

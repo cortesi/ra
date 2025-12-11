@@ -2,15 +2,46 @@
 
 use std::{collections::HashMap, ops::Range};
 
+use serde::Serialize;
+
+/// A serializable byte range.
+///
+/// This is used in JSON output to represent match offsets within strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ByteRange {
+    /// Byte offset into the source string.
+    pub offset: usize,
+    /// Length in bytes of the span.
+    pub length: usize,
+}
+
+impl From<&Range<usize>> for ByteRange {
+    fn from(range: &Range<usize>) -> Self {
+        Self {
+            offset: range.start,
+            length: range.end.saturating_sub(range.start),
+        }
+    }
+}
+
+/// Serializes std byte ranges as [`ByteRange`] objects.
+fn serialize_ranges<S>(ranges: &[Range<usize>], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let byte_ranges: Vec<ByteRange> = ranges.iter().map(ByteRange::from).collect();
+    byte_ranges.serialize(serializer)
+}
+
 /// Details about how a term matched in a specific field.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct FieldMatch {
     /// Term frequency for each matched term in this field.
     pub term_frequencies: HashMap<String, u32>,
 }
 
 /// Detailed information about how search terms matched a document.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct MatchDetails {
     /// Original query terms (before stemming).
     pub original_terms: Vec<String>,
@@ -49,7 +80,7 @@ impl MatchDetails {
 ///
 /// This represents a chunk that matched a search query, with all the metadata
 /// needed for display, scoring, and hierarchical aggregation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchCandidate {
     /// Unique chunk identifier: `{tree}:{path}#{slug}` or `{tree}:{path}`.
     pub id: String,
@@ -79,6 +110,7 @@ pub struct SearchCandidate {
     /// Search relevance score (after boosting).
     pub score: f32,
     /// Optional snippet with query terms highlighted.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
     /// Byte ranges within `body` where search terms match.
     ///
@@ -86,12 +118,26 @@ pub struct SearchCandidate {
     /// (no overlaps). Each range aligns to a token produced by the index analyzer after
     /// lowercasing/stemming/fuzzy expansion, so consumers can safely highlight the original
     /// substrings using these offsets.
+    #[serde(
+        serialize_with = "serialize_ranges",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub match_ranges: Vec<Range<usize>>,
     /// Byte ranges within `hierarchy` (specifically the title, last element) where search terms match.
+    #[serde(
+        rename = "title_match_ranges",
+        serialize_with = "serialize_ranges",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub hierarchy_match_ranges: Vec<Range<usize>>,
     /// Byte ranges within `path` where search terms match.
+    #[serde(
+        serialize_with = "serialize_ranges",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub path_match_ranges: Vec<Range<usize>>,
     /// Detailed match information for verbose output.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub match_details: Option<MatchDetails>,
 }
 

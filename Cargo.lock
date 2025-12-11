@@ -994,6 +994,7 @@ dependencies = [
  "ra-config",
  "ra-document",
  "ra-query",
+ "serde",
  "stop-words",
  "tempfile",
 ]
