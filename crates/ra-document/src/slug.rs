@@ -1,7 +1,7 @@
 //! GitHub-compatible heading slug generation.
 //!
-//! Slugs are used to generate unique, stable identifiers for headings in markdown documents.
-//! The algorithm follows GitHub's conventions:
+//! Slugs are used to generate unique, stable identifiers for headings in
+//! markdown documents. The algorithm follows GitHub's conventions:
 //! - Lowercase the text
 //! - Remove punctuation except hyphens and spaces
 //! - Replace spaces with hyphens
@@ -26,7 +26,8 @@ impl Slugifier {
     ///
     /// The algorithm:
     /// 1. Convert to lowercase
-    /// 2. Remove all characters except alphanumeric, hyphens, spaces, and underscores
+    /// 2. Remove all characters except alphanumeric, hyphens, spaces, and
+    ///    underscores
     /// 3. Replace spaces with hyphens
     /// 4. Collapse consecutive hyphens into one
     /// 5. Trim leading and trailing hyphens

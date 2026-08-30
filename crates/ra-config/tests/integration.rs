@@ -1,6 +1,7 @@
 //! Integration tests for ra-config.
 //!
-//! Tests the full configuration loading pipeline: discovery -> parse -> resolve -> merge.
+//! Tests the full configuration loading pipeline: discovery -> parse -> resolve
+//! -> merge.
 
 // Integration tests live outside cfg(test) by design
 #![allow(clippy::tests_outside_test_module)]
@@ -45,8 +46,9 @@ impl TestEnv {
         path
     }
 
-    /// Loads configuration discovered from the given working directory, ignoring
-    /// any configs outside this test environment (e.g., the user's home).
+    /// Loads configuration discovered from the given working directory,
+    /// ignoring any configs outside this test environment (e.g., the user's
+    /// home).
     fn load(&self, cwd: &Path) -> Result<Config, ConfigError> {
         let files: Vec<_> = discover_config_files(cwd)
             .into_iter()

@@ -351,7 +351,8 @@ Section 2 content.
         assert_eq!(tree.node_count(), 5);
 
         // Check hierarchy via parent_id
-        // Note: slugs are "subsection-11" because periods are removed from "Subsection 1.1"
+        // Note: slugs are "subsection-11" because periods are removed from "Subsection
+        // 1.1"
         let s1 = tree.get_node("docs:doc.md#section-1").unwrap();
         assert_eq!(s1.parent_id, Some("docs:doc.md".to_string()));
 

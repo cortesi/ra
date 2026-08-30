@@ -1,41 +1,43 @@
 //! Unified search result pipeline.
 //!
-//! This module provides the shared pipeline that processes raw search candidates
-//! into final aggregated results. All search entry points (search, context, likethis)
-//! use this pipeline to ensure consistent behavior.
+//! This module provides the shared pipeline that processes raw search
+//! candidates into final aggregated results. All search entry points (search,
+//! context, likethis) use this pipeline to ensure consistent behavior.
 //!
 //! # Pipeline Phases
 //!
-//! 1. **Score Normalization**: For multi-tree searches, normalize scores so each
-//!    tree's best result gets 1.0. See [`normalize_scores_across_trees`].
+//! 1. **Score Normalization**: For multi-tree searches, normalize scores so
+//!    each tree's best result gets 1.0. See [`normalize_scores_across_trees`].
 //!
-//! 2. **Adaptive Hierarchical Aggregation**: Process all candidates, aggregating
-//!    siblings when appropriate. Aggregated results use RSS (Root Sum Square)
-//!    scoring to reward coverage. See [`adaptive_aggregate`].
+//! 2. **Adaptive Hierarchical Aggregation**: Process all candidates,
+//!    aggregating siblings when appropriate. Aggregated results use RSS (Root
+//!    Sum Square) scoring to reward coverage. See [`adaptive_aggregate`].
 //!
 //! 3. **Elbow Cutoff**: Detect where relevance drops significantly and filter
-//!    results. Applied AFTER aggregation so that aggregated results (with boosted
-//!    RSS scores) compete fairly.
+//!    results. Applied AFTER aggregation so that aggregated results (with
+//!    boosted RSS scores) compete fairly.
 //!
 //! 4. **Final Limit**: Truncate to the requested number of results.
 //!
 //! # Why Aggregate-First?
 //!
-//! Running aggregation before elbow cutoff ensures that siblings have a chance to
-//! accumulate and merge before relevance filtering. With RSS scoring, multiple
-//! matching sections boost the parent's score (e.g., two score-10 matches become
-//! ~14.1), potentially vaulting aggregated results over the elbow threshold.
+//! Running aggregation before elbow cutoff ensures that siblings have a chance
+//! to accumulate and merge before relevance filtering. With RSS scoring,
+//! multiple matching sections boost the parent's score (e.g., two score-10
+//! matches become ~14.1), potentially vaulting aggregated results over the
+//! elbow threshold.
 //!
 //! # Score Normalization
 //!
-//! When searching across multiple trees with different content densities, raw BM25 scores
-//! are not directly comparable. A specialized tree with focused content will score much
-//! higher on domain-specific terms than a general tree, even when both contain relevant
-//! results.
+//! When searching across multiple trees with different content densities, raw
+//! BM25 scores are not directly comparable. A specialized tree with focused
+//! content will score much higher on domain-specific terms than a general tree,
+//! even when both contain relevant results.
 //!
-//! This module implements **top-score normalization**: each result's score is divided by
-//! the maximum score within its tree, so the best result in each tree gets a score of 1.0.
-//! This preserves relative ordering within trees while making cross-tree comparison fair.
+//! This module implements **top-score normalization**: each result's score is
+//! divided by the maximum score within its tree, so the best result in each
+//! tree gets a score of 1.0. This preserves relative ordering within trees
+//! while making cross-tree comparison fair.
 
 use std::{
     cmp::Ordering,
@@ -52,8 +54,9 @@ use crate::{
 
 /// Statistics about the search pipeline execution.
 ///
-/// This provides visibility into what happened during each phase of the pipeline,
-/// useful for debugging and understanding why certain results were or weren't returned.
+/// This provides visibility into what happened during each phase of the
+/// pipeline, useful for debugging and understanding why certain results were or
+/// weren't returned.
 #[derive(Debug, Clone, Serialize)]
 pub struct PipelineStats {
     /// Number of raw candidates from query execution.
@@ -92,13 +95,14 @@ impl PipelineStats {
 /// Normalizes scores across multiple trees using top-score normalization.
 ///
 /// Each result's score is divided by the maximum score in its tree, so the best
-/// result in each tree gets a score of 1.0. Results are then re-sorted by normalized
-/// score in descending order.
+/// result in each tree gets a score of 1.0. Results are then re-sorted by
+/// normalized score in descending order.
 ///
 /// # Arguments
 ///
 /// * `candidates` - Search candidates to normalize (will be modified in place)
-/// * `tree_count` - Number of trees being searched (normalization skipped if <= 1)
+/// * `tree_count` - Number of trees being searched (normalization skipped if <=
+///   1)
 ///
 /// # Returns
 ///
@@ -106,7 +110,8 @@ impl PipelineStats {
 ///
 /// # Behavior
 ///
-/// - If `tree_count <= 1`, returns candidates unchanged (no normalization needed)
+/// - If `tree_count <= 1`, returns candidates unchanged (no normalization
+///   needed)
 /// - If only one tree has results, returns candidates unchanged
 /// - Trees with no results are ignored
 /// - Zero or negative max scores are treated as 1.0 to avoid division issues
@@ -155,7 +160,8 @@ fn normalize_scores_across_trees(
 ///
 /// # Arguments
 ///
-/// * `candidates` - Raw search candidates from query execution (sorted by score)
+/// * `candidates` - Raw search candidates from query execution (sorted by
+///   score)
 /// * `params` - Search parameters controlling pipeline behavior
 /// * `parent_lookup` - Function to look up parent nodes by ID for aggregation
 ///
@@ -212,7 +218,8 @@ where
     let post_aggregation_count = aggregated.len();
 
     // Phase 3: Elbow cutoff on aggregated results
-    // Applied after aggregation so aggregated results with boosted RSS scores compete fairly.
+    // Applied after aggregation so aggregated results with boosted RSS scores
+    // compete fairly.
     let (relevant, elbow_stats) = elbow_cutoff_results_with_stats(
         aggregated,
         params.cutoff_ratio,

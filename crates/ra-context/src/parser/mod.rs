@@ -1,8 +1,8 @@
 //! Content parsers for term extraction.
 //!
-//! This module provides parsers that extract weighted terms from different file types.
-//! Each parser understands the structure of its file type and assigns appropriate
-//! weights based on where terms appear (headings, body, etc.).
+//! This module provides parsers that extract weighted terms from different file
+//! types. Each parser understands the structure of its file type and assigns
+//! appropriate weights based on where terms appear (headings, body, etc.).
 
 mod markdown;
 mod text;
@@ -33,7 +33,8 @@ pub trait ContentParser {
 
 /// Tokenizes text into individual terms.
 ///
-/// Splits on whitespace and punctuation, lowercases, and filters based on length.
+/// Splits on whitespace and punctuation, lowercases, and filters based on
+/// length.
 pub fn tokenize(text: &str, min_length: usize) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
         .map(|s| s.to_ascii_lowercase())

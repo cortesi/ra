@@ -1,7 +1,7 @@
 //! Configuration file discovery.
 //!
-//! Discovers `.ra.toml` files by walking up the directory tree from a starting point,
-//! then appending the global `~/.ra.toml` if present.
+//! Discovers `.ra.toml` files by walking up the directory tree from a starting
+//! point, then appending the global `~/.ra.toml` if present.
 
 use std::path::{Path, PathBuf};
 
@@ -14,13 +14,16 @@ pub const CONFIG_FILENAME: &str = ".ra.toml";
 
 /// Discovers all configuration files relevant to the given directory.
 ///
-/// Returns paths in precedence order: closest to `cwd` first, global (`~/.ra.toml`) last.
-/// Files closer to `cwd` have higher precedence during merging.
+/// Returns paths in precedence order: closest to `cwd` first, global
+/// (`~/.ra.toml`) last. Files closer to `cwd` have higher precedence during
+/// merging.
 ///
 /// The function:
-/// 1. Walks up from `cwd` to the filesystem root, collecting any `.ra.toml` files found
+/// 1. Walks up from `cwd` to the filesystem root, collecting any `.ra.toml`
+///    files found
 /// 2. Stops if a config file has `root = true` set
-/// 3. Appends `~/.ra.toml` if it exists and no root config was found (lowest precedence)
+/// 3. Appends `~/.ra.toml` if it exists and no root config was found (lowest
+///    precedence)
 ///
 /// Returns an empty vector if no configuration files are found.
 pub fn discover_config_files(cwd: &Path) -> Vec<PathBuf> {
@@ -43,7 +46,8 @@ pub fn discover_config_files(cwd: &Path) -> Vec<PathBuf> {
         current = dir.parent();
     }
 
-    // Append global config if it exists, no root was found, and it isn't already included
+    // Append global config if it exists, no root was found, and it isn't already
+    // included
     if !found_root
         && let Some(global_path) = global_config_path()
         && global_path.is_file()
@@ -137,8 +141,8 @@ mod tests {
 
     #[test]
     fn test_global_config_path_returns_some() {
-        // This test verifies the function returns a path (we can't easily test the actual value
-        // since it depends on the system's home directory)
+        // This test verifies the function returns a path (we can't easily test the
+        // actual value since it depends on the system's home directory)
         let path = global_config_path();
         assert!(path.is_some());
         assert!(path.unwrap().ends_with(CONFIG_FILENAME));

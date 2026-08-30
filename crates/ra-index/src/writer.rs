@@ -28,14 +28,15 @@ pub struct IndexWriter {
 }
 
 impl IndexWriter {
-    /// Opens or creates an index at the given path with the specified stemmer language.
+    /// Opens or creates an index at the given path with the specified stemmer
+    /// language.
     ///
     /// If the index doesn't exist, it will be created with the standard schema.
-    /// If it exists but the schema doesn't match (e.g., after a schema version change),
-    /// the old index is deleted and a new one is created.
+    /// If it exists but the schema doesn't match (e.g., after a schema version
+    /// change), the old index is deleted and a new one is created.
     ///
-    /// The `language` parameter is a language name string (e.g., "english", "french")
-    /// that controls which stemmer is used for text analysis.
+    /// The `language` parameter is a language name string (e.g., "english",
+    /// "french") that controls which stemmer is used for text analysis.
     pub fn open(path: &Path, language: &str) -> Result<Self, IndexError> {
         let schema = IndexSchema::new();
 
@@ -55,8 +56,8 @@ impl IndexWriter {
         Ok(Self { writer, schema })
     }
 
-    /// Opens an existing index or creates a new one. If the schema doesn't match,
-    /// deletes the old index and creates a fresh one.
+    /// Opens an existing index or creates a new one. If the schema doesn't
+    /// match, deletes the old index and creates a fresh one.
     fn open_or_recreate_index(path: &Path, schema: &IndexSchema) -> Result<Index, IndexError> {
         let dir = MmapDirectory::open(path).map_err(|e| {
             let err: tantivy::TantivyError = e.into();
@@ -100,7 +101,8 @@ impl IndexWriter {
 
     /// Adds a chunk document to the index.
     ///
-    /// The document is staged for writing but not committed until [`commit`] is called.
+    /// The document is staged for writing but not committed until [`commit`] is
+    /// called.
     #[allow(clippy::needless_pass_by_ref_mut)] // Semantic mutability - Tantivy uses interior mutability
     pub fn add_document(&mut self, doc: &ChunkDocument) -> Result<(), IndexError> {
         let mut tantivy_doc = TantivyDocument::new();

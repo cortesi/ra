@@ -44,10 +44,11 @@ pub fn merge_ranges(mut a: Vec<Range<usize>>, b: Vec<Range<usize>>) -> Vec<Range
     merged
 }
 
-/// Extracts byte ranges for matched terms within `body` using the configured analyzer.
+/// Extracts byte ranges for matched terms within `body` using the configured
+/// analyzer.
 ///
-/// Offsets are relative to the original body text and are guaranteed to be sorted,
-/// non-overlapping, and merged where adjacent.
+/// Offsets are relative to the original body text and are guaranteed to be
+/// sorted, non-overlapping, and merged where adjacent.
 pub(super) fn extract_match_ranges(
     analyzer: &TextAnalyzer,
     body: &str,
@@ -70,8 +71,8 @@ pub(super) fn extract_match_ranges(
     merge_ranges(ranges, Vec::new())
 }
 
-// NOTE: Searcher execution methods live in `search/mod.rs`. This module provides
-// shared utilities and types used by that implementation.
+// NOTE: Searcher execution methods live in `search/mod.rs`. This module
+// provides shared utilities and types used by that implementation.
 
 #[cfg(test)]
 mod tests {

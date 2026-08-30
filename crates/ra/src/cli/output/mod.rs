@@ -38,7 +38,8 @@ enum DisplayMode {
     Matches,
 }
 
-/// Retrieves the full body for a search result, falling back to the indexed body.
+/// Retrieves the full body for a search result, falling back to the indexed
+/// body.
 fn read_full_body(result: &SearchResult, searcher: &Searcher) -> String {
     let c = result.candidate();
     searcher
@@ -482,7 +483,8 @@ fn highlight_breadcrumb_title(
     }
 }
 
-/// Computes highlight ranges for an aggregated result by mapping child matches into parent body.
+/// Computes highlight ranges for an aggregated result by mapping child matches
+/// into parent body.
 fn aggregated_match_ranges(result: &SearchResult, full_body: &str) -> Vec<Range<usize>> {
     match result {
         SearchResult::Single(candidate) => candidate.match_ranges.clone(),

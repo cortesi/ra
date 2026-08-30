@@ -1,8 +1,8 @@
 //! Chunk tree structure and operations.
 //!
-//! This module provides the `ChunkTree` type which represents a parsed markdown document
-//! as a hierarchical tree of nodes. The tree supports traversal, node lookup, and
-//! iteration over chunks (nodes with non-empty body text).
+//! This module provides the `ChunkTree` type which represents a parsed markdown
+//! document as a hierarchical tree of nodes. The tree supports traversal, node
+//! lookup, and iteration over chunks (nodes with non-empty body text).
 
 #[cfg(test)]
 use std::path::{Path, PathBuf};
@@ -13,9 +13,9 @@ use crate::node::{Node, NodeKind};
 
 /// A hierarchical tree of nodes representing a parsed document.
 ///
-/// The tree has a single root (the document node) with heading nodes as descendants.
-/// Nodes are arranged by heading depth, where each heading becomes a child of the
-/// nearest preceding heading with strictly lower depth.
+/// The tree has a single root (the document node) with heading nodes as
+/// descendants. Nodes are arranged by heading depth, where each heading becomes
+/// a child of the nearest preceding heading with strictly lower depth.
 #[derive(Debug, Clone)]
 pub struct ChunkTree {
     /// The root document node.
@@ -250,8 +250,8 @@ pub struct TreeChunk {
     /// The chunk body text (content within span, excluding child spans).
     pub body: String,
     /// Hierarchy path from document root to this chunk.
-    /// Each element is a title in the path. The last element is this chunk's title.
-    /// For document nodes, contains just the document title.
+    /// Each element is a title in the path. The last element is this chunk's
+    /// title. For document nodes, contains just the document title.
     /// For headings, contains [doc_title, ancestor_titles..., this_title].
     pub hierarchy: Vec<String>,
     /// Heading level: 0 for document node, 1-6 for h1-h6.

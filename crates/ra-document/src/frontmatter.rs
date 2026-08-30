@@ -1,6 +1,7 @@
 //! YAML frontmatter parsing for markdown documents.
 //!
-//! Frontmatter is optional metadata at the start of a markdown file, delimited by `---`:
+//! Frontmatter is optional metadata at the start of a markdown file, delimited
+//! by `---`:
 //!
 //! ```markdown
 //! ---
@@ -25,8 +26,9 @@ pub struct Frontmatter {
 
 /// Parses YAML frontmatter from markdown content.
 ///
-/// Returns the parsed frontmatter (if valid) and the remaining content after the frontmatter.
-/// If no frontmatter is present or it's malformed, returns `None` and the original content.
+/// Returns the parsed frontmatter (if valid) and the remaining content after
+/// the frontmatter. If no frontmatter is present or it's malformed, returns
+/// `None` and the original content.
 ///
 /// Frontmatter must:
 /// - Start at the beginning of the content
@@ -61,7 +63,8 @@ pub fn parse_frontmatter(content: &str) -> (Option<Frontmatter>, &str) {
         .strip_prefix("\r\n")
         .or_else(|| remaining.strip_prefix('\n'))
         .unwrap_or(remaining);
-    // Strip one more blank line if present (common pattern: --- followed by blank line before content)
+    // Strip one more blank line if present (common pattern: --- followed by blank
+    // line before content)
     let remaining = remaining
         .strip_prefix("\r\n")
         .or_else(|| remaining.strip_prefix('\n'))

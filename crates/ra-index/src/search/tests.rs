@@ -208,8 +208,9 @@ fn results_include_fields_and_snippets_toggle() {
     assert!(result.body.contains("Asynchronous"));
     assert!(result.snippet.is_some());
 
-    // Snippets are always generated in search_aggregated; the old search_no_snippets
-    // functionality is no longer needed as snippet generation is cheap.
+    // Snippets are always generated in search_aggregated; the old
+    // search_no_snippets functionality is no longer needed as snippet
+    // generation is cheap.
 }
 
 #[test]
@@ -848,7 +849,8 @@ mod mlt_tests {
 
         // Results should differ based on params
         // (In practice, this may vary, but the API should work)
-        // Just verify the calls succeeded - MLT query behavior is Tantivy's responsibility
+        // Just verify the calls succeeded - MLT query behavior is Tantivy's
+        // responsibility
         let _ = (default_results, restrictive_results);
     }
 }
@@ -862,7 +864,8 @@ mod pipeline_integration_tests {
     use super::*;
     use crate::{ContextSearch, document::ChunkDocument, writer::IndexWriter};
 
-    /// Creates a test index with a hierarchical document structure for aggregation tests.
+    /// Creates a test index with a hierarchical document structure for
+    /// aggregation tests.
     fn create_hierarchical_index() -> (TempDir, Vec<ChunkDocument>) {
         // Create a document with 4 sections that should aggregate:
         // - doc.md (document node)

@@ -100,7 +100,8 @@ pub struct Indexer<'a> {
 impl<'a> Indexer<'a> {
     /// Creates a new indexer for the given configuration.
     ///
-    /// Returns an error if the configuration has no config root or patterns fail to compile.
+    /// Returns an error if the configuration has no config root or patterns
+    /// fail to compile.
     pub fn new(config: &'a Config) -> Result<Self, IndexError> {
         let index_dir = index_directory(config).ok_or_else(|| {
             IndexError::Io(IoError::new(
@@ -125,7 +126,8 @@ impl<'a> Indexer<'a> {
 
     /// Performs a full reindex, ignoring the manifest.
     ///
-    /// This deletes all existing index data and reindexes everything from scratch.
+    /// This deletes all existing index data and reindexes everything from
+    /// scratch.
     pub fn full_reindex<R: ProgressReporter>(
         &self,
         reporter: &mut R,
@@ -253,7 +255,8 @@ impl<'a> Indexer<'a> {
         Ok(stats)
     }
 
-    /// Parses and indexes a single file, returning the number of chunks indexed.
+    /// Parses and indexes a single file, returning the number of chunks
+    /// indexed.
     fn index_file(
         &self,
         writer: &mut IndexWriter,

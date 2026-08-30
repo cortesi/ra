@@ -1,8 +1,9 @@
 //! Hierarchical node structures for the chunk tree.
 //!
-//! This module defines the core data structures for representing markdown documents as
-//! hierarchical trees of nodes. Each node represents either the document itself or a
-//! heading section, with parent-child relationships determined by heading depth.
+//! This module defines the core data structures for representing markdown
+//! documents as hierarchical trees of nodes. Each node represents either the
+//! document itself or a heading section, with parent-child relationships
+//! determined by heading depth.
 
 use std::path::Path;
 
@@ -40,8 +41,10 @@ pub struct HeadingParams {
 ///
 /// Nodes form a tree structure where:
 /// - The root is always a document node (depth 0)
-/// - Heading nodes (h1-h6) are children of the nearest preceding heading with lower depth
-/// - Byte spans define the content range, with body text derived by excluding child spans
+/// - Heading nodes (h1-h6) are children of the nearest preceding heading with
+///   lower depth
+/// - Byte spans define the content range, with body text derived by excluding
+///   child spans
 #[derive(Debug, Clone)]
 pub struct Node {
     /// Globally unique chunk identifier.
@@ -72,12 +75,13 @@ pub struct Node {
     /// This is used to compute parent body boundaries (preamble ends here).
     pub heading_line_start: usize,
 
-    /// Byte offset where this node's content span starts in the source document.
-    /// For heading nodes, this is after the heading line.
+    /// Byte offset where this node's content span starts in the source
+    /// document. For heading nodes, this is after the heading line.
     /// For document nodes, this is always 0.
     pub byte_start: usize,
 
-    /// Byte offset where this node's span ends (exclusive) in the source document.
+    /// Byte offset where this node's span ends (exclusive) in the source
+    /// document.
     pub byte_end: usize,
 
     /// Number of siblings including this node under the same parent.
@@ -138,13 +142,14 @@ impl Node {
         }
     }
 
-    /// Returns an iterator over this node and all descendants in pre-order (depth-first).
+    /// Returns an iterator over this node and all descendants in pre-order
+    /// (depth-first).
     pub fn iter_preorder(&self) -> PreorderIter<'_> {
         PreorderIter { stack: vec![self] }
     }
 
-    /// Returns an iterator over this node and all descendants in pre-order (depth-first),
-    /// yielding mutable references.
+    /// Returns an iterator over this node and all descendants in pre-order
+    /// (depth-first), yielding mutable references.
     pub fn iter_preorder_mut(&mut self) -> PreorderIterMut<'_> {
         PreorderIterMut { stack: vec![self] }
     }
@@ -190,9 +195,9 @@ impl<'a> Iterator for PreorderIterMut<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let node = self.stack.pop()?;
-        // Safety: We need to get mutable references to children while holding a mutable ref
-        // to the node. This is safe because we're moving the node reference out before
-        // accessing children.
+        // Safety: We need to get mutable references to children while holding a mutable
+        // ref to the node. This is safe because we're moving the node reference
+        // out before accessing children.
         let node_ptr = node as *mut Node;
         // Push children in reverse order so leftmost child is processed first
         unsafe {

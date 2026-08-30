@@ -47,7 +47,8 @@ pub struct MatchDetails {
     pub original_terms: Vec<String>,
     /// Query terms after stemming/tokenization.
     pub stemmed_terms: Vec<String>,
-    /// Map from stemmed query term to indexed terms that matched (including fuzzy).
+    /// Map from stemmed query term to indexed terms that matched (including
+    /// fuzzy).
     pub term_mappings: HashMap<String, Vec<String>>,
     /// Per-field term matches.
     pub field_matches: HashMap<String, FieldMatch>,
@@ -89,7 +90,8 @@ pub struct SearchCandidate {
     /// Parent chunk identifier, or None for document nodes.
     pub parent_id: Option<String>,
     /// Hierarchy path from document root to this chunk.
-    /// Each element is a title in the path. The last element is this chunk's title.
+    /// Each element is a title in the path. The last element is this chunk's
+    /// title.
     pub hierarchy: Vec<String>,
     /// Heading level: 0 for document node, 1-6 for h1-h6.
     pub depth: u64,
@@ -114,16 +116,18 @@ pub struct SearchCandidate {
     pub snippet: Option<String>,
     /// Byte ranges within `body` where search terms match.
     ///
-    /// Offsets are byte positions into the returned `body` text, already sorted and merged
-    /// (no overlaps). Each range aligns to a token produced by the index analyzer after
-    /// lowercasing/stemming/fuzzy expansion, so consumers can safely highlight the original
-    /// substrings using these offsets.
+    /// Offsets are byte positions into the returned `body` text, already sorted
+    /// and merged (no overlaps). Each range aligns to a token produced by
+    /// the index analyzer after lowercasing/stemming/fuzzy expansion, so
+    /// consumers can safely highlight the original substrings using these
+    /// offsets.
     #[serde(
         serialize_with = "serialize_ranges",
         skip_serializing_if = "Vec::is_empty"
     )]
     pub match_ranges: Vec<Range<usize>>,
-    /// Byte ranges within `hierarchy` (specifically the title, last element) where search terms match.
+    /// Byte ranges within `hierarchy` (specifically the title, last element)
+    /// where search terms match.
     #[serde(
         rename = "title_match_ranges",
         serialize_with = "serialize_ranges",
@@ -158,7 +162,8 @@ impl SearchCandidate {
     /// - They share the same document ID
     /// - AND either:
     ///   - This candidate is the document node (id == doc_id)
-    ///   - OR this candidate's slug is a prefix of the other's slug followed by `-`
+    ///   - OR this candidate's slug is a prefix of the other's slug followed by
+    ///     `-`
     pub fn is_ancestor_of(&self, other: &Self) -> bool {
         // Same ID is not an ancestor relationship
         if self.id == other.id {

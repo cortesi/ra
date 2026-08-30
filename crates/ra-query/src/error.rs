@@ -1,6 +1,7 @@
 //! Error types for query parsing and compilation.
 //!
-//! This module provides error types for lexing, parsing, and compiling query expressions.
+//! This module provides error types for lexing, parsing, and compiling query
+//! expressions.
 
 use std::{error::Error, fmt};
 
@@ -25,7 +26,8 @@ impl LexError {
         }
     }
 
-    /// Formats the error with a position indicator showing where the error occurred.
+    /// Formats the error with a position indicator showing where the error
+    /// occurred.
     pub fn format_with_context(&self) -> String {
         let mut result = String::new();
         result.push_str(&format!("query syntax error: {}\n", self.message));

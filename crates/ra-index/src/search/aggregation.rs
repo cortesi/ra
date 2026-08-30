@@ -1,15 +1,19 @@
 //! Adaptive hierarchical aggregation for search results.
 //!
-//! This module implements an aggregation algorithm that processes all candidates
-//! in score order, building aggregated results. Candidates are processed after
-//! elbow cutoff has determined the "relevant" set.
+//! This module implements an aggregation algorithm that processes all
+//! candidates in score order, building aggregated results. Candidates are
+//! processed after elbow cutoff has determined the "relevant" set.
 //!
 //! # Key Features
 //!
-//! 1. **Processes all relevant candidates**: No early termination during aggregation
-//! 2. **Claims descendants**: When a parent enters results, all descendants are skipped
-//! 3. **Cascades upward**: Aggregating siblings may trigger further aggregation with grandparents
-//! 4. **Ancestor subsumption**: When an ancestor arrives after its descendants, it subsumes them
+//! 1. **Processes all relevant candidates**: No early termination during
+//!    aggregation
+//! 2. **Claims descendants**: When a parent enters results, all descendants are
+//!    skipped
+//! 3. **Cascades upward**: Aggregating siblings may trigger further aggregation
+//!    with grandparents
+//! 4. **Ancestor subsumption**: When an ancestor arrives after its descendants,
+//!    it subsumes them
 //!
 //! # Algorithm
 //!
@@ -39,7 +43,8 @@
 //! - They share the same document ID (`{tree}:{path}`)
 //! - The ancestor's slug is a prefix of the descendant's slug
 //!
-//! The document node (ID without `#`) is an ancestor of all chunks in that document.
+//! The document node (ID without `#`) is an ancestor of all chunks in that
+//! document.
 
 use std::collections::HashMap;
 
@@ -68,7 +73,8 @@ impl AdaptiveAggregator {
     /// Creates a new adaptive aggregator.
     ///
     /// # Arguments
-    /// * `threshold` - Minimum ratio of matching/total siblings to trigger aggregation (0.0 to 1.0)
+    /// * `threshold` - Minimum ratio of matching/total siblings to trigger
+    ///   aggregation (0.0 to 1.0)
     pub fn new(threshold: f32) -> Self {
         Self {
             results: Vec::new(),
@@ -79,7 +85,8 @@ impl AdaptiveAggregator {
 
     /// Checks if a candidate is claimed (should be skipped).
     ///
-    /// A candidate is claimed if any of its ancestors is already in the results.
+    /// A candidate is claimed if any of its ancestors is already in the
+    /// results.
     pub fn is_claimed(&self, candidate: &SearchCandidate) -> bool {
         // Check if any ancestor is in results.
         for idx in self.result_index.values() {
@@ -94,7 +101,8 @@ impl AdaptiveAggregator {
 
     /// Finds indices of results that are descendants of the candidate.
     ///
-    /// A result is a descendant if the candidate is an ancestor of the result's ID.
+    /// A result is a descendant if the candidate is an ancestor of the result's
+    /// ID.
     pub fn find_descendant_indices(&self, candidate: &SearchCandidate) -> Vec<usize> {
         self.results
             .iter()
@@ -204,7 +212,8 @@ impl AdaptiveAggregator {
 
     /// Adds an aggregated result and checks for cascade opportunities.
     ///
-    /// Returns true if the result was added (may be further aggregated via cascade).
+    /// Returns true if the result was added (may be further aggregated via
+    /// cascade).
     pub fn add_aggregated<F>(
         &mut self,
         parent: SearchCandidate,
@@ -224,7 +233,8 @@ impl AdaptiveAggregator {
         self.check_cascade(&parent_id, parent_lookup)
     }
 
-    /// Checks if the newly added result should cascade (aggregate with its siblings).
+    /// Checks if the newly added result should cascade (aggregate with its
+    /// siblings).
     fn check_cascade<F>(&mut self, parent_id: &str, parent_lookup: &F) -> bool
     where
         F: Fn(&str) -> Option<SearchCandidate>,
@@ -284,9 +294,11 @@ impl AdaptiveAggregator {
         self.add_aggregated(grandparent, constituents, parent_lookup)
     }
 
-    /// Consumes the aggregator and returns the accumulated results sorted by score.
+    /// Consumes the aggregator and returns the accumulated results sorted by
+    /// score.
     pub fn into_results(mut self) -> Vec<SearchResult> {
-        // Sort by score descending - results may be out of order after aggregation/cascading
+        // Sort by score descending - results may be out of order after
+        // aggregation/cascading
         self.results.sort_by(|a, b| {
             b.candidate()
                 .score
@@ -304,15 +316,16 @@ impl AdaptiveAggregator {
 
     /// Processes candidates through the adaptive aggregation algorithm.
     ///
-    /// Iterates through all candidates in order (should be sorted by score descending),
-    /// building aggregated results. For each candidate:
+    /// Iterates through all candidates in order (should be sorted by score
+    /// descending), building aggregated results. For each candidate:
     /// - Skip if claimed (ancestor already in results)
     /// - Subsume any descendants already in results
     /// - Check if it should aggregate with existing siblings
     /// - Either add as single result or aggregate with siblings
     ///
     /// # Arguments
-    /// * `candidates` - Candidates to process (should be sorted by score descending)
+    /// * `candidates` - Candidates to process (should be sorted by score
+    ///   descending)
     /// * `parent_lookup` - Function to look up parent nodes by ID
     pub fn process<F>(&mut self, candidates: Vec<SearchCandidate>, parent_lookup: &F)
     where
@@ -370,15 +383,18 @@ impl AdaptiveAggregator {
 
 /// Performs adaptive hierarchical aggregation on search candidates.
 ///
-/// This is the main entry point for the adaptive aggregation algorithm. It processes
-/// all candidates in score order, aggregating siblings when appropriate.
+/// This is the main entry point for the adaptive aggregation algorithm. It
+/// processes all candidates in score order, aggregating siblings when
+/// appropriate.
 ///
 /// The candidates should already be filtered by elbow cutoff to include only
 /// relevant results. This function aggregates everything that passes through.
 ///
 /// # Arguments
-/// * `candidates` - Search candidates (should be sorted by score descending, already filtered)
-/// * `threshold` - Minimum ratio of matching/total siblings to trigger aggregation (0.0 to 1.0)
+/// * `candidates` - Search candidates (should be sorted by score descending,
+///   already filtered)
+/// * `threshold` - Minimum ratio of matching/total siblings to trigger
+///   aggregation (0.0 to 1.0)
 /// * `parent_lookup` - Function to look up parent nodes by ID
 ///
 /// # Returns

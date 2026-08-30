@@ -1,6 +1,7 @@
 //! Path resolution for tree definitions.
 //!
-//! Resolves relative and tilde-prefixed paths in tree definitions to absolute paths.
+//! Resolves relative and tilde-prefixed paths in tree definitions to absolute
+//! paths.
 
 use std::path::{Path, PathBuf};
 

@@ -1,6 +1,7 @@
 //! Query abstract syntax tree.
 //!
-//! Represents parsed query expressions before compilation to search engine queries.
+//! Represents parsed query expressions before compilation to search engine
+//! queries.
 
 use std::fmt;
 
@@ -82,7 +83,8 @@ impl QueryExpr {
         }
     }
 
-    /// Formats the expression as a tree structure with the given indentation level.
+    /// Formats the expression as a tree structure with the given indentation
+    /// level.
     fn fmt_tree(&self, f: &mut fmt::Formatter<'_>, indent: usize) -> fmt::Result {
         let prefix = "  ".repeat(indent);
         match self {

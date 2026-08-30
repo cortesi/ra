@@ -2,14 +2,14 @@
 //!
 //! This module provides multiple algorithms for extracting keywords from text:
 //!
-//! - **Corpus TF-IDF**: Uses index-wide statistics to find rare/distinctive terms.
-//!   Best when you have an index and want corpus-aware ranking.
+//! - **Corpus TF-IDF**: Uses index-wide statistics to find rare/distinctive
+//!   terms. Best when you have an index and want corpus-aware ranking.
 //! - **RAKE**: Rapid Automatic Keyword Extraction based on word co-occurrence.
 //!   Good for technical documentation.
-//! - **TextRank**: Graph-based ranking similar to PageRank.
-//!   Good for summarization-style extraction.
-//! - **YAKE**: Yet Another Keyword Extractor using statistical features.
-//!   Good for short texts, no training required.
+//! - **TextRank**: Graph-based ranking similar to PageRank. Good for
+//!   summarization-style extraction.
+//! - **YAKE**: Yet Another Keyword Extractor using statistical features. Good
+//!   for short texts, no training required.
 
 mod corpus_tfidf;
 mod local;
@@ -159,7 +159,8 @@ fn keywords_to_ranked_terms(keywords: &[ScoredKeyword]) -> Vec<RankedTerm> {
         .collect()
 }
 
-/// Runs a local keyword extractor and returns both ranked terms and scored keywords.
+/// Runs a local keyword extractor and returns both ranked terms and scored
+/// keywords.
 ///
 /// This helper keeps the non‑TF‑IDF algorithm branches uniform.
 fn extract_local_keywords<F>(content: &str, extract: F) -> (Vec<RankedTerm>, Vec<ScoredKeyword>)

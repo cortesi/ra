@@ -28,12 +28,13 @@ pub struct ParsedConfig {
 
 /// Merges multiple configuration files into a single resolved `Config`.
 ///
-/// Configs should be provided in precedence order: highest precedence first (closest to CWD),
-/// lowest precedence last (global config).
+/// Configs should be provided in precedence order: highest precedence first
+/// (closest to CWD), lowest precedence last (global config).
 ///
 /// Merge rules:
 /// - Scalar settings: first defined value wins (highest precedence)
-/// - Trees: merged by name, first definition wins completely (path, include, exclude)
+/// - Trees: merged by name, first definition wins completely (path, include,
+///   exclude)
 /// - Context patterns: merged, first definition for each key wins
 pub fn merge_configs(configs: &[ParsedConfig]) -> Result<Config, ConfigError> {
     if configs.is_empty() {
@@ -127,9 +128,9 @@ fn apply_raw_search(result: &mut SearchSettings, raw: &RawSearchSettings) {
 fn merge_context_settings(configs: &[ParsedConfig]) -> ContextSettings {
     let mut result = ContextSettings::default();
 
-    // For scalar values, iterate in reverse (lowest precedence first) so higher precedence
-    // overwrites. For rules, iterate in forward order (highest precedence first) so those
-    // rules are checked first when matching.
+    // For scalar values, iterate in reverse (lowest precedence first) so higher
+    // precedence overwrites. For rules, iterate in forward order (highest
+    // precedence first) so those rules are checked first when matching.
 
     // First pass: scalar values (reverse order)
     for parsed in configs.iter().rev() {
@@ -536,7 +537,8 @@ include = ["**/*"]
 
         let result = merge_configs(&[leaf, mid, root]).unwrap();
 
-        // Settings: leaf wins default_limit, mid wins local_boost, root wins chunk_at_headings
+        // Settings: leaf wins default_limit, mid wins local_boost, root wins
+        // chunk_at_headings
         assert_eq!(result.settings.default_limit, 3);
         assert!((result.settings.local_boost - 2.0).abs() < f32::EPSILON);
         assert!(!result.settings.chunk_at_headings);

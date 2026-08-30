@@ -1,7 +1,7 @@
 //! Term ranking using TF-IDF scoring.
 //!
-//! This module provides functionality to rank extracted terms by their importance
-//! using a combination of:
+//! This module provides functionality to rank extracted terms by their
+//! importance using a combination of:
 //! - Term frequency (how often the term appears in the source)
 //! - Source weight (where the term was found: heading, body, path, etc.)
 //! - IDF (Inverse Document Frequency from the search index)
@@ -46,13 +46,15 @@ impl RankedTerm {
 
 /// Trait for providing IDF values for terms.
 ///
-/// This abstraction allows the ranking logic to work with different IDF sources,
-/// such as a live index or cached values.
+/// This abstraction allows the ranking logic to work with different IDF
+/// sources, such as a live index or cached values.
 pub trait IdfProvider {
-    /// Returns the IDF value for a term, or `None` if the term doesn't exist in the index.
+    /// Returns the IDF value for a term, or `None` if the term doesn't exist in
+    /// the index.
     ///
     /// Higher values indicate rarer terms. Returns `None` for terms that don't
-    /// appear in any document, which causes them to be filtered out during ranking.
+    /// appear in any document, which causes them to be filtered out during
+    /// ranking.
     fn idf(&self, term: &str) -> Option<f32>;
 }
 

@@ -28,9 +28,11 @@ pub struct DiscoveredFile {
 /// Discovers all files that should be indexed from the given trees.
 ///
 /// For each tree, walks the directory tree and returns files that:
-/// - Match at least one include pattern (or match `**/*.md` / `**/*.txt` if no patterns)
+/// - Match at least one include pattern (or match `**/*.md` / `**/*.txt` if no
+///   patterns)
 /// - Don't match any exclude pattern
-/// - Are regular files (not directories, symlinks to directories, or other special files)
+/// - Are regular files (not directories, symlinks to directories, or other
+///   special files)
 /// - Are not binary files (based on file extension heuristics)
 pub fn discover_files(
     trees: &[Tree],

@@ -1,8 +1,8 @@
 //! Document types for indexing.
 //!
-//! The [`ChunkDocument`] struct represents a chunk ready for indexing, combining
-//! chunk-level data with document-level metadata (tags, path, tree) and
-//! hierarchical information (position, parent_id, etc.).
+//! The [`ChunkDocument`] struct represents a chunk ready for indexing,
+//! combining chunk-level data with document-level metadata (tags, path, tree)
+//! and hierarchical information (position, parent_id, etc.).
 
 use std::time::SystemTime;
 
@@ -14,7 +14,8 @@ use ra_document::{Document, TreeChunk};
 /// in Tantivy, including:
 /// - Chunk-specific fields (id, hierarchy, body)
 /// - Document-level metadata (tags, path, tree, mtime)
-/// - Hierarchical information (doc_id, parent_id, position, byte spans, sibling_count)
+/// - Hierarchical information (doc_id, parent_id, position, byte spans,
+///   sibling_count)
 #[derive(Debug, Clone)]
 pub struct ChunkDocument {
     /// Unique chunk identifier: `{tree}:{path}#{slug}` or `{tree}:{path}`.
@@ -24,7 +25,8 @@ pub struct ChunkDocument {
     /// Parent chunk identifier, or None for document nodes.
     pub parent_id: Option<String>,
     /// Hierarchy path from document root to this chunk.
-    /// Each element is a title in the path. The last element is this chunk's title.
+    /// Each element is a title in the path. The last element is this chunk's
+    /// title.
     pub hierarchy: Vec<String>,
     /// Heading level: 0 for document node, 1-6 for h1-h6.
     pub depth: u8,
@@ -59,7 +61,8 @@ impl ChunkDocument {
     ///
     /// # Arguments
     /// * `chunk` - The tree chunk containing body, hierarchy, etc.
-    /// * `document` - The parent document containing metadata (tags, path, tree)
+    /// * `document` - The parent document containing metadata (tags, path,
+    ///   tree)
     /// * `mtime` - File modification time
     pub fn from_tree_chunk(chunk: &TreeChunk, document: &Document, mtime: SystemTime) -> Self {
         let path_str = document.path.to_string_lossy().to_string();

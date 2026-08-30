@@ -1,12 +1,14 @@
 //! Syntax highlighting and terminal colors for ra.
 //!
-//! This crate provides utilities for syntax-highlighted output of code and configuration,
-//! as well as styled terminal output for headers and status messages.
+//! This crate provides utilities for syntax-highlighted output of code and
+//! configuration, as well as styled terminal output for headers and status
+//! messages.
 //!
 //! # Terminal Styling
 //!
-//! The [`Style`] struct provides RGB color support with hex color parsing. Use the semantic
-//! theme constants in the [`theme`] module for consistent styling across the application.
+//! The [`Style`] struct provides RGB color support with hex color parsing. Use
+//! the semantic theme constants in the [`theme`] module for consistent styling
+//! across the application.
 
 #![warn(missing_docs)]
 
@@ -84,7 +86,8 @@ impl Style {
     /// Creates a style from a hex color string.
     ///
     /// # Panics
-    /// Panics if the hex string is invalid. Use this only with compile-time constants.
+    /// Panics if the hex string is invalid. Use this only with compile-time
+    /// constants.
     pub fn from_hex(hex: &str) -> Self {
         Self::fg(Rgb::from_hex(hex).expect("invalid hex color"))
     }
@@ -187,7 +190,8 @@ pub mod theme {
 
 /// A syntax highlighter that can highlight code for terminal output.
 pub struct Highlighter {
-    /// The syntax set containing language definitions (including TOML, TypeScript, etc.).
+    /// The syntax set containing language definitions (including TOML,
+    /// TypeScript, etc.).
     syntax_set: SyntaxSet,
     /// The theme set containing color themes.
     theme_set: EmbeddedLazyThemeSet,

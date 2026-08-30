@@ -70,7 +70,8 @@ impl IndexSchema {
         // Doc ID field: stored, for grouping chunks by document
         let doc_id = builder.add_text_field("doc_id", STRING | STORED);
 
-        // Parent ID field: stored, for hierarchy traversal (empty string for root nodes)
+        // Parent ID field: stored, for hierarchy traversal (empty string for root
+        // nodes)
         let parent_id = builder.add_text_field("parent_id", STORED);
 
         // Hierarchy field: multi-value text with positions, stored

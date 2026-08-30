@@ -1,8 +1,11 @@
 //! Search result types for the hierarchical search algorithm.
 //!
-//! This module defines the result types used by the three-phase search algorithm:
-//! - [`SearchCandidate`]: A single chunk match from the index (re-exported from search)
-//! - [`SearchResult`]: Either a single match or an aggregated parent with constituents
+//! This module defines the result types used by the three-phase search
+//! algorithm:
+//! - [`SearchCandidate`]: A single chunk match from the index (re-exported from
+//!   search)
+//! - [`SearchResult`]: Either a single match or an aggregated parent with
+//!   constituents
 
 use std::cmp::Ordering;
 
@@ -23,7 +26,8 @@ pub enum SearchResult {
     Single(SearchCandidate),
     /// An aggregated parent node with constituent matches.
     Aggregated {
-        /// The parent node containing all metadata (id, title, body, score, etc.)
+        /// The parent node containing all metadata (id, title, body, score,
+        /// etc.)
         parent: SearchCandidate,
         /// The constituent matches that were aggregated.
         constituents: Vec<SearchCandidate>,
@@ -57,8 +61,9 @@ impl SearchResult {
     /// Returns match details if available.
     ///
     /// For single results, returns the candidate's match details.
-    /// For aggregated results, returns the highest-scoring constituent's details,
-    /// which is most likely to have the most comprehensive match information.
+    /// For aggregated results, returns the highest-scoring constituent's
+    /// details, which is most likely to have the most comprehensive match
+    /// information.
     pub fn match_details(&self) -> Option<&MatchDetails> {
         match self {
             Self::Single(candidate) => candidate.match_details.as_ref(),
@@ -77,15 +82,17 @@ impl SearchResult {
         Self::Single(candidate)
     }
 
-    /// Creates an aggregated result from a parent node and its constituent matches.
+    /// Creates an aggregated result from a parent node and its constituent
+    /// matches.
     ///
-    /// The score is computed using Root Sum Square (RSS / L2 norm) of constituent scores:
-    /// `score = sqrt(c1² + c2² + ... + cn²)`
+    /// The score is computed using Root Sum Square (RSS / L2 norm) of
+    /// constituent scores: `score = sqrt(c1² + c2² + ... + cn²)`
     ///
-    /// This approach rewards coverage (multiple matching sections) without letting noise
-    /// accumulate linearly:
+    /// This approach rewards coverage (multiple matching sections) without
+    /// letting noise accumulate linearly:
     /// - Two sections scoring 10.0 each → `sqrt(100 + 100) ≈ 14.1` (boosted)
-    /// - One strong (20.0) + two weak (2.0) → `sqrt(400 + 4 + 4) ≈ 20.2` (noise dampened)
+    /// - One strong (20.0) + two weak (2.0) → `sqrt(400 + 4 + 4) ≈ 20.2` (noise
+    ///   dampened)
     /// - Single section → unchanged (sqrt of single squared = original)
     pub fn aggregated(mut parent: SearchCandidate, constituents: Vec<SearchCandidate>) -> Self {
         // RSS: sqrt(c1² + c2² + ...)

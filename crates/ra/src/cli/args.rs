@@ -30,7 +30,8 @@ pub struct SearchParamsArgs {
     #[arg(long)]
     pub no_aggregation: bool,
 
-    /// Size of the aggregation pool (candidates available for hierarchical aggregation) [default: 500]
+    /// Size of the aggregation pool (candidates available for hierarchical
+    /// aggregation) [default: 500]
     #[arg(long)]
     pub aggregation_pool_size: Option<usize>,
 
@@ -120,8 +121,9 @@ pub struct ContextCommand {
     #[arg(long)]
     pub terms: Option<usize>,
 
-    /// Keyword extraction algorithm: textrank (graph-based), tfidf (corpus-aware),
-    /// rake (co-occurrence), yake (statistical) [default: textrank]
+    /// Keyword extraction algorithm: textrank (graph-based), tfidf
+    /// (corpus-aware), rake (co-occurrence), yake (statistical) [default:
+    /// textrank]
     #[arg(short = 'a', long, value_parser = parse_algorithm)]
     pub algorithm: Option<ra_context::KeywordAlgorithm>,
 
@@ -354,7 +356,8 @@ pub enum InspectWhat {
         /// File to inspect
         file: String,
 
-        /// Keyword extraction algorithm: tfidf, rake, textrank, yake [default: textrank]
+        /// Keyword extraction algorithm: tfidf, rake, textrank, yake [default:
+        /// textrank]
         #[arg(short = 'a', long, value_parser = parse_algorithm)]
         algorithm: Option<ra_context::KeywordAlgorithm>,
 

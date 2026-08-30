@@ -78,8 +78,9 @@ pub struct RawSearchSettings {
 
 /// Raw context settings.
 ///
-/// Context-specific settings for term extraction. Search parameters are inherited
-/// from `[search]` and can be overridden per-rule in `[[context.rules]]`.
+/// Context-specific settings for term extraction. Search parameters are
+/// inherited from `[search]` and can be overridden per-rule in
+/// `[[context.rules]]`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RawContextSettings {
@@ -113,7 +114,8 @@ pub struct RawContextRule {
     pub trees: Option<Vec<String>>,
     /// Additional search terms to inject into the query.
     pub terms: Option<Vec<String>>,
-    /// Files to always include in results (tree-prefixed paths like "docs:api/overview.md").
+    /// Files to always include in results (tree-prefixed paths like
+    /// "docs:api/overview.md").
     pub include: Option<Vec<String>>,
     /// Search parameter overrides for this rule.
     pub search: Option<RawSearchSettings>,

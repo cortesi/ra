@@ -10,3 +10,6 @@ workspace = true
 [dependencies]
 
 [dev-dependencies]
+
+[lib]
+doctest = false

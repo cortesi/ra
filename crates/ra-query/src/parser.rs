@@ -127,7 +127,8 @@ impl Parser {
 
     /// Parses: primary → TERM | PHRASE | field_expr | "(" or_expr ")"
     ///
-    /// After parsing the primary expression, checks for an optional boost suffix.
+    /// After parsing the primary expression, checks for an optional boost
+    /// suffix.
     fn parse_primary(&mut self) -> Result<QueryExpr, ParseError> {
         let expr = match self.peek().cloned() {
             Some(Token::Term(_)) | Some(Token::Phrase(_)) => self.parse_term_or_phrase(),

@@ -1,6 +1,7 @@
 //! Context search API for finding relevant documentation.
 //!
-//! This module provides [`ContextSearch`], which encapsulates the full context search flow:
+//! This module provides [`ContextSearch`], which encapsulates the full context
+//! search flow:
 //! - File analysis with rule matching
 //! - Query building with injected terms
 //! - Tree filtering based on matched rules
@@ -87,7 +88,8 @@ impl<'a> ContextSearch<'a> {
     /// Creates a new context search engine.
     ///
     /// # Arguments
-    /// * `searcher` - The search index to use for IDF lookups and result retrieval
+    /// * `searcher` - The search index to use for IDF lookups and result
+    ///   retrieval
     /// * `context_settings` - Context configuration including rules
     /// * `max_terms` - Maximum number of terms to include in the query
     pub fn new(
@@ -103,10 +105,12 @@ impl<'a> ContextSearch<'a> {
         )
     }
 
-    /// Creates a new context search engine with a specific keyword extraction algorithm.
+    /// Creates a new context search engine with a specific keyword extraction
+    /// algorithm.
     ///
     /// # Arguments
-    /// * `searcher` - The search index to use for IDF lookups and result retrieval
+    /// * `searcher` - The search index to use for IDF lookups and result
+    ///   retrieval
     /// * `context_settings` - Context configuration including rules
     /// * `max_terms` - Maximum number of terms to include in the query
     /// * `algorithm` - Keyword extraction algorithm to use
@@ -137,8 +141,9 @@ impl<'a> ContextSearch<'a> {
 
     /// Analyzes files and returns combined analysis results.
     ///
-    /// This performs the analysis phase without executing the search. Useful for
-    /// explain mode or when you need to inspect the analysis before searching.
+    /// This performs the analysis phase without executing the search. Useful
+    /// for explain mode or when you need to inspect the analysis before
+    /// searching.
     ///
     /// # Arguments
     /// * `files` - Paths to files to analyze
@@ -312,10 +317,12 @@ impl<'a> ContextSearch<'a> {
         Some(QueryExpr::or(exprs))
     }
 
-    /// Injects automatically included files from matched rules at the top of results.
+    /// Injects automatically included files from matched rules at the top of
+    /// results.
     ///
-    /// Include paths are in the format "tree:path". Each matching document is inserted
-    /// at the beginning of results (in order), ensuring they appear first.
+    /// Include paths are in the format "tree:path". Each matching document is
+    /// inserted at the beginning of results (in order), ensuring they
+    /// appear first.
     fn inject_includes(&self, results: &mut Vec<SearchResult>, includes: &[String], limit: usize) {
         if includes.is_empty() {
             return;

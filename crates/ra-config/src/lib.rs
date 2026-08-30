@@ -1,8 +1,9 @@
 //! Configuration system for ra.
 //!
-//! ra uses TOML configuration files named `.ra.toml`. Configuration is resolved by walking up
-//! the directory tree from the current working directory, collecting any `.ra.toml` files found,
-//! then loading `~/.ra.toml` as the global config with lowest precedence.
+//! ra uses TOML configuration files named `.ra.toml`. Configuration is resolved
+//! by walking up the directory tree from the current working directory,
+//! collecting any `.ra.toml` files found, then loading `~/.ra.toml` as the
+//! global config with lowest precedence.
 
 #![warn(missing_docs)]
 
@@ -36,7 +37,8 @@ pub const DEFAULT_LIMIT: usize = 5;
 /// Default relevance multiplier for local trees (Settings.local_boost).
 pub const DEFAULT_LOCAL_BOOST: f32 = 1.5;
 
-/// Default setting for splitting documents at headings (Settings.chunk_at_headings).
+/// Default setting for splitting documents at headings
+/// (Settings.chunk_at_headings).
 pub const DEFAULT_CHUNK_AT_HEADINGS: bool = true;
 
 /// Default warning threshold for chunk size (Settings.max_chunk_size).
@@ -60,17 +62,20 @@ pub const DEFAULT_SEARCH_LIMIT: usize = 10;
 /// This replaces the old `max_candidates` setting.
 pub const DEFAULT_AGGREGATION_POOL_SIZE: usize = 500;
 
-/// Default score ratio threshold for elbow cutoff (SearchSettings.cutoff_ratio).
+/// Default score ratio threshold for elbow cutoff
+/// (SearchSettings.cutoff_ratio).
 pub const DEFAULT_CUTOFF_RATIO: f32 = 0.3;
 
-/// Default sibling ratio threshold for aggregation (SearchSettings.aggregation_threshold).
+/// Default sibling ratio threshold for aggregation
+/// (SearchSettings.aggregation_threshold).
 pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.1;
 
 // =============================================================================
 // Search field boost defaults
 //
-// These constants define the query-time boost weights for different index fields.
-// Higher values increase the relevance contribution from matches in that field.
+// These constants define the query-time boost weights for different index
+// fields. Higher values increase the relevance contribution from matches in
+// that field.
 // =============================================================================
 
 /// Default boost for hierarchy field (matches in document headings).
@@ -83,7 +88,8 @@ pub const DEFAULT_BOOST_TAGS: f32 = 5.0;
 pub const DEFAULT_BOOST_BODY: f32 = 1.0;
 /// Default maximum boost for top-level headings (depth 0-1).
 pub const DEFAULT_BOOST_HEADING_MAX: f32 = 5.0;
-/// Default decay factor for heading depth boost (each level multiplies by this).
+/// Default decay factor for heading depth boost (each level multiplies by
+/// this).
 pub const DEFAULT_BOOST_HEADING_DECAY: f32 = 0.7;
 
 // =============================================================================
@@ -217,7 +223,8 @@ use crate::{
     parse::parse_config_file,
 };
 
-/// Formats a path for display, using `~` for home directory or relative paths where appropriate.
+/// Formats a path for display, using `~` for home directory or relative paths
+/// where appropriate.
 ///
 /// - If `base` is provided and the path is under it, returns a relative path
 /// - If the path is under the home directory, replaces the home prefix with `~`
@@ -258,8 +265,8 @@ pub fn format_path_for_display(path: &Path, base: Option<&Path>) -> String {
 
 /// Top-level merged configuration for ra.
 ///
-/// This represents the fully resolved configuration after merging all discovered `.ra.toml`
-/// files according to precedence rules.
+/// This represents the fully resolved configuration after merging all
+/// discovered `.ra.toml` files according to precedence rules.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// General settings.
@@ -270,12 +277,14 @@ pub struct Config {
     pub context: ContextSettings,
     /// Resolved trees with their absolute paths and patterns.
     pub trees: Vec<Tree>,
-    /// Directory containing the most specific config file (determines index location).
+    /// Directory containing the most specific config file (determines index
+    /// location).
     pub config_root: Option<PathBuf>,
 }
 
 impl Config {
-    /// Loads configuration by discovering and merging all relevant `.ra.toml` files.
+    /// Loads configuration by discovering and merging all relevant `.ra.toml`
+    /// files.
     ///
     /// This is the main entry point for loading configuration. It:
     /// 1. Discovers all `.ra.toml` files from `cwd` up to the filesystem root
@@ -336,9 +345,10 @@ impl Config {
 
     /// Serializes the effective settings to TOML format.
     ///
-    /// This outputs the merged configuration settings in the same format as a `.ra.toml` file,
-    /// making it easy to see the effective configuration. Trees and include patterns are not
-    /// included since they have resolved paths and additional metadata.
+    /// This outputs the merged configuration settings in the same format as a
+    /// `.ra.toml` file, making it easy to see the effective configuration.
+    /// Trees and include patterns are not included since they have resolved
+    /// paths and additional metadata.
     pub fn settings_to_toml(&self) -> String {
         let serializable = SerializableSettings {
             settings: self.settings.clone(),
@@ -377,7 +387,8 @@ impl Default for Settings {
 /// Common search parameters shared between search and context commands.
 ///
 /// Both `SearchSettings` and `ContextSettings` implement this trait, allowing
-/// shared code for building search parameters from CLI overrides and config defaults.
+/// shared code for building search parameters from CLI overrides and config
+/// defaults.
 pub trait SearchDefaults {
     /// Maximum results to return after aggregation.
     fn limit(&self) -> usize;
@@ -421,7 +432,8 @@ pub struct SearchSettings {
     pub boost_body: f32,
     /// Maximum boost for top-level headings (depth 0-1).
     pub boost_heading_max: f32,
-    /// Decay factor per heading level (h2 = max * decay, h3 = max * decay², etc.).
+    /// Decay factor per heading level (h2 = max * decay, h3 = max * decay²,
+    /// etc.).
     pub boost_heading_decay: f32,
 
     // Markdown parser weights (for context term extraction)
@@ -525,7 +537,8 @@ pub struct ContextSettings {
 
 /// A resolved context rule.
 ///
-/// Specifies how context search should behave for files matching certain patterns.
+/// Specifies how context search should behave for files matching certain
+/// patterns.
 #[derive(Debug, Clone)]
 pub struct ContextRule {
     /// Glob patterns to match against file paths.
@@ -534,7 +547,8 @@ pub struct ContextRule {
     pub trees: Vec<String>,
     /// Additional search terms to inject into the query.
     pub terms: Vec<String>,
-    /// Files to always include in results (tree-prefixed paths like "docs:api/overview.md").
+    /// Files to always include in results (tree-prefixed paths like
+    /// "docs:api/overview.md").
     pub include: Vec<String>,
     /// Search parameter overrides for this rule.
     pub search: Option<SearchOverrides>,
@@ -692,7 +706,8 @@ pub struct Tree {
     pub path: PathBuf,
     /// Whether this tree was defined in the global `~/.ra.toml`.
     pub is_global: bool,
-    /// Include patterns for files to index (defaults to ["**/*.md", "**/*.txt"]).
+    /// Include patterns for files to index (defaults to ["**/*.md",
+    /// "**/*.txt"]).
     pub include: Vec<String>,
     /// Exclude patterns for files to skip (defaults to empty).
     pub exclude: Vec<String>,

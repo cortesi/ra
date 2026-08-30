@@ -1,27 +1,31 @@
 //! Search execution for the ra index.
 //!
-//! Provides the [`Searcher`] struct for querying the index and retrieving results.
-//! Supports field boosting, local tree boosting, snippet generation, and per-tree
-//! score normalization for multi-tree searches.
+//! Provides the [`Searcher`] struct for querying the index and retrieving
+//! results. Supports field boosting, local tree boosting, snippet generation,
+//! and per-tree score normalization for multi-tree searches.
 //!
 //! # Search Algorithm
 //!
 //! The search process follows these phases:
 //!
-//! 1. **Query Execution**: Run the query against the index, applying tree filters
-//!    and field boosting to get raw BM25 scores. See [`execute`] module.
+//! 1. **Query Execution**: Run the query against the index, applying tree
+//!    filters and field boosting to get raw BM25 scores. See [`execute`]
+//!    module.
 //!
-//! 2. **Score Normalization** (multi-tree only): When searching across multiple trees,
-//!    normalize scores so each tree's best result gets 1.0. This makes cross-tree
-//!    comparison fair regardless of content density differences. See [`pipeline`] module.
+//! 2. **Score Normalization** (multi-tree only): When searching across multiple
+//!    trees, normalize scores so each tree's best result gets 1.0. This makes
+//!    cross-tree comparison fair regardless of content density differences. See
+//!    [`pipeline`] module.
 //!
-//! 3. **Hierarchical Aggregation**: Group sibling matches under parent nodes when
-//!    enough siblings match. Aggregated results use RSS (Root Sum Square) scoring
-//!    to reward coverage without letting noise accumulate linearly. See [`aggregation`].
+//! 3. **Hierarchical Aggregation**: Group sibling matches under parent nodes
+//!    when enough siblings match. Aggregated results use RSS (Root Sum Square)
+//!    scoring to reward coverage without letting noise accumulate linearly. See
+//!    [`aggregation`].
 //!
-//! 4. **Elbow Cutoff**: Find the "elbow" point where relevance drops significantly
-//!    and truncate results there. Applied AFTER aggregation so that aggregated
-//!    results with boosted RSS scores compete fairly. See [`crate::elbow`].
+//! 4. **Elbow Cutoff**: Find the "elbow" point where relevance drops
+//!    significantly and truncate results there. Applied AFTER aggregation so
+//!    that aggregated results with boosted RSS scores compete fairly. See
+//!    [`crate::elbow`].
 //!
 //! 5. **Final Limit**: Truncate to the requested number of results.
 
@@ -95,7 +99,8 @@ pub struct MoreLikeThisExplanation {
 }
 
 impl MoreLikeThisParams {
-    /// Builds a Tantivy `MoreLikeThisQueryBuilder` with common parameters applied.
+    /// Builds a Tantivy `MoreLikeThisQueryBuilder` with common parameters
+    /// applied.
     fn base_builder(&self) -> MoreLikeThisQueryBuilder {
         MoreLikeThisQuery::builder()
             .with_min_doc_frequency(self.min_doc_frequency)
@@ -253,9 +258,10 @@ impl Searcher {
 
     /// Computes doc IDs to exclude from results based on input file paths.
     ///
-    /// Each input path is canonicalized and compared against tree roots. If a file
-    /// is within a configured tree, its doc ID is returned in `tree:relative_path`
-    /// format. Relative paths are normalized to forward slashes.
+    /// Each input path is canonicalized and compared against tree roots. If a
+    /// file is within a configured tree, its doc ID is returned in
+    /// `tree:relative_path` format. Relative paths are normalized to
+    /// forward slashes.
     pub fn compute_exclude_doc_ids(&self, files: &[&Path]) -> HashSet<String> {
         let mut exclude = HashSet::new();
 
@@ -311,7 +317,8 @@ impl Searcher {
         Ok(content[start..end].to_string())
     }
 
-    /// Searches using the hierarchical algorithm with per-tree score normalization.
+    /// Searches using the hierarchical algorithm with per-tree score
+    /// normalization.
     pub fn search_aggregated(
         &mut self,
         query_str: &str,
@@ -350,7 +357,8 @@ impl Searcher {
         Ok(self.search_aggregated_expr_with_stats(expr, params)?.0)
     }
 
-    /// Searches using a pre-built query expression and returns pipeline statistics.
+    /// Searches using a pre-built query expression and returns pipeline
+    /// statistics.
     pub fn search_aggregated_expr_with_stats(
         &mut self,
         expr: &ra_query::QueryExpr,
@@ -417,8 +425,8 @@ impl Searcher {
 
     /// Looks up a parent node by ID for aggregation.
     ///
-    /// Returns a `SearchCandidate` with zero score and empty match data, suitable
-    /// for use as a parent node during hierarchical aggregation.
+    /// Returns a `SearchCandidate` with zero score and empty match data,
+    /// suitable for use as a parent node during hierarchical aggregation.
     pub(super) fn lookup_parent(&self, parent_id: &str) -> Option<SearchCandidate> {
         let reader = self.index.reader().ok()?;
         let searcher = reader.searcher();
@@ -616,7 +624,8 @@ impl Searcher {
 
     /// Looks up a document's address by its ID.
     ///
-    /// The ID is the unique chunk identifier in the format `tree:path#slug` or `tree:path`.
+    /// The ID is the unique chunk identifier in the format `tree:path#slug` or
+    /// `tree:path`.
     pub fn get_doc_address(&self, id: &str) -> Result<Option<DocAddress>, IndexError> {
         let reader = self
             .index
@@ -821,10 +830,11 @@ impl Searcher {
         tokens
     }
 
-    /// Finds term mappings from query terms to indexed terms (including fuzzy matches).
+    /// Finds term mappings from query terms to indexed terms (including fuzzy
+    /// matches).
     ///
-    /// Returns a map where keys are query terms and values are the indexed terms
-    /// they matched across the specified fields.
+    /// Returns a map where keys are query terms and values are the indexed
+    /// terms they matched across the specified fields.
     pub(crate) fn find_term_mappings(
         &self,
         searcher: &TvSearcher,
@@ -1076,7 +1086,8 @@ impl Searcher {
 
     /// Analyzes term matches across all searchable fields.
     ///
-    /// Returns field match details and per-field scores based on term frequencies and boosts.
+    /// Returns field match details and per-field scores based on term
+    /// frequencies and boosts.
     fn analyze_field_matches(
         &self,
         matched_terms: &HashSet<String>,
@@ -1128,10 +1139,12 @@ impl Searcher {
         freqs
     }
 
-    /// Reads all metadata fields from a Tantivy document into a `SearchCandidate`.
+    /// Reads all metadata fields from a Tantivy document into a
+    /// `SearchCandidate`.
     ///
-    /// Returns a candidate with zero score and empty match data. Use this as a base
-    /// for building search results or for parent lookups during aggregation.
+    /// Returns a candidate with zero score and empty match data. Use this as a
+    /// base for building search results or for parent lookups during
+    /// aggregation.
     pub(crate) fn read_candidate_from_doc(&self, doc: &TantivyDocument) -> SearchCandidate {
         let id = self.get_text_field(doc, self.schema.id);
         let doc_id = self.get_text_field(doc, self.schema.doc_id);
@@ -1177,7 +1190,8 @@ impl Searcher {
         }
     }
 
-    /// Converts a Tantivy document plus scoring context into a `SearchCandidate`.
+    /// Converts a Tantivy document plus scoring context into a
+    /// `SearchCandidate`.
     pub(crate) fn doc_to_result(
         &self,
         doc: &TantivyDocument,
@@ -1218,7 +1232,8 @@ impl Searcher {
         candidate
     }
 
-    /// Reads a text field from a document, returning an empty string if missing.
+    /// Reads a text field from a document, returning an empty string if
+    /// missing.
     pub(crate) fn get_text_field(&self, doc: &TantivyDocument, field: Field) -> String {
         doc.get_first(field)
             .and_then(|v| v.as_str())
@@ -1264,7 +1279,8 @@ impl IdfProvider for TreeFilteredSearcher<'_> {
 
 /// Creates an index directory path and opens it for searching.
 ///
-/// If `fuzzy_override` is provided, it overrides the config's fuzzy_distance setting.
+/// If `fuzzy_override` is provided, it overrides the config's fuzzy_distance
+/// setting.
 pub fn open_searcher(
     config: &ra_config::Config,
     fuzzy_override: Option<u8>,

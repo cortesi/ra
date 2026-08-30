@@ -1403,8 +1403,8 @@ mod get {
         let docs = dir.path().join("docs");
         fs::create_dir(&docs).unwrap();
 
-        // Create a file large enough to trigger chunking (> 2000 chars with multiple h1s)
-        // Each section needs substantial content
+        // Create a file large enough to trigger chunking (> 2000 chars with multiple
+        // h1s) Each section needs substantial content
         let content = format!(
             r#"# Getting Started
 

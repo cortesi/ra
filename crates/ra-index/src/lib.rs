@@ -1,7 +1,7 @@
 //! Tantivy-based search index for ra.
 //!
-//! This crate provides the indexing and search infrastructure for ra's knowledge base.
-//! It handles:
+//! This crate provides the indexing and search infrastructure for ra's
+//! knowledge base. It handles:
 //! - Index creation and incremental updates via [`Indexer`]
 //! - Full-text search with hierarchical aggregation via [`Searcher`]
 //! - Index location resolution based on configuration

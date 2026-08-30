@@ -1,7 +1,8 @@
 //! Tree construction from markdown content.
 //!
-//! This module provides functions to build a hierarchical `ChunkTree` from markdown content
-//! by parsing headings and establishing parent-child relationships based on heading depth.
+//! This module provides functions to build a hierarchical `ChunkTree` from
+//! markdown content by parsing headings and establishing parent-child
+//! relationships based on heading depth.
 
 use std::path::Path;
 
@@ -26,7 +27,8 @@ pub struct HeadingInfo {
     pub heading_end: usize,
 }
 
-/// Extracts all headings from markdown content with byte offsets for the heading line.
+/// Extracts all headings from markdown content with byte offsets for the
+/// heading line.
 pub fn extract_headings(content: &str) -> Vec<HeadingInfo> {
     let parser = Parser::new(content);
     let mut headings = Vec::new();
@@ -87,9 +89,12 @@ struct HeadingWithSpan {
 /// The algorithm:
 /// 1. Creates a document node as root (depth 0, span [0, content.len()))
 /// 2. Parses all headings with their byte positions
-/// 3. For each heading, computes its span (byte after heading line to next equal/lower heading)
-/// 4. Attaches each heading to the nearest preceding heading with strictly lower depth
-/// 5. Discards headings with empty spans (consecutive headings with no content between)
+/// 3. For each heading, computes its span (byte after heading line to next
+///    equal/lower heading)
+/// 4. Attaches each heading to the nearest preceding heading with strictly
+///    lower depth
+/// 5. Discards headings with empty spans (consecutive headings with no content
+///    between)
 /// 6. Assigns positions via pre-order traversal
 /// 7. Computes sibling counts
 pub fn build_chunk_tree(content: &str, tree_name: &str, path: &Path, doc_title: &str) -> ChunkTree {
@@ -120,7 +125,8 @@ pub fn build_chunk_tree(content: &str, tree_name: &str, path: &Path, doc_title: 
         .collect();
 
     // Build the tree using a stack-based approach
-    // Stack contains (node, depth) pairs representing the path from root to current insertion point
+    // Stack contains (node, depth) pairs representing the path from root to current
+    // insertion point
     let mut stack: Vec<(Node, u8)> = vec![(root, 0)];
 
     for heading in valid_headings {
@@ -172,7 +178,8 @@ pub fn build_chunk_tree(content: &str, tree_name: &str, path: &Path, doc_title: 
 /// Calculates the content span for each heading.
 ///
 /// A heading's span starts at the first byte after the heading line
-/// and ends at the byte before the next heading of equal or lower depth (or end of document).
+/// and ends at the byte before the next heading of equal or lower depth (or end
+/// of document).
 fn calculate_heading_spans(headings: &[HeadingInfo], content: &str) -> Vec<HeadingWithSpan> {
     let mut result = Vec::with_capacity(headings.len());
     let content_len = content.len();
@@ -317,15 +324,15 @@ mod tests {
     #[test]
     fn test_build_chunk_tree_consecutive_headings() {
         // H1 followed by H2 with no content between H1 line and H2 line.
-        // H1's span runs from after "# H1\n" to end (since H2 is deeper, it doesn't terminate H1)
-        // H2 becomes a child of H1
+        // H1's span runs from after "# H1\n" to end (since H2 is deeper, it doesn't
+        // terminate H1) H2 becomes a child of H1
         let content = "# H1\n## H2\n\nActual content here.";
         let path = PathBuf::from("test.md");
         let tree = build_chunk_tree(content, "docs", &path, "Doc");
 
         // Structure: Document -> H1 -> H2
-        // H1's span includes H2 and content, but H1's body is empty (before H2's heading)
-        // H2's body is "Actual content here."
+        // H1's span includes H2 and content, but H1's body is empty (before H2's
+        // heading) H2's body is "Actual content here."
         assert_eq!(tree.node_count(), 3);
         assert_eq!(tree.root().children.len(), 1);
         assert_eq!(tree.root().children[0].title, "H1");
@@ -577,7 +584,8 @@ Analysis text.
         let spans = calculate_heading_spans(&headings, content);
 
         // H1 span: from after "# H1\n\n" (skipping the blank line) to before "# H2"
-        // pulldown_cmark includes \n in heading, so heading_end=5, we skip byte 5 (\n), span_start=6
+        // pulldown_cmark includes \n in heading, so heading_end=5, we skip byte 5 (\n),
+        // span_start=6
         assert_eq!(
             &content[spans[0].span_start..spans[0].span_end],
             "H1 body\n\n"

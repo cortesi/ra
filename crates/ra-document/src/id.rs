@@ -1,8 +1,8 @@
 //! Identifier types for documents and chunks.
 //!
 //! IDs are represented as strings in the format `tree:path` for documents and
-//! `tree:path#slug` for chunks. These newtypes centralize parsing and formatting
-//! to avoid ad-hoc string handling across crates.
+//! `tree:path#slug` for chunks. These newtypes centralize parsing and
+//! formatting to avoid ad-hoc string handling across crates.
 
 use std::{fmt, path::Path, str::FromStr};
 

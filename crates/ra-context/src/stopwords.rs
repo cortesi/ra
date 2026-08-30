@@ -6,8 +6,8 @@
 //! - Rust primitive types
 //! - Common Rust standard library types
 //!
-//! Stopwords are low-value terms that should be filtered out during term extraction
-//! to focus on semantically meaningful content.
+//! Stopwords are low-value terms that should be filtered out during term
+//! extraction to focus on semantically meaningful content.
 
 use std::collections::HashSet;
 

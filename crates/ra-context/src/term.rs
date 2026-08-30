@@ -1,6 +1,7 @@
 //! Weighted term extraction types.
 //!
-//! This module defines the core types for extracting terms with weights from documents.
+//! This module defines the core types for extracting terms with weights from
+//! documents.
 
 use serde::Serialize;
 
@@ -15,7 +16,8 @@ pub struct WeightedTerm {
     pub term: String,
     /// Semantic weight reflecting importance (higher = more relevant).
     pub weight: f32,
-    /// Human-readable label for the source (e.g., "path:filename", "md:h1", "body").
+    /// Human-readable label for the source (e.g., "path:filename", "md:h1",
+    /// "body").
     pub source: String,
     /// How many times this term appeared in the source.
     pub frequency: u32,

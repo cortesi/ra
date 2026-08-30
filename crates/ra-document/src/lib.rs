@@ -1,7 +1,7 @@
 //! Document parsing and chunking for ra.
 //!
-//! This crate handles parsing markdown and plain text files into hierarchical chunk trees
-//! suitable for indexing. It supports:
+//! This crate handles parsing markdown and plain text files into hierarchical
+//! chunk trees suitable for indexing. It supports:
 //! - YAML frontmatter extraction (title, tags)
 //! - Hierarchical chunking based on heading structure
 //! - GitHub-compatible slug generation for chunk IDs

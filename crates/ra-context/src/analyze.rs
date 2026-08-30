@@ -60,7 +60,8 @@ impl ContextAnalysis {
     /// Returns true if no terms were extracted from the source.
     ///
     /// Note: This checks `terms`, not `keywords`, because keywords may be empty
-    /// if the IDF provider filters out all terms (e.g., for TF-IDF with a new corpus).
+    /// if the IDF provider filters out all terms (e.g., for TF-IDF with a new
+    /// corpus).
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty() && self.keywords.is_empty()
     }
@@ -87,7 +88,8 @@ impl ContextAnalysis {
 /// # Arguments
 /// * `path` - Path to the file being analyzed (used for path term extraction)
 /// * `content` - Content of the file
-/// * `idf_provider` - Source for IDF values (required for TF-IDF, ignored for other algorithms)
+/// * `idf_provider` - Source for IDF values (required for TF-IDF, ignored for
+///   other algorithms)
 /// * `config` - Analysis configuration including algorithm selection
 ///
 /// # Returns

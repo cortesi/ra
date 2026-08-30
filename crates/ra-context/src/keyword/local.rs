@@ -11,10 +11,12 @@ use keyword_extraction::{
     yake::{Yake, YakeParams},
 };
 
-/// Extended punctuation list including box-drawing characters and other markdown artifacts.
+/// Extended punctuation list including box-drawing characters and other
+/// markdown artifacts.
 ///
-/// The default punctuation in `keyword_extraction` only covers Latin/Germanic languages.
-/// This list adds Unicode box-drawing characters commonly found in markdown tables.
+/// The default punctuation in `keyword_extraction` only covers Latin/Germanic
+/// languages. This list adds Unicode box-drawing characters commonly found in
+/// markdown tables.
 static PUNCTUATION: &[&str] = &[
     // Standard punctuation
     ".", ",", ":", ";", "!", "?", "(", ")", "[", "]", "{", "}", "\"", "'", "`", "-", "—", "–", "/",
@@ -30,8 +32,8 @@ use crate::Stopwords;
 
 /// RAKE (Rapid Automatic Keyword Extraction) extractor.
 ///
-/// Extracts key phrases based on word co-occurrence patterns within the document.
-/// Good for technical documentation where phrases matter.
+/// Extracts key phrases based on word co-occurrence patterns within the
+/// document. Good for technical documentation where phrases matter.
 pub struct RakeExtractor {
     /// Stopwords to filter out.
     stopwords: Vec<String>,
@@ -96,7 +98,8 @@ impl Default for TextRankExtractor {
 }
 
 impl TextRankExtractor {
-    /// Creates a new TextRank extractor with default stopwords and extended punctuation.
+    /// Creates a new TextRank extractor with default stopwords and extended
+    /// punctuation.
     pub fn new() -> Self {
         Self {
             stopwords: Stopwords::new().as_vec(),

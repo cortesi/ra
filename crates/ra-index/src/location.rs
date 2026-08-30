@@ -15,14 +15,16 @@ const INDEX_DIR: &str = "index";
 
 /// Computes the index directory path based on configuration.
 ///
-/// The index location is determined by the most specific (closest to CWD) `.ra.toml` file:
-/// - If a local `.ra.toml` exists, the index is stored in `.ra/index/` sibling to that file
+/// The index location is determined by the most specific (closest to CWD)
+/// `.ra.toml` file:
+/// - If a local `.ra.toml` exists, the index is stored in `.ra/index/` sibling
+///   to that file
 /// - If only `~/.ra.toml` exists, the index is stored in `~/.ra/index/`
 /// - If no config exists, returns `None`
 ///
 /// # Arguments
-/// * `config` - The loaded configuration. `config_root` should point to the directory
-///   containing the highest-precedence config file.
+/// * `config` - The loaded configuration. `config_root` should point to the
+///   directory containing the highest-precedence config file.
 pub fn index_directory(config: &Config) -> Option<PathBuf> {
     config.config_root.as_ref().map(|config_root| {
         // `config_root` is normally the directory containing the winning .ra.toml.

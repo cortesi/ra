@@ -237,7 +237,8 @@ pub(crate) fn extract_path_terms(
     terms
 }
 
-/// Splits a path into lowercase tokens, tagging whether they came from the filename.
+/// Splits a path into lowercase tokens, tagging whether they came from the
+/// filename.
 fn tokenize_path(path: &Path) -> Vec<PathToken> {
     let components: Vec<_> = path.components().collect();
     let num_components = components.len();

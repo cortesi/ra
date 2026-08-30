@@ -35,8 +35,8 @@ impl CommandContext {
 
     /// Loads only the current directory, skipping configuration parsing.
     ///
-    /// Used for commands like `init` or `inspect doc` that should work even when
-    /// an existing config file is invalid.
+    /// Used for commands like `init` or `inspect doc` that should work even
+    /// when an existing config file is invalid.
     pub fn load_cwd_only() -> Result<Self, ExitCode> {
         let cwd = current_dir_or_failure()?;
         Ok(Self {
@@ -46,7 +46,8 @@ impl CommandContext {
         })
     }
 
-    /// Ensures at least one tree is configured, optionally printing an init hint.
+    /// Ensures at least one tree is configured, optionally printing an init
+    /// hint.
     pub fn require_trees(&self, show_init_hint: bool) -> Result<(), ExitCode> {
         if self.config.trees.is_empty() {
             eprintln!("error: no trees defined in configuration");
@@ -62,21 +63,24 @@ impl CommandContext {
 
     /// Returns a mutable searcher, opening or rebuilding the index if needed.
     ///
-    /// If `fuzzy_override` is provided, it overrides the config's fuzzy_distance setting.
+    /// If `fuzzy_override` is provided, it overrides the config's
+    /// fuzzy_distance setting.
     pub fn searcher(
         &mut self,
         fuzzy_override: Option<u8>,
         show_init_hint: bool,
     ) -> Result<&mut Searcher, ExitCode> {
-        if self.searcher.is_some() {
-            return Ok(self.searcher.as_mut().expect("searcher checked"));
+        if self.searcher.is_none() {
+            self.require_trees(show_init_hint)?;
+
+            let searcher = ensure_index_fresh(&self.config, fuzzy_override)?;
+            self.searcher = Some(searcher);
         }
 
-        self.require_trees(show_init_hint)?;
-
-        let searcher = ensure_index_fresh(&self.config, fuzzy_override)?;
-        self.searcher = Some(searcher);
-        Ok(self.searcher.as_mut().expect("searcher just set"))
+        let Some(searcher) = self.searcher.as_mut() else {
+            unreachable!("searcher initialized above");
+        };
+        Ok(searcher)
     }
 }
 

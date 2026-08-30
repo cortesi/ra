@@ -6,7 +6,8 @@
 //! 3. `RemoveLongFilter` - removes tokens longer than 40 bytes
 //! 4. `Stemmer` - applies language-specific stemming
 //!
-//! The stemmer language is configurable via the `stemmer` setting in `.ra.toml`.
+//! The stemmer language is configurable via the `stemmer` setting in
+//! `.ra.toml`.
 
 use tantivy::tokenizer::{
     Language, LowerCaser, RemoveLongFilter, SimpleTokenizer, Stemmer, TextAnalyzer,

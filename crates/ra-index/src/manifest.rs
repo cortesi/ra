@@ -1,8 +1,8 @@
 //! Manifest tracking for indexed files.
 //!
-//! The manifest stores metadata about all indexed files including their paths, tree names,
-//! and modification times. It is used for incremental updates to determine which files
-//! need reindexing.
+//! The manifest stores metadata about all indexed files including their paths,
+//! tree names, and modification times. It is used for incremental updates to
+//! determine which files need reindexing.
 
 use std::{
     collections::HashMap,

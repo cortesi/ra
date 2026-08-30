@@ -17,3 +17,6 @@ tempfile = "3"
 
 [lints]
 workspace = true
+
+[lib]
+doctest = false

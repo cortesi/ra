@@ -3,7 +3,8 @@
 use levenshtein_automata::{Distance, SINK_STATE};
 use tantivy_fst::Automaton;
 
-/// Wrapper that implements `tantivy_fst::Automaton` for `levenshtein_automata::DFA`.
+/// Wrapper that implements `tantivy_fst::Automaton` for
+/// `levenshtein_automata::DFA`.
 pub(super) struct LevenshteinDfa(pub(super) levenshtein_automata::DFA);
 
 impl Automaton for LevenshteinDfa {

@@ -427,7 +427,8 @@ impl QueryCompiler {
         ]
     }
 
-    /// Builds a term query for a specific field, applying fuzzy matching if configured.
+    /// Builds a term query for a specific field, applying fuzzy matching if
+    /// configured.
     fn build_field_term_query(&self, field: Field, term_text: &str) -> Box<dyn Query> {
         let term = Term::from_field_text(field, term_text);
         if self.fuzzy_distance > 0 {

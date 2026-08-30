@@ -181,9 +181,11 @@ impl MatchedRules {
         }
     }
 
-    /// Computes effective trees by combining explicit tree filters with rule-matched trees.
+    /// Computes effective trees by combining explicit tree filters with
+    /// rule-matched trees.
     ///
-    /// - If explicit trees are specified, they take precedence (intersected with rule trees if any)
+    /// - If explicit trees are specified, they take precedence (intersected
+    ///   with rule trees if any)
     /// - If only rule trees are specified, use those
     /// - If neither is specified, returns empty (meaning all trees)
     pub fn compute_effective_trees(&self, explicit_trees: &[String]) -> Vec<String> {
@@ -207,7 +209,8 @@ impl MatchedRules {
 ///
 /// When a file path matches rules, their effects are merged:
 /// - **terms**: concatenated from all matching rules
-/// - **trees**: intersection (if any rule specifies trees, only the intersection is searched)
+/// - **trees**: intersection (if any rule specifies trees, only the
+///   intersection is searched)
 /// - **include**: concatenated from all matching rules
 #[derive(Debug)]
 pub struct CompiledContextRules {
