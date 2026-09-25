@@ -19,6 +19,94 @@ use std::{
 
 use serde_core::{de::Deserialize, ser::Serialize};
 
+/// The configuration filename.
+pub const CONFIG_FILENAME: &str = ".ra.toml";
+
+/// Default size of the aggregation pool (SearchSettings.aggregation_pool_size).
+///
+/// This controls how many candidates are available for hierarchical aggregation
+/// before elbow cutoff. A larger pool allows more siblings to accumulate and
+/// merge, improving aggregation quality.
+///
+/// This replaces the old `max_candidates` setting.
+pub const DEFAULT_AGGREGATION_POOL_SIZE: usize = 500;
+
+/// Default sibling ratio threshold for aggregation
+/// (SearchSettings.aggregation_threshold).
+pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.1;
+
+/// Default boost for body field (document content).
+pub const DEFAULT_BOOST_BODY: f32 = 1.0;
+
+/// Default decay factor for heading depth boost (each level multiplies by
+/// this).
+pub const DEFAULT_BOOST_HEADING_DECAY: f32 = 0.7;
+
+/// Default maximum boost for top-level headings (depth 0-1).
+pub const DEFAULT_BOOST_HEADING_MAX: f32 = 5.0;
+
+/// Default boost for hierarchy field (matches in document headings).
+pub const DEFAULT_BOOST_HIERARCHY: f32 = 3.0;
+
+/// Default boost for path field (filename matches).
+pub const DEFAULT_BOOST_PATH: f32 = 12.0;
+
+/// Default boost for tags field (frontmatter metadata).
+pub const DEFAULT_BOOST_TAGS: f32 = 5.0;
+
+/// Default setting for splitting documents at headings
+/// (Settings.chunk_at_headings).
+pub const DEFAULT_CHUNK_AT_HEADINGS: bool = true;
+
+/// Default maximum terms for context queries (ContextSettings.terms).
+pub const DEFAULT_CONTEXT_TERMS: usize = 50;
+
+/// Default score ratio threshold for elbow cutoff
+/// (SearchSettings.cutoff_ratio).
+pub const DEFAULT_CUTOFF_RATIO: f32 = 0.3;
+
+/// Default fuzzy matching distance (SearchSettings.fuzzy_distance).
+pub const DEFAULT_FUZZY_DISTANCE: u8 = 1;
+
+/// Default limit for general queries (Settings.default_limit).
+pub const DEFAULT_LIMIT: usize = 5;
+
+/// Default relevance multiplier for local trees (Settings.local_boost).
+pub const DEFAULT_LOCAL_BOOST: f32 = 1.5;
+
+/// Default weight for terms in body text.
+pub const DEFAULT_MARKDOWN_BODY: f32 = 1.0;
+
+/// Default weight for terms in H1 headings.
+pub const DEFAULT_MARKDOWN_H1: f32 = 3.0;
+
+/// Default weight for terms in H2-H3 headings.
+pub const DEFAULT_MARKDOWN_H2_H3: f32 = 2.0;
+
+/// Default weight for terms in H4-H6 headings.
+pub const DEFAULT_MARKDOWN_H4_H6: f32 = 1.5;
+
+/// Default warning threshold for chunk size (Settings.max_chunk_size).
+pub const DEFAULT_MAX_CHUNK_SIZE: usize = 50_000;
+
+/// Default maximum word length (ContextSettings.max_word_length).
+pub const DEFAULT_MAX_WORD_LENGTH: usize = 30;
+
+/// Default minimum term frequency (ContextSettings.min_term_frequency).
+pub const DEFAULT_MIN_TERM_FREQUENCY: usize = 2;
+
+/// Default minimum word length (ContextSettings.min_word_length).
+pub const DEFAULT_MIN_WORD_LENGTH: usize = 4;
+
+/// Default sample size for large files (ContextSettings.sample_size).
+pub const DEFAULT_SAMPLE_SIZE: usize = 50_000;
+
+/// Default maximum results for search (SearchSettings.limit).
+pub const DEFAULT_SEARCH_LIMIT: usize = 10;
+
+/// Default stemming language (SearchSettings.stemmer).
+pub const DEFAULT_STEMMER: &str = "english";
+
 /// Common search parameters shared between search and context commands.
 ///
 /// Both `SearchSettings` and `ContextSettings` implement this trait, allowing
@@ -522,91 +610,3 @@ pub fn is_global_config(path: &Path) -> bool;
 
 /// Returns the local configuration template as a commented-out example.
 pub fn local_template() -> String;
-
-/// The configuration filename.
-pub const CONFIG_FILENAME: &str = ".ra.toml";
-
-/// Default size of the aggregation pool (SearchSettings.aggregation_pool_size).
-///
-/// This controls how many candidates are available for hierarchical aggregation
-/// before elbow cutoff. A larger pool allows more siblings to accumulate and
-/// merge, improving aggregation quality.
-///
-/// This replaces the old `max_candidates` setting.
-pub const DEFAULT_AGGREGATION_POOL_SIZE: usize = 500;
-
-/// Default sibling ratio threshold for aggregation
-/// (SearchSettings.aggregation_threshold).
-pub const DEFAULT_AGGREGATION_THRESHOLD: f32 = 0.1;
-
-/// Default boost for body field (document content).
-pub const DEFAULT_BOOST_BODY: f32 = 1.0;
-
-/// Default decay factor for heading depth boost (each level multiplies by
-/// this).
-pub const DEFAULT_BOOST_HEADING_DECAY: f32 = 0.7;
-
-/// Default maximum boost for top-level headings (depth 0-1).
-pub const DEFAULT_BOOST_HEADING_MAX: f32 = 5.0;
-
-/// Default boost for hierarchy field (matches in document headings).
-pub const DEFAULT_BOOST_HIERARCHY: f32 = 3.0;
-
-/// Default boost for path field (filename matches).
-pub const DEFAULT_BOOST_PATH: f32 = 12.0;
-
-/// Default boost for tags field (frontmatter metadata).
-pub const DEFAULT_BOOST_TAGS: f32 = 5.0;
-
-/// Default setting for splitting documents at headings
-/// (Settings.chunk_at_headings).
-pub const DEFAULT_CHUNK_AT_HEADINGS: bool = true;
-
-/// Default maximum terms for context queries (ContextSettings.terms).
-pub const DEFAULT_CONTEXT_TERMS: usize = 50;
-
-/// Default score ratio threshold for elbow cutoff
-/// (SearchSettings.cutoff_ratio).
-pub const DEFAULT_CUTOFF_RATIO: f32 = 0.3;
-
-/// Default fuzzy matching distance (SearchSettings.fuzzy_distance).
-pub const DEFAULT_FUZZY_DISTANCE: u8 = 1;
-
-/// Default limit for general queries (Settings.default_limit).
-pub const DEFAULT_LIMIT: usize = 5;
-
-/// Default relevance multiplier for local trees (Settings.local_boost).
-pub const DEFAULT_LOCAL_BOOST: f32 = 1.5;
-
-/// Default weight for terms in body text.
-pub const DEFAULT_MARKDOWN_BODY: f32 = 1.0;
-
-/// Default weight for terms in H1 headings.
-pub const DEFAULT_MARKDOWN_H1: f32 = 3.0;
-
-/// Default weight for terms in H2-H3 headings.
-pub const DEFAULT_MARKDOWN_H2_H3: f32 = 2.0;
-
-/// Default weight for terms in H4-H6 headings.
-pub const DEFAULT_MARKDOWN_H4_H6: f32 = 1.5;
-
-/// Default warning threshold for chunk size (Settings.max_chunk_size).
-pub const DEFAULT_MAX_CHUNK_SIZE: usize = 50_000;
-
-/// Default maximum word length (ContextSettings.max_word_length).
-pub const DEFAULT_MAX_WORD_LENGTH: usize = 30;
-
-/// Default minimum term frequency (ContextSettings.min_term_frequency).
-pub const DEFAULT_MIN_TERM_FREQUENCY: usize = 2;
-
-/// Default minimum word length (ContextSettings.min_word_length).
-pub const DEFAULT_MIN_WORD_LENGTH: usize = 4;
-
-/// Default sample size for large files (ContextSettings.sample_size).
-pub const DEFAULT_SAMPLE_SIZE: usize = 50_000;
-
-/// Default maximum results for search (SearchSettings.limit).
-pub const DEFAULT_SEARCH_LIMIT: usize = 10;
-
-/// Default stemming language (SearchSettings.stemmer).
-pub const DEFAULT_STEMMER: &str = "english";
